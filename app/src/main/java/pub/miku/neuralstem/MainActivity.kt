@@ -138,6 +138,15 @@ class MainActivity : ComponentActivity() {
                             Log.i("MtSwitch", "triggering exitMultiTrack after ${exitAfter}ms")
                             playerVm.exitMultiTrack()
                         }
+                        // ★I1 验证：**多轨下**再载入另一首 → 应先退出多轨（不应两首同时响）。
+                        //   --es second_file <path> --ei second_after 3000
+                        val secondFile = intent.getStringExtra("second_file")
+                        val secondAfter = intent.getIntExtra("second_after", 0)
+                        if (secondFile != null && secondAfter > 0) {
+                            delay(secondAfter.toLong())
+                            Log.i("I1Test", "load second file while multi-track: $secondFile")
+                            playerVm.loadAndPlay(Uri.fromFile(File(secondFile)), File(secondFile).name)
+                        }
                     }
                 }
                 // M2-D 自动化入口:载入音频后应用 EQ 测试曲线并打印诊断
