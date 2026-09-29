@@ -115,7 +115,13 @@ object Media3DecodeBridge {
                 val outFormat = codec.outputFormat
                 val channels = outFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
                 val sampleRate = outFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE)
-                val pcmEnc = outFormat.getInteger(MediaFormat.KEY_PCM_ENCODING)
+                // ★坑 29/57：`KEY_PCM_ENCODING` 是**可选键**——部分设备（如 BF00A/MTK）解码器
+                //   不提供该键 → `getInteger` 内部拆箱 null → NPE（曾导致波形提取全失败）。
+                val pcmEnc = if (outFormat.containsKey(MediaFormat.KEY_PCM_ENCODING)) {
+                    outFormat.getInteger(MediaFormat.KEY_PCM_ENCODING)
+                } else {
+                    AudioFormat.ENCODING_PCM_16BIT
+                }
                 check(pcmEnc == AudioFormat.ENCODING_PCM_16BIT) {
                     "decoder gave PCM encoding $pcmEnc, only 16-bit handled"
                 }

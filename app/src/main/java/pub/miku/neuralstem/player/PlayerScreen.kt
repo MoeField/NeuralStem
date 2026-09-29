@@ -46,6 +46,8 @@ fun PlayerScreen(
     onOpenSpike: () -> Unit = {},
 ) {
     val state by vm.state.collectAsState()
+    // ★R4：进度从独立流订阅（不再随 state 整体换对象）。
+    val progress by vm.progressFlow.collectAsState()
 
     // F0.1 导入:SAF。MIME 故意放宽 —— 文件管理器里 flac/aac/ogg 的 MIME 千奇百怪,
     // 只用 audio/* 会把很多合法音频灰掉。ExoPlayer 播不了会走 ERROR 状态。
@@ -102,8 +104,8 @@ fun PlayerScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
                 Text(
-                    "${PlayerViewModel.formatTime(state.positionMs)} / " +
-                        PlayerViewModel.formatTime(state.durationMs),
+                    "${PlayerViewModel.formatTime(progress.positionMs)} / " +
+                        PlayerViewModel.formatTime(progress.durationMs),
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Button(onClick = vm::cycleRepeatMode) {
@@ -120,8 +122,8 @@ fun PlayerScreen(
             // waveforms 列表预埋双轨:Task 2 传单轨;Task 4 加 vocals/accompaniment 即叠加
             WaveformView(
                 waveforms = listOf(state.waveform),
-                positionMs = state.positionMs,
-                durationMs = state.durationMs,
+                positionMs = progress.positionMs,
+                durationMs = progress.durationMs,
                 onSeek = vm::seekTo,
                 modifier = Modifier.fillMaxWidth(),
             )
