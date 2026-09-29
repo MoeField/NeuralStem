@@ -6,9 +6,74 @@
 
 ---
 
+## ⚠️⚠️ 必读：2026-09-29 大幅回退（本文件描述的是 checkpoint 状态）
+
+> **当前工作区代码 = 2026-09-24（阶段 M4 完成态）**，**已回退**。
+> **本文件其余章节描述的是 `checkpoint-2026-09-29` 分支的（回退前）状态** —— 仅供 “重建参考”。
+
+| 项 | 值 |
+|---|---|
+| 当前代码 | 分支 `main` = **9-24（M4）**：`assembleDebug` ✅、单测 **70** ✅ |
+| 存档 | 分支 `checkpoint-2026-09-29`（本会话全部工作）|
+| 恢复一命令 | `git checkout checkpoint-2026-09-29` |
+| 重建计划 | `implementation_plan.artifact.md`（需求清单 + 分步路线 + 状态机提案）|
+| 新纪律 | **git 每步 commit**；先文档后代码；隔几步问用户 |
+
+> ❗ **不要再把本文当作“当前已完成”的说明** —— 回退后有些功能已不存在。
+
+---
+
+## ★ 恢复检查清单（简版；完整版见 implementation_plan.artifact.md §一）
+
+图例：✅已有(9-24) ｜ 🔁 待恢复(checkpoint) ｜ ❌ 未做
+
+**核心需求（guide）**
+- [x] P0 导入/播放暂停/跳转/状态 ✅
+- [x] P1 波形渲染/拖动/双色 ✅
+- [x] P2 变速变调（0.5–2× / ±12）✅ ；🔁 升级：X 派生区间 + 对数刻度 + 旋钮/竖滑条
+- [x] P3 分离（2-stem ✅ / 4-stem ✅）+ 进度/取消/缓存/离线 ✅
+- [x] P4 多轨同步 + 各轨音量/静音/独奏 + 联动 ✅
+- [x] N3 音频焦点 ✅ / [x] N4 后台播放+通知 ✅ / [x] N5 分离可取消 ✅
+- [ ] P5 UX：F5.1 波形叠加 ❌ / F5.2 横屏 ❌ / F5.3 深色 🔁 / F5.4 触感 ❌ / F5.5 小组件 ❌
+
+**会话新增（待恢复）**
+- [ ] 导航 IA：底部导航栏 5 项（歌单/播放器/分离/EQ/设置）  ← **Step 1 先做**
+- [ ] 主题 DJ 深色（青绿）
+- [ ] 循环按钮（顺序/循环歌单/单曲循环）
+- [ ] 歌单页（导入/文件夹/排序/队列）
+- [ ] 变速范围 / 转盘时长 设置项
+- [ ] 黑胶转盘 DeckView + 封面 CoverExtractor
+- [ ] EQ 面板 + 独立页（含拖动本地优先/限频/不回弹/首次写入兜底）
+- [ ] 导出（WAV）
+- [ ] 分离开关卡片（播放页）
+- [ ] 分离页重构（作用于当前曲 + Uri→File 桥）← **最后做**
+
+**交付物**：可运行 APK ✅ / 源码 ✅ / README ✅ / 演示视频 ❌
+
+---
+
+---
+
 ## 一、一句话现状
 
 **guide.md 的功能需求（P0–P5）已实现，并在真机端到端跑通。**
+**阶段 UI（DJ 播放器界面，U0–U7）已完成**（深色主题 / 可折叠模块 / 转盘 / 分轨 / EQ /
+分离开关 / 歌单 / 高质量分轨 / 导出）。
+
+> 🔧 **UI 重做（R 系列）已接近完成**：
+> **已完成：R1 骨架 / R1+ 进度条 / R1++ 闪根因 / R4 进度解耦 / R2 左栏 / R3 转盘接入 +
+> 进度平滑（StuckDetector 排查）/ 歌单·切歌队列化（含多轮细节修正）**（均真机验证）。
+> R2 补强了 **bug C：变速变调防抖**（已回退方案 3：AudioTrack 原生；SoundTouch 尝试失败，见 `research_timescale.artifact.md`）。
+> **R6 速度范围设置已完成**（单一项 X∈[1.2,4] 线性 step 0.1，默认 1.4；滑块区间 = [1/X, X]；**播放滑块对数尺度（1.0× 居中）、连续无步进**；设置页横向滑块左右各留 12dp；单测 77 全绿；**无线蓝狐真机已验证**）。
+>
+> 🧭 **导航 IA 重构（批次 1）已完成**（真机验证）：
+> 从 Drawer 改为**底部导航栏 5 项**：`歌单 · 播放器 · 分离 · EQ · 设置`；
+> **EQ 独立成页**（从播放器卡片+设置开关收敛）；「关于」并入设置；播放器页移除「分离」按钮；歌单类型提示补强。
+>
+> **下一步（用户已定优先级）**：①文档/记忆修正 → ②分离流程分析 + EQ 可用性 →
+> ③F5.x + I18N → ④R5/波形提速/分离前台化 →（最后）演示视频脚本。
+> ⚠️ 设备：BF00A serial `TLF2609A004328`（有线）/ `adb-TLF2609A004328-pQOqTm (2)._adb-tls-connect._tcp`（**无线，优先**）。
+> 📌 `ui_rework_requirements.artifact.md`（R 需求定稿）**不在仓库中**；转盘/歌单语义见 `doc/.memory.md`。
 
 **已完成**：阶段 V（功能可行性验证）+ **阶段 M（分离模型探索）** +
 **阶段 M2（引擎探测 / 模型分组 / 导航壳 / EQ）** + **阶段 M3（多轨+EQ 搬进 Service）**
@@ -27,7 +92,7 @@
   Demucs 定位旗舰机音质档，待 Gen3 实测。
 
 **新增能力（M2/M3/M3.5）**：
-- **应用导航壳（Drawer）**：播放器 / 分离 / 设置 / 歌单 / 关于
+- **应用导航壳（底部导航栏 5 项）**：歌单 / 播放器 / 分离 / EQ / 设置（“关于”并入设置）
 - **设备 benchmark**：首启探测各模型**本机**速度 → 按 RTF 分三档（⚡/⏱/🐢）
 - **设置页**：设备能力 + 三档模型分组 + 默认引擎（仅实时档可选）+ EQ 开关
 - **EQ（多段均衡）**：平台 `Equalizer`；**单/多轨均可用**，且在 `PlaybackService`（后台存活）
@@ -36,7 +101,7 @@
   后台继续播 + 媒体通知 + EQ 共用一套（**v2 架构**：session 永远认真实 `singlePlayer`）
 - **M3.5：关键路径已实测** —— 多轨 EQ 正确性 / 单↔多轨切换 / 多轨 seek+变速同步 / 切歌 EQ 重挂
 
-**当前质量**：单测 **63 项** + 仪器化 **6 项**，全绿（真机）。
+**当前质量**：单测 **77 项** + 仪器化 **6 项**，全绿（真机）。
 
 剩余：**Phase 6 UX 打磨（F5.x）** —— 等你统一讨论 UI（含 DJ 控制台设想）；
 另有两条低成本待办（README/演示脚本、分离任务前台化，见 §八）。
@@ -60,7 +125,7 @@
 | **`HANDOFF.md`**（本文件） | 现状 + 约定 + 下一步 | 首先 |
 | [`README.md`](README.md) | **使用说明**（构建 / 安装 / 上手 / 技术栈） | 交付 / 上手 |
 | [`doc/.memory.md`](doc/.memory.md) | 过程笔记、**全部实测数据**、决策依据 | 写报告 / 需要数据时 |
-| [`doc/.critical_steps.md`](doc/.critical_steps.md) | **47 条踩坑记录**（编号可全文引用） | 改代码出问题时 |
+| [`doc/.critical_steps.md`](doc/.critical_steps.md) | **57+ 条踩坑记录**（编号可全文引用） | 改代码出问题时 |
 | [`doc/research_separation.md`](doc/research_separation.md) | 分离方案选型调研 | 想换模型时 |
 | [`implementation_plan.artifact.md`](implementation_plan.artifact.md) | 滚动实施计划 | 规划下一步时 |
 
@@ -98,7 +163,7 @@ ADB=/Volumes/SA500/Library/Android/sdk/platform-tools/adb
 ```
 app/src/main/java/pub/miku/neuralstem/
 ├── MainActivity.kt              入口：托管 AppShell（M2-C）+ 自动化 intent 入口
-├── ui/AppShell.kt               ★M2-C: Drawer 导航壳（播放器/分离/设置/歌单/关于）
+├── ui/AppShell.kt               ★底部导航栏壳（歌单/播放器/分离/EQ/设置）
 ├── player/                      —— 播放侧 ——
 │   ├── PlayerViewModel.kt      经 MediaController 控制 + StateFlow + EQ 接口
 │   ├── PlaybackService.kt      ★V2(N4)+M3: MediaSessionService；**持有 singlePlayer + 多轨**；
@@ -134,10 +199,10 @@ app/src/deprecated/              已废弃代码存档(TFLite 路线,不编译)
 ```
 
 **测试**：
-- 单测 **47 项**（`app:testDebugUnitTest` 全绿）：原有 + `MultiTrackAlignmentTest`（V1）
-  + `ModelSpecTest`（M2-A）
+- 单测 **77 项**（`app:testDebugUnitTest` 全绿）：原有 + `MultiTrackAlignmentTest`（V1）
+  + `ModelSpecTest`（M2-A）+ `SpeedRangeTest`（R6，含对数中点不变量）
 - 仪器化 **6 项**（`app:connectedDebugAndroidTest` 全绿）：`ExampleInstrumentedTest`
-  + `PlayerUiTest`（V5/M2-C，含 Drawer 导航）
+  + `PlayerUiTest`（V5/M2-C + IA 重构，含底部导航 5 项）
 
 ---
 
@@ -223,32 +288,31 @@ app/src/deprecated/              已废弃代码存档(TFLite 路线,不编译)
 
 ## 八、下一步行动建议
 
-> **现状：阶段 V / M / M2 / M3 / M3.5 均已完成**（功能齐全 + 架构统一 + 关键路径已实测）。
+> **现状**：阶段 V / M / M2 / M3 / M3.5 / M4 均已完成；**R 系列（UI 重做）已完成**
+> （R1/R1+/R1++/R4/R2/R3/**R6**）；**导航 IA 重构（批次 1）已完成**；
+> **歌单/切歌队列化已完成**（含多轮细节修正，真机验证）。
 > 数据见 [`doc/.memory.md`](doc/.memory.md) 各阶段小节。
-> 目前仅剩 **Phase 6 UX 打磨** 与两条低成本待办（如下）。
 
-### 选项 A：Phase 6 UX 打磨（guide P5，**唯一未做的需求**）—— **等用户 UI 讨论**
-- **用户指示（2026-09-19）：「再晚一两周我们再讨论 UI 设计」**
-- F5.1 各轨波形颜色区分叠加（`WaveformView` 的 `List<WaveformData>` 接口**已就位**）
-- F5.2 横屏适配 / F5.3 深色模式 / F5.4 触感反馈 / F5.5 桌面小组件（可选）
-- **用户设想（待 UI 阶段展开）**：DJ 控制台式界面（转盘 / BPM 条 / 音高旋钮 /
-  分离 crossfader / EQ 面板）。已核实：BPM/音高/crossfader 均由现有 API 支持；EQ 引擎已通。
-- **成本**：低-中，风险低。**价值**：guide 需求收尾，报告更完整。
+### ★ 用户已定的执行优先级（2026 计划）
 
-### 选项 B：音质增强 —— **阶段 M 已评估**
-- **UVR-MDX 真机实测完成**：本机上比 Spleeter 贵 8–24× 算力 → 建议**可选引擎**（带耗时预估）。
-  试听包已生成，**待你听感判断**。
-- **4-stem**：找到现成 `Best-Practice/spleeter-4stems-onnx` + DSP 契约，但需自建 DSP（~1.5–3 人周）。
-- **htdemucs + ExecuTorch**（远期）：SOTA 音质，但 302MB + DSP 管线重写。
+```
+批次 1  导航 IA 重构（底栏 5 项 + EQ 独立页）   ✅ 已完成（真机验证）
+批次 2  文档/记忆修正                          ⬅ 当前
+批次 3  分离流程分析（先只分析）→ 确认 → 改进 / EQ 可用性（预设 + 人耳确认）
+批次 4  F5.x（波形叠加/横屏/触感/浅色跟随系统）+ I18N 框架
+批次 5  收尾项（R5 / 波形提速 / 分离前台化）
+（最后）演示视频脚本                          ← 用户明确“完全推迟到最后”
+```
 
-### 选项 C：工程收尾 —— ✅ **阶段 V 已完成**
+### 交付物状态（guide §5.2）
+- ✅ 可运行 APK / ✅ 完整源码
+- ✅ **README 已有**（[`README.md`](README.md)，9KB，内容完整）
+- ❌ **演示视频**（唯一缺的交付物）—— **完全推迟到最后**
 
-### 两条低成本待办（当前最值得做）
-1. **交付物收尾**：`README` + 演示视频脚本（guide §5.2 明确要求，现在**没有** README）。
-2. **分离任务前台化**（回应 V4 发现的「后台 cgroup 降频 ~2×」）—— 若要求后台也 ≤60s。
-
-### 我的推荐
-**① 交付物收尾（README/演示脚本，报告必需）→ ② 用户讨论 UI → ③ 视时间做音质/前台化。**
+### 待确认的重点问题
+- 分离页现在一页塞了 **2-stem / 4-stem / 高质量分轨+导出** 三块 → 批次 3 先做**流程分析**（不改代码）。
+- EQ **无预设** + 默认全 0 → 开启“听感无变化” → 批次 3 补预设 + 人耳确认。
+- F5.3 现为**恒深色** → 批次 4 改**浅色 + 跟随系统**；I18N 一并做（专有名词保留英文）。
 
 ---
 
@@ -317,14 +381,13 @@ $ADB -s $SERIAL shell dumpsys audio | grep "u/pid:10220/$PID" | grep -oE "piid:[
 | 分离任务性能对前台敏感 | ★新发现：应用在**后台**时被放入 `/background` cgroup，4 分钟分离从 30.7s 变慢到 **64.7s**（~2×）。若要求后台也 ≤60s，分离也需前台服务 |
 | 分离任务无系统通知 | N5 要求「可取消+进度回调」（已做到），但分离期间无媒体通知（播放才有，N4） |
 | UVR 引擎可选但很慢 | 阶段 M 实测（中端机 BF00A）：UVR 比 Spleeter 贵 8–24× 算力；建议作**可选**而非默认，需标耗时；换强机需重测 |
-| 4-stem 未支持 | 上游转换脚本+两个运行时 impl+官方模型硬编码 2-stem；已有现成 4stems ONNX + DSP 契约，需自建 DSP（~1.5–3 人周）|
+| 4-stem | **已可用**（Spleeter 4-stem ONNX + 自建 DSP，见阶段 M4/S3）：四轨可播/可导出。上游 sherpa 只支持 2-stem，故 4-stem 走自建 DSP |
 | 「边分离边播」未实现 | 阶段 M 评估：本机上对 Spleeter 成立（推荐 B1 自定义 DataSource，~3–5 天）；对 UVR 在部分设备不成立 |
 | EQ 在 Service 侧 | M3-P3 已把 `EqController` 从 VM 搬进 `PlaybackService`；M3.5 实测单/多轨 EQ / 切歌重挂 / 单↔多轨切换均正常 |
-| **EQ 听感未确认** | M3.5/T1 做了单测（参数广播正确）但**“声音真的变了”需人耳确认**（真机拿不到 PCM 样本） |
-| **EQ 无调节 UI** | 底层已完整（5 段 `setBandLevel` / `bandFreqsHz` / `levelRangeMb`），VM 接口 `setEqBandLevel(band,mB)` 已就绪，但 **UI 只有开关，无段增益滑块/旋钮**；段增益默认全 0 → 开关打开“听感无变化”（无副作用，但看起来像没用）。**待 UI 阶段做 EQ 面板** |
-| **EQ 无调节 UI** | 底层已完整（5 段 `setBandLevel` / `bandFreqsHz` / `levelRangeMb`），VM 接口 `setEqBandLevel(band,mB)` 已就绪，但 **UI 只有开关，无段增益滑块/旋钮**。且段增益默认全 0 → 开关打开“听感无变化”（无副作用，但看起来像没用）。**待 UI 阶段做 EQ 面板**（与 DJ 控制台/横屏/深色一并设计） |
+| ~~EQ 听感未确认~~ | ✅ **已确认**（2026-09）：受控 A/B（`CMD_APPLY_EQ_EXTREME` 全±15dB）+ 人耳确认**有明显变化**；平台 EQ **确实生效**（详见 `.memory.md` §“3.2 EQ 定案”）|
+| EQ 无预设 | 已经有**默认微笑曲线**（低/高 +3dB，首次开启时应用）；**可选**：再补低音增强/人声突出等预设 |
 | Inst 系标签已修但仅 5 个模型 | 官方 release 有 16 个 UVR 变体，`ModelRegistry` 目前只登记了 5 个常用；新增需同步 `StemOrder` |
-| 歌单页为占位 | M2-C 已建 `AppShell` 导航项，但歌单未实现（不在 guide 需求内） |
+| 歌单页 | **已实现**（文件/文件夹导入、排序、删除、点卡头选中播放）；非占位 |
 | **可选模块：NCM 格式解析** | `app/src/ncm/java`（源码级，**默认不编译/不打包**）；开启方式 `./gradlew app:assembleDebug -Pwith_ncm=true`。定位为「格式互操作性调研实现」，详见 `.memory.md` §NCM |
 | TFLite 依赖 | 已废弃，代码存 `app/src/deprecated/`（保留论证） |
 | 项目无 git | `git log` 不可用；所有历史在文档里 |
