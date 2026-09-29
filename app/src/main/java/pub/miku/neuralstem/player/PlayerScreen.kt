@@ -76,7 +76,9 @@ fun PlayerScreen(
                 //   否则松手时按钮会短暂置灰再恢复 = “闪一下”。
                 enabled = state.hasMedia,
             ) {
-                Text(if (state.isPlaying) "暂停" else "播放")
+                // ★文字用 playWhenReady（用户意图）而非 isPlaying：seek 缓冲时 isPlaying 会短暂 false
+                //   → 文字会“暂停↔播放”闪一下。
+                Text(if (state.playWhenReady) "暂停" else "播放")
             }
 
             Button(onClick = onOpenSpike) { Text("Spike 分离") }

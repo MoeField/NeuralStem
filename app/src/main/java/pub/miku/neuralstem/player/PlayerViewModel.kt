@@ -45,6 +45,12 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     data class PlayerState(
         val fileName: String = "",
         val isPlaying: Boolean = false,
+        /**
+         * ★播放/暂停按钮的**显示意图**（`playWhenReady`）：用户“想播/想停”。
+         * 为何不用 isPlaying：seek 时 ExoPlayer 会短暂 `isPlaying=false`（缓冲中），
+         * 若按钮文字用 isPlaying → 松手时文字会“暂停↔播放”闪一下。playWhenReady 不受影响。
+         */
+        val playWhenReady: Boolean = false,
         val durationMs: Long = 0L,
         val positionMs: Long = 0L,
         val isReady: Boolean = false,
@@ -185,6 +191,13 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
 
+            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                // ★按钮“文字”来源：不受 seek 缓冲抖动影响（seek 时 isPlaying 会短暂 false）。
+                if (!_state.value.isMultiTrack && _state.value.playWhenReady != playWhenReady) {
+                    _state.value = _state.value.copy(playWhenReady = playWhenReady)
+                }
+            }
+
             override fun onPlaybackStateChanged(playbackState: Int) {
                 _state.value = _state.value.copy(
                     isReady = playbackState == Player.STATE_READY,
@@ -263,7 +276,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         // ★Step3：应用当前播放模式（循环按钮）
         p.repeatMode = _state.value.repeatMode.toPlayerRepeatMode()
         p.play()
-        _state.value = _state.value.copy(fileName = displayName, hasMedia = true)
+        _state.value = _state.value.copy(fileName = displayName, hasMedia = true, playWhenReady = true)
     }
 
     fun togglePlayPause() {
