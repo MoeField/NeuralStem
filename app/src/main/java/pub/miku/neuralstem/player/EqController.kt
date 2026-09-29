@@ -100,11 +100,13 @@ class EqController(
 
     /** 设单段增益(便捷:基于当前曲线改一段)。 */
     fun setBandLevel(band: Int, levelMb: Short) {
-        // ★修复：首次写入时 targetLevels 可能为空 → 按当前段数初始化，避免丢弃首次写入。
+        // ★修复：首次写入时 targetLevels 可能为空 → 用**硬件回读**初始化（而非全零），
+        //   否则会把已存在的曲线（如默认微笑曲线）首尾抹成 0。
         if (targetLevels.isEmpty()) {
             val n = bandCount
             if (n == 0) return
-            targetLevels = ShortArray(n)
+            targetLevels = readBackLevels().let { if (it.size == n) it else ShortArray(n) }
+            Log.i(TAG, "setBandLevel init from readBack=${targetLevels.toList()}")
         }
         if (band !in targetLevels.indices) return
         val copy = targetLevels.copyOf()
