@@ -80,7 +80,9 @@ fun PlayerScreen(
             Button(onClick = onOpenSpike) { Text("Spike 分离") }
         }
 
-        if (state.isReady) {
+        // ★UI 门控用 hasMedia（“已载入”）而非 isReady（“已就绪”）：
+        //   seek 时 isReady 会随 READY→BUFFERING→READY 抖动 → 整块 UI 移除重建 → 闪。
+        if (state.hasMedia) {
             // 时间显示(F0.4) + ★Step3：循环按钮（三态：顺序 / 循环歌单 / 单曲循环）
             Row(
                 modifier = Modifier.fillMaxWidth(),
