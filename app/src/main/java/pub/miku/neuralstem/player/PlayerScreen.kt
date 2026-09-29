@@ -81,12 +81,26 @@ fun PlayerScreen(
         }
 
         if (state.isReady) {
-            // 时间显示(F0.4)
-            Text(
-                "${PlayerViewModel.formatTime(state.positionMs)} / " +
-                    PlayerViewModel.formatTime(state.durationMs),
-                style = MaterialTheme.typography.bodyMedium,
-            )
+            // 时间显示(F0.4) + ★Step3：循环按钮（三态：顺序 / 循环歌单 / 单曲循环）
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(
+                    "${PlayerViewModel.formatTime(state.positionMs)} / " +
+                        PlayerViewModel.formatTime(state.durationMs),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Button(onClick = vm::cycleRepeatMode) {
+                    // softWrap=false + maxLines=1：避免 `↻₁` 被换到下一行
+                    Text(
+                        "${state.repeatMode.glyph} ${state.repeatMode.label}",
+                        maxLines = 1,
+                        softWrap = false,
+                    )
+                }
+            }
 
             // Task 2:波形替换 Slider(F1.1–F1.3)。
             // waveforms 列表预埋双轨:Task 2 传单轨;Task 4 加 vocals/accompaniment 即叠加

@@ -45,11 +45,49 @@ class SettingsRepository(app: Application) {
             prefs.edit().putBoolean(KEY_BENCH_PROMPTED, value).apply()
         }
 
+    /**
+     * 播放模式（播放页**循环按钮**）。三态：
+     * - [RepeatMode.SEQUENTIAL]：顺序（播完歌单停止）→ `REPEAT_MODE_OFF`
+     * - [RepeatMode.LOOP_ALL]：循环歌单 → `REPEAT_MODE_ALL`
+     * - [RepeatMode.LOOP_ONE]：单曲循环 → `REPEAT_MODE_ONE`
+     *
+     * 默认 [RepeatMode.SEQUENTIAL]（= 9-24 原先行为：不设 repeatMode）。
+     */
+    var repeatMode: RepeatMode
+        get() = runCatching {
+            RepeatMode.valueOf(prefs.getString(KEY_REPEAT_MODE, "") ?: "")
+        }.getOrDefault(RepeatMode.SEQUENTIAL)
+        set(v) { prefs.edit().putString(KEY_REPEAT_MODE, v.name).apply() }
+
+    enum class RepeatMode {
+        SEQUENTIAL,
+        LOOP_ALL,
+        LOOP_ONE;
+
+        /** 下一个模式（循环按钮点击顺序）。 */
+        fun next(): RepeatMode = entries[(ordinal + 1) % entries.size]
+
+        /** 按钮/提示文本。 */
+        val label: String get() = when (this) {
+            SEQUENTIAL -> "顺序"
+            LOOP_ALL -> "循环歌单"
+            LOOP_ONE -> "单曲循环"
+        }
+
+        /** 按钮字形（零图标依赖）。 */
+        val glyph: String get() = when (this) {
+            SEQUENTIAL -> "\u2192"     // →
+            LOOP_ALL -> "\u21BB"       // ↻
+            LOOP_ONE -> "\u21BB\u2081" // ↻₁
+        }
+    }
+
     companion object {
         private const val TAG = "SettingsRepo"
         private const val PREFS = "settings"
         private const val KEY_DEFAULT_ENGINE = "default_engine_id"
         private const val KEY_EQ_ENABLED = "eq_enabled"
         private const val KEY_BENCH_PROMPTED = "benchmark_prompted"
+        private const val KEY_REPEAT_MODE = "repeat_mode"
     }
 }
