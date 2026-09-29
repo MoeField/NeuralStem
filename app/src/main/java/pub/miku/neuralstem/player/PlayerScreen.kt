@@ -1,5 +1,6 @@
 package pub.miku.neuralstem.player
 
+import android.app.Application
 import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
@@ -21,11 +22,16 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import pub.miku.neuralstem.settings.SettingsRepository
+import kotlin.math.ln
+import kotlin.math.pow
+import kotlin.ranges.ClosedFloatingPointRange
 
 /**
  * Task 1 基础播放器 UI(guide F0.1–F0.4)。
@@ -44,6 +50,8 @@ fun PlayerScreen(
     // F0.1 导入:SAF。MIME 故意放宽 —— 文件管理器里 flac/aac/ogg 的 MIME 千奇百怪,
     // 只用 audio/* 会把很多合法音频灰掉。ExoPlayer 播不了会走 ERROR 状态。
     val context = LocalContext.current
+    // Step5：变速范围设置（速度滑块区间 = [1/X, X]）
+    val settings = remember { SettingsRepository(context.applicationContext as Application) }
     val pickAudio = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
@@ -122,6 +130,8 @@ fun PlayerScreen(
             SpeedPitchControls(
                 speed = state.speed,
                 pitchSemitones = state.pitchSemitones,
+                // ★Step5：区间由设置项 X 决定 = [1/X, X]
+                speedRange = settings.speedSliderMin..settings.speedSliderMax,
                 onSpeedChange = vm::setSpeed,
                 onPitchChange = vm::setPitchSemitones,
                 onReset = vm::resetSpeedPitch,
@@ -151,6 +161,7 @@ fun PlayerScreen(
 private fun SpeedPitchControls(
     speed: Float,
     pitchSemitones: Float,
+    speedRange: ClosedFloatingPointRange<Float>,
     onSpeedChange: (Float) -> Unit,
     onPitchChange: (Float) -> Unit,
     onReset: () -> Unit,
@@ -158,13 +169,20 @@ private fun SpeedPitchControls(
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text("变速变调", style = MaterialTheme.typography.titleSmall)
 
-        // 速度:0.5–2.0x(F2.1)。step 0.05 让滑块有级进感
+        // 速度：区间来自设置 [1/X, X]；**对数尺度**（区间几何对称 → 1.0× 恒定居中）。
+        val lo = speedRange.start
+        val hi = speedRange.endInclusive
+        val ratio = (hi / lo).coerceAtLeast(1.000001f)
+        val lnRatio = ln(ratio)
+        val frac = if (lnRatio > 1e-6f) {
+            (ln(speed.coerceIn(lo, hi) / lo) / lnRatio).coerceIn(0f, 1f)
+        } else 0.5f
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("速度", modifier = Modifier.width(64.dp))
             Slider(
-                value = speed,
-                onValueChange = onSpeedChange,
-                valueRange = PlayerViewModel.MIN_SPEED..PlayerViewModel.MAX_SPEED,
+                value = frac,
+                onValueChange = { f -> onSpeedChange(lo * ratio.pow(f)) },
+                valueRange = 0f..1f,
                 modifier = Modifier.weight(1f),
             )
             Text(
