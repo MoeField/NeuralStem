@@ -72,7 +72,9 @@ fun PlayerScreen(
 
             Button(
                 onClick = vm::togglePlayPause,
-                enabled = state.isReady,
+                // ★用 hasMedia（已载入）而非 isReady（会随 seek 的 READY→BUFFERING→READY 抖动）——
+                //   否则松手时按钮会短暂置灰再恢复 = “闪一下”。
+                enabled = state.hasMedia,
             ) {
                 Text(if (state.isPlaying) "暂停" else "播放")
             }
