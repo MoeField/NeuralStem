@@ -261,6 +261,23 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
     // ---------------- 分离(Task 4.2:委托给进程级 Repository) ----------------
 
     /**
+     * ★Step10（分离页重构）：把**宿主提供的源文件**（当前播放曲经 [CurrentTrackBridge]
+     * 拷到 cacheDir）设为待分离输入，并解析元信息。
+     *
+     * ★ **suspend**（而非内部 `viewModelScope.launch`）：因为紧接着会调 [startSeparation]，
+     *   而后者**同步读 [pendingFile]**。若 fire-and-forget，startSeparation 会在 probe
+     *   完成前读到 null → **静默不分离**（真机 E2E 抽到的竞态 bug）。故由调用方 await。
+     *
+     * @return 是否解析成功（成功才可 startSeparation）
+     */
+    suspend fun selectSeparationSource(file: File): Boolean {
+        val ok = loadLocalFileInternal(file)
+        Log.i(TAG, "selectSeparationSource: ${file.absolutePath} ok=$ok")
+        return ok
+    }
+
+
+    /**
      * 订阅 repo 状态 → 镜像到页面状态。
      *
      * 修复(真机实测发现):按钮路径 [startSeparation] 原先只调 repo.start()
