@@ -1,5 +1,6 @@
 package pub.miku.neuralstem.settings
 
+import android.app.Application
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -14,6 +15,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -21,11 +23,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import pub.miku.neuralstem.player.PlayerViewModel
@@ -147,6 +152,84 @@ fun SettingsScreen(
                 },
             )
         }
+
+        HorizontalDivider()
+
+        // Step5：转盘一圈时长
+        DeckTurnSetting()
+
+        HorizontalDivider()
+
+        // Step5：变速范围（单一项 X → 滑块 [1/X, X]）
+        SpeedRangeSetting()
+    }
+}
+
+/**
+ * Step5：设置「转盘一圈时长」（秒）。1.0× 时转一圈 = 该值；实际 = 值 ÷ speed。
+ * 范围 9–36，step 3，默认 18。
+ */
+@Composable
+private fun DeckTurnSetting() {
+    val ctx = LocalContext.current
+    val repo = remember { SettingsRepository(ctx.applicationContext as Application) }
+    var sec by remember { mutableIntStateOf(repo.deckSecondsPerTurn) }
+
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text("转盘一圈时长", style = MaterialTheme.typography.titleMedium)
+        Text(
+            "当前 $sec 秒（1.0× 时；实际一圈 = $sec ÷ 速度）",
+            style = MaterialTheme.typography.bodySmall,
+        )
+        Slider(
+            value = sec.toFloat(),
+            onValueChange = {
+                val v = it.toInt()
+                    .let { x -> (x / SettingsRepository.DECK_SEC_STEP) * SettingsRepository.DECK_SEC_STEP }
+                    .coerceIn(SettingsRepository.DECK_SEC_MIN, SettingsRepository.DECK_SEC_MAX)
+                sec = v
+                repo.deckSecondsPerTurn = v
+            },
+            valueRange = SettingsRepository.DECK_SEC_MIN.toFloat()..SettingsRepository.DECK_SEC_MAX.toFloat(),
+            steps = (SettingsRepository.DECK_SEC_MAX - SettingsRepository.DECK_SEC_MIN) / SettingsRepository.DECK_SEC_STEP - 1,
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}
+
+/**
+ * Step5：设置「变速范围」（单一项 X，>1）。速度滑块区间 = [1/X, X]。
+ * X ∈ [1.2, 4]，step 0.1，默认 1.4（→ 滑块 [0.714, 1.4]）。本 X 滑杆为**线性**。
+ */
+@Composable
+private fun SpeedRangeSetting() {
+    val ctx = LocalContext.current
+    val repo = remember { SettingsRepository(ctx.applicationContext as Application) }
+    var x by remember { mutableFloatStateOf(repo.speedRangeX) }
+
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text("速度范围", style = MaterialTheme.typography.titleMedium)
+        Text(
+            "X = %.1f  →  速度区间 [%.2fx, %.2fx]".format(x, 1f / x, x),
+            style = MaterialTheme.typography.bodySmall,
+        )
+        Slider(
+            value = x,
+            onValueChange = { v ->
+                val q = SpeedRange.quantizeX(v)
+                x = q
+                repo.speedRangeX = q
+            },
+            // 无刻度点
+            steps = 0,
+            valueRange = SpeedRange.X_MIN..SpeedRange.X_MAX,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Text(
+            "X 同时决定速度滑块的上下限（下限 = 1/X）。默认 1.4 → [0.71, 1.40]。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 

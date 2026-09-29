@@ -466,10 +466,13 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
      * Task 4.4:多轨模式下改经 [MultiTrackController] 下发,**全轨联动**(F4.4)。
      */
     fun setSpeed(speed: Float) {
-        val s = speed.coerceIn(MIN_SPEED, MAX_SPEED)
+        // ★Step5：夹紧到设置项 X 派生的范围 [1/X, X]（UI 已限制，此为防御层）。
+        val lo = settingsRepo.speedSliderMin
+        val hi = settingsRepo.speedSliderMax
+        val s = if (speed.isFinite()) speed.coerceIn(lo, hi) else 1f
         applyPlaybackParameters(speed = s)
         _state.value = _state.value.copy(speed = s)
-        Log.i(TAG, "setSpeed: $s")
+        Log.i(TAG, "setSpeed: $s (range [$lo, $hi])")
     }
 
     /**

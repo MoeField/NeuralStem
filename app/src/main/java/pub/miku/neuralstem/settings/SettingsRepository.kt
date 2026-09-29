@@ -82,6 +82,34 @@ class SettingsRepository(app: Application) {
         }
     }
 
+    /**
+     * 黑胶转盘「基准一圈时长」（秒）。1.0× 时转一圈 = 该值；实际 = 值 ÷ speed。
+     * 范围 [DECK_SEC_MIN, DECK_SEC_MAX]，步长 [DECK_SEC_STEP]，默认 [DECK_SEC_DEFAULT]。
+     */
+    var deckSecondsPerTurn: Int
+        get() = prefs.getInt(KEY_DECK_SEC, DECK_SEC_DEFAULT)
+        set(value) {
+            val v = value.coerceIn(DECK_SEC_MIN, DECK_SEC_MAX)
+            prefs.edit().putInt(KEY_DECK_SEC, v).apply()
+        }
+
+    /**
+     * 变速范围设置（单一项 X，>1）。速度滑块区间 = **[1/X, X]**。
+     * X ∈ [SpeedRange.X_MIN, X_MAX]，step [SpeedRange.X_STEP]，默认 [SpeedRange.X_DEFAULT]。
+     */
+    var speedRangeX: Float
+        get() = prefs.getFloat(KEY_SPEED_X, SpeedRange.X_DEFAULT)
+        set(v) {
+            val q = SpeedRange.quantizeX(v)
+            prefs.edit().putFloat(KEY_SPEED_X, q).apply()
+        }
+
+    /** 派生：速度滑块下限 = 1 / X（X 已夹紧，恒 > 0）。 */
+    val speedSliderMin: Float get() = SpeedRange.sliderMin(speedRangeX)
+
+    /** 派生：速度滑块上限 = X。 */
+    val speedSliderMax: Float get() = SpeedRange.sliderMax(speedRangeX)
+
     companion object {
         private const val TAG = "SettingsRepo"
         private const val PREFS = "settings"
@@ -89,5 +117,12 @@ class SettingsRepository(app: Application) {
         private const val KEY_EQ_ENABLED = "eq_enabled"
         private const val KEY_BENCH_PROMPTED = "benchmark_prompted"
         private const val KEY_REPEAT_MODE = "repeat_mode"
+        private const val KEY_DECK_SEC = "deck_seconds_per_turn"
+        private const val KEY_SPEED_X = "speed_range_x"
+
+        const val DECK_SEC_DEFAULT = 18
+        const val DECK_SEC_MIN = 9
+        const val DECK_SEC_MAX = 36
+        const val DECK_SEC_STEP = 3
     }
 }
