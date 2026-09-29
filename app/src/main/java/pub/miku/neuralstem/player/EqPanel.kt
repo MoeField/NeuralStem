@@ -49,10 +49,12 @@ fun EqPanel(
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         if (!available) {
+            // ★修复：`available=false` 多数情况是“**尚未播放**（无 audio 会话）”，不是“不支持”。
+            //   用中性色（非 error）提示，避免误报“本机不支持”。
             Text(
-                "本机不支持均衡器（bandCount=0）",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
+                "尚未就绪：播放一首歌后 EQ 可用。",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             return@Column
         }
