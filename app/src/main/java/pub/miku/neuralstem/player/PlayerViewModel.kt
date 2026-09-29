@@ -26,6 +26,7 @@ import kotlinx.coroutines.launch
 import java.io.File
 import org.json.JSONArray
 import org.json.JSONObject
+import pub.miku.neuralstem.settings.SettingsRepository
 
 /**
  * Task 1 基础播放器(guide F0.1–F0.4, N3)。
@@ -61,6 +62,8 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         val eqEnabled: Boolean = false,
         /** M2-D:硬件是否支持 EQ(不支持时 UI 应置灰) */
         val eqAvailable: Boolean = false,
+        /** ★Step3：播放模式（循环按钮显示）。 */
+        val repeatMode: SettingsRepository.RepeatMode = SettingsRepository.RepeatMode.SEQUENTIAL,
     )
 
     /** Task 4.4:单条轨的 UI 状态(F4.2/F4.3) */
@@ -124,6 +127,9 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         override fun attachEq(sessionIds: List<Int>, enabled: Boolean) { /* EQ 由 Service 管 */ }
         override fun detachEq() { /* EQ 由 Service 管 */ }
     })
+
+    /** 设置持久化（Step3：循环按钮的播放模式）。 */
+    private val settingsRepo = SettingsRepository(getApplication())
 
     /**
      * 对外暴露的 player(单轨)。连接完成前为 null。
@@ -247,6 +253,8 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             .build()
         p.setMediaItem(item)   // 触发 onMediaItemTransition → 波形提取
         p.prepare()
+        // ★Step3：应用当前播放模式（循环按钮）
+        p.repeatMode = _state.value.repeatMode.toPlayerRepeatMode()
         p.play()
         _state.value = _state.value.copy(fileName = displayName)
     }
@@ -256,6 +264,19 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         // Service 在其 play/pause 时同步跟随轨。
         val p = mediaController ?: return
         if (p.isPlaying) p.pause() else p.play()
+    }
+
+    /** ★Step3：循环按钮 —— 依次切换播放模式（顺序 → 循环歌单 → 单曲循环 → 顺序）。 */
+    fun cycleRepeatMode() {
+        setRepeatMode(_state.value.repeatMode.next())
+    }
+
+    /** ★Step3：设置播放模式（持久化 + 应用到 player + 更新 UI）。 */
+    fun setRepeatMode(mode: SettingsRepository.RepeatMode) {
+        settingsRepo.repeatMode = mode
+        mediaController?.repeatMode = mode.toPlayerRepeatMode()
+        _state.value = _state.value.copy(repeatMode = mode)
+        Log.i(TAG, "setRepeatMode: $mode")
     }
 
     /** F0.3 进度跳转;Task 4.4:多轨模式下全轨同步 seek(F4.4,由 router 广播) */
@@ -549,4 +570,11 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             return "%d:%02d".format(totalSec / 60, totalSec % 60)
         }
     }
+}
+
+/** ★Step3：设置层的 [SettingsRepository.RepeatMode] → media3 [Player.repeatMode]。 */
+private fun SettingsRepository.RepeatMode.toPlayerRepeatMode(): Int = when (this) {
+    SettingsRepository.RepeatMode.SEQUENTIAL -> Player.REPEAT_MODE_OFF
+    SettingsRepository.RepeatMode.LOOP_ALL -> Player.REPEAT_MODE_ALL
+    SettingsRepository.RepeatMode.LOOP_ONE -> Player.REPEAT_MODE_ONE
 }
