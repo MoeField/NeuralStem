@@ -74,6 +74,14 @@ class SessionStateMachine(private val effects: Effects) {
     var mode: SessionMode = SessionMode.Single
         private set
 
+    /**
+     * 从外部（Service 快照）**同步** [mode]，**不触发副作用**。
+     * 用于把“真源”状态带入本状态机（而非当作一次转移）。
+     */
+    fun syncMode(newMode: SessionMode) {
+        mode = newMode
+    }
+
     var eq: EqState = EqState.Unsupported
         private set
 

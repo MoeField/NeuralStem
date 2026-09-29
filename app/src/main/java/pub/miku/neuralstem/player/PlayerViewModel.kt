@@ -114,6 +114,18 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     private val pendingMtCommands = mutableListOf<Pair<String, Bundle>>()
 
     /**
+     * ★状态机（骨架接入 · **I1**）：**换队列前先退多轨**的**单一判定点**。
+     * - `mode` 由 Service 快照同步（见 [applyTracksSnapshot]）；
+     * - 副作用 [SessionStateMachine.Effects.closeFollowers] **复用现有 [exitMultiTrack]**（下发 `CMD_EXIT`）。
+     * - EQ 仍由 Service 管，故 attach/detach 暂为 no-op（I2 后续接入）。
+     */
+    private val session = SessionStateMachine(object : SessionStateMachine.Effects {
+        override fun closeFollowers() = exitMultiTrack()
+        override fun attachEq(sessionIds: List<Int>, enabled: Boolean) { /* EQ 由 Service 管 */ }
+        override fun detachEq() { /* EQ 由 Service 管 */ }
+    })
+
+    /**
      * 对外暴露的 player(单轨)。连接完成前为 null。
      * 类型为 [Player] —— [MediaController] 与 ExoPlayer 均实现它,
      * 所以既有调用点无需改动。
@@ -219,6 +231,9 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 真正的载入逻辑(连接就绪后调用)。 */
     private fun doLoad(p: Player, uri: Uri, displayName: String) {
+        // ★I1（状态机不变量）：换曲前若处于多轨 → 先退多轨（关跟随轨）。
+        //   否则跟随轨 ExoPlayer 不会被停 → 新曲（主轨）+ 旧 stems（跟随轨）**两首同时响**。
+        session.beforeSetQueue()
         Log.i(TAG, "doLoad: $displayName ($uri)")
         // V2(N4):把曲目名放进 MediaMetadata,供系统媒体通知显示
         val item = MediaItem.Builder()
@@ -279,6 +294,11 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             }.getOrDefault(emptyList())
         }
         val inMt = tracks.isNotEmpty()
+        // ★状态机：把“真源”的多轨状态同步进来（不触发副作用）。
+        session.syncMode(
+            if (inMt) SessionMode.MultiTrack("primary", tracks.map { it.id })
+            else SessionMode.Single,
+        )
         // 多轨时 isReady 以 UI 意义上“轨已载入”为准；- 时长等待播放器 READY 后由 controller 监听补
         _state.value = _state.value.copy(
             isMultiTrack = inMt,
