@@ -6,7 +6,9 @@ import android.app.Application
 import android.content.ComponentName
 import android.net.Uri
 import android.os.Bundle
+import android.os.SystemClock
 import android.util.Log
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.MediaItem
@@ -28,6 +30,7 @@ import kotlinx.coroutines.launch
 import java.io.File
 import org.json.JSONArray
 import org.json.JSONObject
+import kotlin.math.abs
 import pub.miku.neuralstem.settings.SettingsRepository
 
 /**
@@ -83,6 +86,8 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         val eqLevelsMb: ShortArray = ShortArray(0),
         /** ★Step3：播放模式（循环按钮显示）。 */
         val repeatMode: SettingsRepository.RepeatMode = SettingsRepository.RepeatMode.SEQUENTIAL,
+        /** ★R3：内嵌封面（黑胶内圈）；null = 无。 */
+        val cover: ImageBitmap? = null,
     )
 
     /** Task 4.4:单条轨的 UI 状态(F4.2/F4.3) */
@@ -97,8 +102,45 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     private val _state = MutableStateFlow(PlayerState())
     val state: StateFlow<PlayerState> = _state.asStateFlow()
 
+    /**
+     * ★R4：**高频进度独立流**（避免每 100ms 整体换 PlayerState → 整页重组/闪）。
+     * 只有进度条/转盘订阅它。
+     */
+    data class Progress(val positionMs: Long = 0L, val durationMs: Long = 0L)
+    private val _progress = MutableStateFlow(Progress())
+    val progressFlow: StateFlow<Progress> = _progress.asStateFlow()
+    val progress: Progress get() = _progress.value
+
+    /** ★R4：UI 时钟锚点（用本地单调时钟外推平滑时间轴，不随 10Hz 轮询跳动）。 */
+    data class UiClock(
+        val positionMs: Long,
+        val realtimeMs: Long,
+        val speed: Float,
+        val isPlaying: Boolean,
+        val durationMs: Long,
+    ) {
+        fun extrapolate(nowRealtimeMs: Long): Long {
+            if (!isPlaying) return positionMs
+            val dt = nowRealtimeMs - realtimeMs
+            return positionMs + (dt * speed).toLong()
+        }
+    }
+    private val _anchor = MutableStateFlow<UiClock?>(null)
+    val anchorFlow: StateFlow<UiClock?> = _anchor.asStateFlow()
+
+    /** ★R4：上次显示进度（单调化）；seek 锁定目标。 */
+    @Volatile
+    private var lastShownMs: Long = -1L
+    @Volatile
+    private var pendingSeekMs: Long? = null
+
     /** 波形提取器(Task 2);scope 用 VM 的,切歌自动取消上次 */
     private val waveformExtractor = WaveformExtractor(viewModelScope).apply {
+        contextProvider = { getApplication<Application>() }
+    }
+
+    /** ★R3：封面提取器（黑胶内圈）。 */
+    private val coverExtractor = CoverExtractor(viewModelScope).apply {
         contextProvider = { getApplication<Application>() }
     }
 
@@ -226,10 +268,28 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
 
+            override fun onPositionDiscontinuity(
+                oldPosition: Player.PositionInfo,
+                newPosition: Player.PositionInfo,
+                reason: Int,
+            ) {
+                // ★R4：播放头**不连续**（seek / 重播到头）→ 重置单调化基准 + 锚点/进度。
+                lastShownMs = newPosition.positionMs
+                pendingSeekMs = null
+                _anchor.value = null
+                _progress.value = Progress(newPosition.positionMs, _progress.value.durationMs)
+            }
+
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-                // Task 2:切歌时重新提取波形
+                // ★R3：切歌清理：波形/封面重提取；进度/锚点重置（避免旧状态残留）。
+                lastShownMs = -1L
+                pendingSeekMs = null
+                _progress.value = Progress(0L, _progress.value.durationMs)
+                _anchor.value = null
+                _state.value = _state.value.copy(waveform = null, cover = null)
                 mediaItem?.localConfiguration?.uri?.let { uri ->
                     waveformExtractor.extractAsync(AudioSource.MediaUri(uri))
+                    coverExtractor.extractAsync(uri)
                 }
             }
 
@@ -285,19 +345,85 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         Log.i(TAG, "VM init (instance=${hashCode()})")
         // V2(guide N4):连接 PlaybackService 的 session 拿 MediaController
         connectToService()
-        // 进度轮询。放在 ViewModel scope,VM 销毁即停。
+        // Task 2 / R3：把波形与封面流镜像到 UI state
+        // （★ 9-24 之前**未收集** → 波形/封面永不显示，即历史“坑 55”）。
+        viewModelScope.launch {
+            waveformExtractor.waveform.collect { wf ->
+                _state.value = _state.value.copy(waveform = wf)
+            }
+        }
+        viewModelScope.launch {
+            coverExtractor.cover.collect { c ->
+                _state.value = _state.value.copy(cover = c)
+            }
+        }
+        // 进度轮询（★R4：写入独立 [progressFlow] + 锚点；不再整体换 state）。
         // M3/P2(v2):session 的 player = Service 的 singlePlayer（多轨时它是主轨），
         // 因此 controller 的 currentPosition/duration 在两种模式下都有意义。
         viewModelScope.launch {
+            // 上一次采样（用于“离群点”判定）
+            var prevPos = -1L
+            var prevReal = 0L
+            var overDriftStreak = 0
             while (isActive) {
                 val p = mediaController
-                if (p != null && p.isPlaying) {
-                    _state.value = _state.value.copy(
-                        positionMs = p.currentPosition,
-                        durationMs = p.duration.coerceAtLeast(0L),
-                    )
+                if (p != null) {
+                    val dur = p.duration.coerceAtLeast(0L)
+                    var pos = p.currentPosition
+                    val isPlaying = p.isPlaying
+                    // ★ seek 锁定：seek 后 currentPosition 可能短暂回退到旧值 → 防回跳。
+                    val target = pendingSeekMs
+                    if (target != null) {
+                        if (pos >= target - SEEK_LOCK_TOLERANCE_MS) {
+                            pendingSeekMs = null
+                            lastShownMs = pos
+                        } else {
+                            pos = target
+                            lastShownMs = pos
+                        }
+                    } else {
+                        // 单调化：仅压制小回退（抖动），大回退（重播/跳转）必接受。
+                        val back = lastShownMs - pos
+                        if (back > 0 && back < MONOTONIC_TOLERANCE_MS) {
+                            pos = lastShownMs
+                        } else {
+                            lastShownMs = pos
+                        }
+                    }
+                    _progress.value = Progress(pos, dur)
+                    if (dur > 0 && _state.value.durationMs != dur) {
+                        _state.value = _state.value.copy(durationMs = dur)
+                    }
+                    // ★ 锚点（鲁棒）：离群点不重锚；需连续两次漂移超阈才重锚。
+                    val nowReal = SystemClock.elapsedRealtime()
+                    val a = _anchor.value
+                    val forceAnchor = a == null || !isPlaying || !a.isPlaying ||
+                        a.speed != _state.value.speed || dur != a.durationMs
+                    val outlier = if (prevPos >= 0 && isPlaying) {
+                        val dPos = pos - prevPos
+                        val dReal = (nowReal - prevReal).coerceAtLeast(1L)
+                        val expected = dReal * _state.value.speed
+                        dPos < 0 || dPos > expected * 2.5f + 50f
+                    } else {
+                        false
+                    }
+                    val drift = if (a != null) abs(a.extrapolate(nowReal) - pos) else 0L
+                    if (forceAnchor) {
+                        _anchor.value = UiClock(pos, nowReal, _state.value.speed, isPlaying, dur)
+                        overDriftStreak = 0
+                    } else if (!outlier && drift > ANCHOR_DRIFT_TOLERANCE_MS) {
+                        overDriftStreak++
+                        if (overDriftStreak >= 2) {
+                            _anchor.value = UiClock(pos, nowReal, _state.value.speed, isPlaying, dur)
+                            overDriftStreak = 0
+                        }
+                    } else {
+                        overDriftStreak = 0
+                    }
+                    prevPos = pos
+                    prevReal = nowReal
                 }
-                delay(100)
+                delay(PROGRESS_POLL_MS)
             }
         }
     }
@@ -363,8 +489,16 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     /** F0.3 进度跳转;Task 4.4:多轨模式下全轨同步 seek(F4.4,由 router 广播) */
     fun seekTo(positionMs: Long) {
         val p = mediaController ?: return
-        p.seekTo(positionMs.coerceIn(0L, p.duration.coerceAtLeast(0L)))
-        _state.value = _state.value.copy(positionMs = positionMs)
+        val clamped = positionMs.coerceIn(0L, p.duration.coerceAtLeast(0L))
+        // ★R4：seek 后立刻用锚点外推（UI 立即到新位置），并锁定防“回跳 1-2s”。
+        pendingSeekMs = clamped
+        lastShownMs = clamped
+        _anchor.value = UiClock(
+            clamped, SystemClock.elapsedRealtime(),
+            _state.value.speed, _state.value.isPlaying, p.duration.coerceAtLeast(0L),
+        )
+        _progress.value = _progress.value.copy(positionMs = clamped)
+        p.seekTo(clamped)
     }
 
     // ---------------- Task 4.4 / M3-P2:多轨播放（控制权在 PlaybackService） ----------------
@@ -664,6 +798,18 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
 
         /** ★防抖窗口（ms）：变速变调只保留最后一次下发（见 [applyPlaybackParameters]）。 */
         private const val PARAM_DEBOUNCE_MS = 150L
+
+        /** ★R4：进度轮询间隔（ms）。 */
+        private const val PROGRESS_POLL_MS = 100L
+
+        /** ★R4：seek 锁定容忍（ms）。 */
+        private const val SEEK_LOCK_TOLERANCE_MS = 300L
+
+        /** ★R4：进度单调化容忍（ms）——仅压制小于此值的回退抖动，大回退必接受。 */
+        private const val MONOTONIC_TOLERANCE_MS = 1_000L
+
+        /** ★R4：锚点漂移阈值（ms）——超过则（连续两次后）重锚。 */
+        private const val ANCHOR_DRIFT_TOLERANCE_MS = 1_800L
 
         /** ★bug C 傅底：致命播放错误自动重建 pipeline 的最大次数。 */
         private const val MAX_AUDIO_SINK_RECOVERIES = 3
