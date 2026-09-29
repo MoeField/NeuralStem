@@ -92,6 +92,8 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         val separationOn: Boolean = false,
         /** ★U3：是否已有可用分离结果（无则开开关需先分离）。 */
         val stemsAvailable: Boolean = false,
+        /** ★Step10：当前播放曲的 uri（分离页用它作输入）。 */
+        val currentUri: String? = null,
     )
 
     /** Task 4.4:单条轨的 UI 状态(F4.2/F4.3) */
@@ -479,7 +481,8 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         originalName = displayName
         isMultiTrackLoaded = false
         _state.value = _state.value.copy(
-            fileName = displayName, hasMedia = true, playWhenReady = true, separationOn = false,
+            fileName = displayName, hasMedia = true, playWhenReady = true,
+            separationOn = false, currentUri = uri.toString(),
         )
     }
 
@@ -488,6 +491,11 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         // Service 在其 play/pause 时同步跟随轨。
         val p = mediaController ?: return
         if (p.isPlaying) p.pause() else p.play()
+    }
+
+    /** 显式播放（幂等）。用于“切多轨后确保在播”。 */
+    fun play() {
+        mediaController?.play()
     }
 
     /** ★Step3：循环按钮 —— 依次切换播放模式（顺序 → 循环歌单 → 单曲循环 → 顺序）。 */

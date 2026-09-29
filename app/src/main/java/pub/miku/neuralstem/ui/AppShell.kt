@@ -15,6 +15,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -65,6 +66,8 @@ fun AppShell(
     var current by remember { mutableStateOf(initial) }
     // 歌单 VM（供歌单页显示 + 点曲时解析 uri）
     val playlistVm: PlaylistViewModel = viewModel()
+    // 播放器状态（供分离页传“当前曲”）
+    val playerState by playerVm.state.collectAsState()
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -93,15 +96,21 @@ fun AppShell(
 
             AppDestination.SEPARATE -> SeparationScreen(
                 modifier = Modifier.fillMaxSize().padding(padding),
+                // 当前播放曲信息（由宿主注入, 避免平级 VM 相互引用）
+                fileName = playerState.fileName,
+                separationOn = playerState.separationOn,
+                currentUri = playerState.currentUri,
+                onToggleSeparation = { on -> playerVm.toggleSeparation(on) },
                 onPlayStems = { done ->
-                    // 直接回调播放器 VM —— 不再走 setResult / 跨 Activity
                     playerVm.loadMultiTrack(
                         listOf(
                             Triple("vocals", "人声", done.vocalsFile),
                             Triple("accompaniment", "伴奏", done.accompanimentFile),
                         ),
                     )
-                    playerVm.togglePlayPause()
+                    playerVm.markStemsAvailable()
+                    // ★显式 play（幂等）: 后台分离期间原曲在播, 不能用 togglePlayPause（会暂停）。
+                    playerVm.play()
                     current = AppDestination.PLAYER
                 },
                 onPlayStems4 = { files ->
@@ -112,7 +121,8 @@ fun AppShell(
                             Triple(Spleeter4Dsp.STEM_KINDS[i], labels.getOrElse(i) { "轨$i" }, f)
                         },
                     )
-                    playerVm.togglePlayPause()
+                    playerVm.markStemsAvailable()
+                    playerVm.play()
                     current = AppDestination.PLAYER
                 },
             )
