@@ -1,58 +1,42 @@
 package pub.miku.neuralstem.ui.theme
 
-import android.app.Activity
-import android.os.Build
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.platform.LocalContext
 
-private val DarkColorScheme = darkColorScheme(
-    primary = Purple80,
-    secondary = PurpleGrey80,
-    tertiary = Pink80
-)
-
-private val LightColorScheme = lightColorScheme(
-    primary = Purple40,
-    secondary = PurpleGrey40,
-    tertiary = Pink40
-
-    /* Other default colors to override
-    background = Color(0xFFFFFBFE),
-    surface = Color(0xFFFFFBFE),
-    onPrimary = Color.White,
-    onSecondary = Color.White,
-    onTertiary = Color.White,
-    onBackground = Color(0xFF1C1B1F),
-    onSurface = Color(0xFF1C1B1F),
-    */
+/**
+ * 阶段 UI / U0：**仅深色**主题（DJ 控制台风格）。
+ *
+ * 用户决策：「只提供深色吧」。
+ * - 不再依赖系统深浅色（去掉 `isSystemInDarkTheme`）；
+ * - 不再使用**动态取色**（`dynamicDarkColorScheme`）—— 那会覆盖我们的青绿强调色；
+ * - 保留 `darkTheme` 形参仅为**兼容旧调用点**（已恒为 true）。
+ */
+private val NeuralStemDark = darkColorScheme(
+    primary = Accent,
+    onPrimary = OnAccent,
+    secondary = Accent2,
+    onSecondary = OnAccent2,
+    background = BgDark,
+    onBackground = OnBg,
+    surface = SurfaceDark,
+    onSurface = OnBg,
+    surfaceVariant = SurfaceVariantDark,
+    onSurfaceVariant = OnSurfaceVariantDark,
+    // 容器色（底栏 NavigationBar 用 surfaceContainer；不设会落到 M3 基线紫色）
+    surfaceContainer = SurfaceVariantDark,
+    surfaceContainerHigh = SurfaceDark,
 )
 
 @Composable
 fun NeuralStemTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
-    // Dynamic color is available on Android 12+
-    dynamicColor: Boolean = true,
-    content: @Composable () -> Unit
+    // 兼容旧调用点；恒为深色
+    @Suppress("UNUSED_PARAMETER") darkTheme: Boolean = true,
+    content: @Composable () -> Unit,
 ) {
-    val colorScheme = when {
-        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-            val context = LocalContext.current
-            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-        }
-
-        darkTheme -> DarkColorScheme
-        else -> LightColorScheme
-    }
-
     MaterialTheme(
-        colorScheme = colorScheme,
+        colorScheme = NeuralStemDark,
         typography = Typography,
-        content = content
+        content = content,
     )
 }
