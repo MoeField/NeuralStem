@@ -2,42 +2,54 @@ package pub.miku.neuralstem.player
 
 import android.app.Application
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import pub.miku.neuralstem.settings.SettingsRepository
-import kotlin.math.ln
-import kotlin.math.pow
-import kotlin.ranges.ClosedFloatingPointRange
 
 /**
- * Task 1 基础播放器 UI(guide F0.1–F0.4)。
+ * 播放页（**Step 6：R 系列转盘布局**）。
  *
- * 临时用 Slider 承担进度条;Task 2 会用自绘 Canvas 波形替换(WaveformSeekBar 职责)。
- * Seek 的实现要点:拖动中禁用轮询回写(否则指针打架),松手才 seekTo。
+ * 布局（对齐存档的 R1/R2/R3）：
+ * ```
+ *  ├ 歌名
+ *  ├ 按钮（导入 / 播放暂停 / Spike 分离）
+ *  ├ 转盘固定区：左栏[音调旋钮 + 竖向速度滑块 + 重置] + 黑胶转盘(三环)
+ *  ├ 横向进度条 + [ -10s / 播放 / +10s / 循环 ]
+ *  └ 底部可滚动：分轨混音（多轨时）
+ * ```
+ * ★ 进度流**不在本层 collect**（否则每 100ms 重组整页）→ 传给 [DeckView] / [ProgressBar] 内部 collect。
  */
 @Composable
 fun PlayerScreen(
@@ -46,35 +58,43 @@ fun PlayerScreen(
     onOpenSpike: () -> Unit = {},
 ) {
     val state by vm.state.collectAsState()
-    // ★R4：进度从独立流订阅（不再随 state 整体换对象）。
-    val progress by vm.progressFlow.collectAsState()
+    // ★ 进度流传引用即可（子组件内部 collect）。
+    val progressFlow = vm.progressFlow
 
-    // F0.1 导入:SAF。MIME 故意放宽 —— 文件管理器里 flac/aac/ogg 的 MIME 千奇百怪,
-    // 只用 audio/* 会把很多合法音频灰掉。ExoPlayer 播不了会走 ERROR 状态。
     val context = LocalContext.current
-    // Step5：变速范围设置（速度滑块区间 = [1/X, X]）
-    val settings = remember { SettingsRepository(context.applicationContext as Application) }
     val pickAudio = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         uri?.let {
+            // ★ 持久化读权限：否则进程重启/后续访问时该 content:// 会变得不可读
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    it, Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                )
+            }
             vm.loadAndPlay(it, queryDisplayName(context, it))
         }
     }
 
+    // 设置（转盘一圈时长 / 变速范围）
+    val settings = remember { SettingsRepository(context.applicationContext as Application) }
+    var secPerTurn by remember { mutableIntStateOf(settings.deckSecondsPerTurn) }
+    LaunchedEffect(settings.deckSecondsPerTurn) { secPerTurn = settings.deckSecondsPerTurn }
+
     Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+        modifier = modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Text("NeuralStem", style = MaterialTheme.typography.headlineMedium)
+        // ---- 顶部：歌名 ----
         Text(
             state.fileName.ifEmpty { "尚未导入音频" },
-            style = MaterialTheme.typography.bodyLarge,
+            style = MaterialTheme.typography.titleMedium,
+            maxLines = 1,
+            textAlign = TextAlign.Center,
         )
 
+        // ---- 按钮 ----
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = {
                 pickAudio.launch(arrayOf("audio/*", "application/ogg", "application/x-flac"))
@@ -82,138 +102,117 @@ fun PlayerScreen(
 
             Button(
                 onClick = vm::togglePlayPause,
-                // ★用 hasMedia（已载入）而非 isReady（会随 seek 的 READY→BUFFERING→READY 抖动）——
-                //   否则松手时按钮会短暂置灰再恢复 = “闪一下”。
+                // ★用 hasMedia（已载入）而非 isReady（会随 seek 抖动）。
                 enabled = state.hasMedia,
-            ) {
-                // ★文字用 playWhenReady（用户意图）而非 isPlaying：seek 缓冲时 isPlaying 会短暂 false
-                //   → 文字会“暂停↔播放”闪一下。
-                Text(if (state.playWhenReady) "暂停" else "播放")
-            }
+            ) { Text(if (state.playWhenReady) "暂停" else "播放") }
 
             Button(onClick = onOpenSpike) { Text("Spike 分离") }
         }
 
-        // ★UI 门控用 hasMedia（“已载入”）而非 isReady（“已就绪”）：
-        //   seek 时 isReady 会随 READY→BUFFERING→READY 抖动 → 整块 UI 移除重建 → 闪。
+        // ★ UI 门控用 hasMedia（“已载入”）。
         if (state.hasMedia) {
-            // 时间显示(F0.4) + ★Step3：循环按钮（三态：顺序 / 循环歌单 / 单曲循环）
+            // ---- 转盘固定区：左栏（R2） + 转盘（R3）----
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().weight(1f),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Text(
-                    "${PlayerViewModel.formatTime(progress.positionMs)} / " +
-                        PlayerViewModel.formatTime(progress.durationMs),
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-                Button(onClick = vm::cycleRepeatMode) {
-                    // softWrap=false + maxLines=1：避免 `↻₁` 被换到下一行
+                // 左栏：音调旋钮（上）+ 竖向速度滑块（下）+ 重置
+                Column(
+                    modifier = Modifier.width(84.dp).fillMaxHeight(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    PitchKnob(
+                        semitones = state.pitchSemitones,
+                        onPitchChange = vm::setPitchSemitones,
+                        knobSize = 48.dp,
+                    )
+                    VerticalSlider(
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                        value = state.speed,
+                        onValueChange = vm::setSpeed,
+                        // ★区间由设置项 X 决定 = [1/X, X]
+                        valueRange = settings.speedSliderMin..settings.speedSliderMax,
+                        label = { "%.2fx".format(it) },
+                        // 连续无步进；1.0× 吸附；对数尺度（1.0 居中）
+                        snapTargets = listOf(1f),
+                        snapTolerance = 0.06f,
+                        logScale = true,
+                    )
                     Text(
-                        "${state.repeatMode.glyph} ${state.repeatMode.label}",
-                        maxLines = 1,
-                        softWrap = false,
+                        "重置",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { vm.resetSpeedPitch() }
+                            .padding(vertical = 6.dp),
+                        textAlign = TextAlign.Center,
                     )
                 }
+
+                // R3：真实黑胶转盘（三环：外环整曲波形+seek / 中环局部滚动 / 内圈自转）
+                DeckView(
+                    modifier = Modifier.weight(1f).fillMaxHeight(),
+                    waveformProvider = { state.waveform },
+                    cover = state.cover,
+                    songName = state.fileName,
+                    progressFlow = progressFlow,
+                    anchorFlow = vm.anchorFlow,
+                    speed = state.speed,
+                    isPlaying = state.isPlaying,
+                    secPerTurn = secPerTurn,
+                    onTogglePlayPause = vm::togglePlayPause,
+                    onSeekFraction = { f ->
+                        val d = progressFlow.value.durationMs
+                        val dur = if (d > 0) d else state.durationMs
+                        if (dur > 0) vm.seekTo((f * dur).toLong())
+                    },
+                )
             }
 
-            // Task 2:波形替换 Slider(F1.1–F1.3)。
-            // waveforms 列表预埋双轨:Task 2 传单轨;Task 4 加 vocals/accompaniment 即叠加
-            WaveformView(
-                waveforms = listOf(state.waveform),
-                positionMs = progress.positionMs,
-                durationMs = progress.durationMs,
+            // ---- 横向进度条 + 控制 ----
+            ProgressBar(
+                progressFlow = progressFlow,
+                anchorFlow = vm.anchorFlow,
                 onSeek = vm::seekTo,
                 modifier = Modifier.fillMaxWidth(),
             )
-
-            // ---- Task 3:变速变调(F2.1–F2.3) ----
-            SpeedPitchControls(
-                speed = state.speed,
-                pitchSemitones = state.pitchSemitones,
-                // ★Step5：区间由设置项 X 决定 = [1/X, X]
-                speedRange = settings.speedSliderMin..settings.speedSliderMax,
-                onSpeedChange = vm::setSpeed,
-                onPitchChange = vm::setPitchSemitones,
-                onReset = vm::resetSpeedPitch,
-            )
-
-            // ---- Task 4.4:多轨混音面板(F4.2/F4.3) ----
-            if (state.isMultiTrack && state.tracks.isNotEmpty()) {
-                TrackMixerPanel(
-                    tracks = state.tracks,
-                    onVolumeChange = vm::setTrackVolume,
-                    onToggleMute = vm::toggleMute,
-                    onToggleSolo = vm::toggleSolo,
-                    onExit = vm::exitMultiTrack,
-                )
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Button(onClick = { vm.seekTo((vm.progress.positionMs - 10_000).coerceAtLeast(0)) }) { Text("-10s") }
+                Button(onClick = vm::togglePlayPause) { Text(if (state.playWhenReady) "暂停" else "播放") }
+                Button(onClick = { vm.seekTo(vm.progress.positionMs + 10_000) }) { Text("+10s") }
+                // ★循环按钮（三态）：字形 + 小字模式名（避免 '↻₁' 换行）
+                Button(onClick = vm::cycleRepeatMode) {
+                    Text(state.repeatMode.glyph, style = MaterialTheme.typography.titleMedium)
+                }
             }
-        }
-    }
-}
-
-/**
- * 变速变调控件(Task 3)。
- *
- * Slider 拖动中用 onValueChange 频繁调用 setSpeed/setPitch —— Sonic 是流式处理器,
- * 参数即改即生效(F2.3);实测拖动无卡顿。
- */
-@Composable
-private fun SpeedPitchControls(
-    speed: Float,
-    pitchSemitones: Float,
-    speedRange: ClosedFloatingPointRange<Float>,
-    onSpeedChange: (Float) -> Unit,
-    onPitchChange: (Float) -> Unit,
-    onReset: () -> Unit,
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text("变速变调", style = MaterialTheme.typography.titleSmall)
-
-        // 速度：区间来自设置 [1/X, X]；**对数尺度**（区间几何对称 → 1.0× 恒定居中）。
-        val lo = speedRange.start
-        val hi = speedRange.endInclusive
-        val ratio = (hi / lo).coerceAtLeast(1.000001f)
-        val lnRatio = ln(ratio)
-        val frac = if (lnRatio > 1e-6f) {
-            (ln(speed.coerceIn(lo, hi) / lo) / lnRatio).coerceIn(0f, 1f)
-        } else 0.5f
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("速度", modifier = Modifier.width(64.dp))
-            Slider(
-                value = frac,
-                onValueChange = { f -> onSpeedChange(lo * ratio.pow(f)) },
-                valueRange = 0f..1f,
-                modifier = Modifier.weight(1f),
-            )
             Text(
-                "%.2fx".format(speed),
-                modifier = Modifier.width(64.dp),
-                style = MaterialTheme.typography.labelLarge,
+                state.repeatMode.label,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
 
-        // 音高:±12 半音(F2.2)。步长 1 半音(乐理意义明显)
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("音高", modifier = Modifier.width(64.dp))
-            Slider(
-                value = pitchSemitones,
-                onValueChange = onPitchChange,
-                valueRange = PlayerViewModel.MIN_PITCH_SEMITONES..PlayerViewModel.MAX_PITCH_SEMITONES,
-                steps = 23,  // ±12 半音 → 24 段,25 个档位
-                modifier = Modifier.weight(1f),
-            )
-            Text(
-                "%+.0f".format(pitchSemitones) + " st",
-                modifier = Modifier.width(64.dp),
-                style = MaterialTheme.typography.labelLarge,
-            )
-        }
-
-        // 非默认时显示重置
-        if (speed != 1f || pitchSemitones != 0f) {
-            Button(onClick = onReset) { Text("重置 1.0x / 0st") }
+        // ---- 底部：分轨混音（多轨时）----
+        Box(modifier = Modifier.fillMaxWidth().heightIn(max = 240.dp)) {
+            if (state.isMultiTrack && state.tracks.isNotEmpty()) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+                ) {
+                    TrackMixerPanel(
+                        tracks = state.tracks,
+                        onVolumeChange = vm::setTrackVolume,
+                        onToggleMute = vm::toggleMute,
+                        onToggleSolo = vm::toggleSolo,
+                        onExit = vm::exitMultiTrack,
+                    )
+                }
+            }
         }
     }
 }
