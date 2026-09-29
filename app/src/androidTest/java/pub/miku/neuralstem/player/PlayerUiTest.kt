@@ -15,11 +15,11 @@ import org.junit.runner.RunWith
 import pub.miku.neuralstem.MainActivity
 
 /**
- * V5 / M2-C — 仪器化测试(Compose 语义查找，非坐标)。
+ * V5 / M2-C / **恢复计划 Step 1** — 仪器化测试(Compose 语义查找，非坐标)。
  *
- * M2-C 后主页由 [pub.miku.neuralstem.ui.AppShell] 托管:
- * - 顶栏标题 = 当前目的地("播放器"/"分离"/…)
- * - 左上角 ☰ 打开 Drawer(无需 material-icons)
+ * Step 1 后主页由 [pub.miku.neuralstem.ui.AppShell] 托管（**底部导航栏 5 项**）：
+ * - 导航项：`歌单 · 播放器 · 分离 · EQ · 设置`
+ * - 启动页 = 播放器
  * 断言相应调整。
  */
 @RunWith(AndroidJUnit4::class)
@@ -29,9 +29,8 @@ class PlayerUiTest {
     val composeRule = createAndroidComposeRule<MainActivity>()
 
     @Test
-    fun 默认进入播放器页并显示三大入口按钮() {
-        // 注:“播放器”同时出现在顶栏标题与 Drawer 项里（Drawer 始终被组合）,
-        // 故用 onAllNodesWithText(...).onFirst() 断言“至少存在一个且可见”。
+    fun 默认进入播放器页并显示入口() {
+        // 注：导航项文字（如“播放器”）可能多处出现，用 onAllNodesWithText(...).onFirst() 断言“至少存在一个”。
         composeRule.onAllNodesWithText("播放器").onFirst().assertIsDisplayed()
         composeRule.onNodeWithText("导入音频").assertIsDisplayed()
         composeRule.onNodeWithText("播放").assertIsDisplayed()
@@ -41,7 +40,6 @@ class PlayerUiTest {
     @Test
     fun 未导入时提示文案且播放按钮不可用() {
         composeRule.onNodeWithText("尚未导入音频").assertIsDisplayed()
-        // F0.x:未准备好时播放按钮 disabled（enabled = state.isReady）
         composeRule.onNodeWithText("播放").assertIsNotEnabled()
     }
 
@@ -51,21 +49,24 @@ class PlayerUiTest {
     }
 
     @Test
-    fun 汉堡按钮打开Drawer且含各导航项() {
-        // ☰ 是文本按钮(零依赖替代 material-icons)
-        composeRule.onNodeWithText("\u2630").performClick()
-        composeRule.waitForIdle()
-        for (item in listOf("播放器", "分离", "设置", "歌单", "关于")) {
+    fun 底部导航栏含五个导航项() {
+        for (item in listOf("歌单", "播放器", "分离", "EQ", "设置")) {
             composeRule.onAllNodesWithText(item).onFirst().assertIsDisplayed()
         }
     }
 
     @Test
-    fun 点击Spike分离切换到分离页() {
-        // 语义点击(非坐标)。在 AppShell 内现为「切换 Drawer 页」，不再是启动 Activity。
-        composeRule.onNodeWithText("Spike 分离").performClick()
+    fun 点击分离导航项切换到分离页() {
+        // 点底栏「分离」→ 分离页（有「开始分离」按钮，播放器页没有）
+        composeRule.onAllNodesWithText("分离").onFirst().performClick()
         composeRule.waitForIdle()
-        // 分离页有「开始分离」按钮（播放器页没有）→ 用以判定已切换
         composeRule.onNodeWithText("开始分离").assertIsDisplayed()
+    }
+
+    @Test
+    fun 点击EQ导航项显示占位页() {
+        composeRule.onAllNodesWithText("EQ").onFirst().performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("均衡器 (EQ)").assertIsDisplayed()
     }
 }
