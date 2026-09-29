@@ -93,12 +93,16 @@ class SeparationRepository(private val app: Application) {
      * @param engine Spleeter / UVR
      * @param uvrModelName UVR 模型文件名(engine=UVR 时用)
      * @param chunkOverrideFrames 块长覆写(实验用)
+     * @param modelId 该次分离所用模型 id(用于 C2 首片基准写回 [DeviceBenchmark])；null = 不写回
+     * @param onFirstChunkRtf C2:首个音频块完成时回调 (rtf, ms)，供宿主记录/展示
      */
     fun start(
         source: File,
         engine: Int = SherpaSourceSeparation.MODE_SPLEETER,
         uvrModelName: String = "UVR-MDX-NET-Voc_FT.onnx",
         chunkOverrideFrames: Int? = null,
+        modelId: String? = null,
+        onFirstChunkRtf: ((rtf: Float, ms: Long) -> Unit)? = null,
     ) {
         // V4（并发多首歌）：已有任务在跑则先取消旧的，启动新的。
         // 行为定义：后发起的请求胜（用户导入新歌后旧任务无意义）。
@@ -121,7 +125,10 @@ class SeparationRepository(private val app: Application) {
                     return@launch
                 }
 
-                val result = separate(source, engine, uvrModelName, chunkOverrideFrames, outDir)
+                val result = separate(
+                    source, engine, uvrModelName, chunkOverrideFrames, outDir,
+                    modelId = modelId, onFirstChunkRtf = onFirstChunkRtf,
+                )
                 writeCacheManifest(outDir, result)
                 _state.value = result
             } catch (ce: CancellationException) {
@@ -150,8 +157,13 @@ class SeparationRepository(private val app: Application) {
      * `stems-cache/<hash>-spleeter4/`（含 manifest 缓存）。
      *
      * @param modelDir 4 个 fp16 模型目录（默认 `filesDir/spleeter4`）
+     * @param onFirstChunkRtf C2:首块完成回调 (rtf, ms)（best-effort 基准写回）
      */
-    fun start4(source: File, modelDir: File? = null) {
+    fun start4(
+        source: File,
+        modelDir: File? = null,
+        onFirstChunkRtf: ((rtf: Float, ms: Long) -> Unit)? = null,
+    ) {
         if (job?.isActive == true) {
             Log.i(TAG, "start4: cancelling running job (concurrent request wins)")
         }
@@ -168,7 +180,7 @@ class SeparationRepository(private val app: Application) {
                     return@launch
                 }
 
-                val result = separate4(source, dir, outDir)
+                val result = separate4(source, dir, outDir, onFirstChunkRtf = onFirstChunkRtf)
                 writeCacheManifest4(outDir, result)
                 _state.value = result
             } catch (ce: CancellationException) {
@@ -186,6 +198,7 @@ class SeparationRepository(private val app: Application) {
         source: File,
         modelDir: File,
         outDir: File,
+        onFirstChunkRtf: ((rtf: Float, ms: Long) -> Unit)? = null,
     ): State.Done4 = withContext(Dispatchers.IO) {
         val frameSource = SeparationInput.open(app, source)
         var estimator: Spleeter4Estimator? = null
@@ -198,6 +211,9 @@ class SeparationRepository(private val app: Application) {
             val inferStart = System.currentTimeMillis()
 
             val writers = outFiles.map { WavWriter(it, frameSource.channels, frameSource.sampleRate) }
+            // C2（阶段 3.1）：4-stem 首个回调 → RTF 估计（best-effort）。
+            // 用首个块的已处理帧数与耗时换算 RTF（无需显式块长）。
+            var first4 = false
             try {
                 Spleeter4Separator(
                     reader = frameSource,
@@ -205,10 +221,19 @@ class SeparationRepository(private val app: Application) {
                     estimator = estimator!!,
                     onProgress = { done, total ->
                         peak = maxOf(peak, currentPssMb())
+                        val elapsed = System.currentTimeMillis() - inferStart
+                        if (!first4 && done > 0) {
+                            first4 = true
+                            val secs = done.toFloat() / frameSource.sampleRate
+                            val rtf = secs / (elapsed.coerceAtLeast(1L) / 1000f)
+                            Log.i(TAG, "C2 first-slice(4-stem): rtf=${String.format("%.2f", rtf)}")
+                            runCatching { onFirstChunkRtf?.invoke(rtf, elapsed) }
+                                .onFailure { Log.w(TAG, "C2 cb failed", it) }
+                        }
                         _state.value = State.Running(
                             doneFrames = done,
                             totalFrames = total,
-                            elapsedMs = System.currentTimeMillis() - inferStart,
+                            elapsedMs = elapsed,
                             peakPssMb = peak,
                         )
                     },
@@ -411,6 +436,8 @@ class SeparationRepository(private val app: Application) {
         uvrModelName: String,
         chunkOverrideFrames: Int?,
         outDir: File,
+        modelId: String? = null,
+        onFirstChunkRtf: ((rtf: Float, ms: Long) -> Unit)? = null,
     ): State.Done = withContext(Dispatchers.IO) {
         val started = System.currentTimeMillis()
 
@@ -461,6 +488,11 @@ class SeparationRepository(private val app: Application) {
                         //   （separator 输出的「第 0 流/第 1 流」语义固定，我们只是反向接线）
                         val (stream0Writer, stream1Writer) =
                             if (spec.needsStemSwap) aw to vw else vw to aw
+                        // C2（阶段 3.1）：首个音频块耗时 → 单模型 RTF 估计（best-effort）。
+                        // 仅捕获**第一个** onProgress（done == 首块帧数）时的累计耗时，
+                        // 与「块时长/耗时」做 RTF，并经 DeviceBenchmark 写回缓存 + 日志。
+                        val chunkSec = chunk.toFloat() / frameSource.sampleRate
+                        var firstChunkDoneMs = -1L
                         StreamingSeparator(
                             reader = frameSource,
                             vocalsWriter = stream0Writer,
@@ -469,10 +501,29 @@ class SeparationRepository(private val app: Application) {
                             chunkFrames = chunk,
                             onProgress = { done, total ->
                                 peak = maxOf(peak, currentPssMb())
+                                val elapsed = System.currentTimeMillis() - inferStart
+                                // 首个块（必要时扣去模型加载）——只算一次
+                                if (firstChunkDoneMs < 0L && done >= chunk) {
+                                    firstChunkDoneMs = elapsed
+                                    val firstMs = (elapsed - loadMs).coerceAtLeast(1L)
+                                    val firstRtf = chunkSec / (firstMs / 1000f)
+                                    Log.i(
+                                        TAG,
+                                        "C2 first-slice: chunk=${String.format("%.1f", chunkSec)}s " +
+                                            "elapsed=${elapsed}ms (minusLoad=${firstMs}ms) " +
+                                            "rtf=${String.format("%.2f", firstRtf)}",
+                                    )
+                                    if (modelId != null) {
+                                        runCatching { DeviceBenchmark(app).store(modelId, firstRtf, firstMs) }
+                                            .onFailure { Log.w(TAG, "C2 store failed", it) }
+                                    }
+                                    runCatching { onFirstChunkRtf?.invoke(firstRtf, firstMs) }
+                                        .onFailure { Log.w(TAG, "C2 callback failed", it) }
+                                }
                                 _state.value = State.Running(
                                     doneFrames = done,
                                     totalFrames = total,
-                                    elapsedMs = System.currentTimeMillis() - inferStart,
+                                    elapsedMs = elapsed,
                                     peakPssMb = peak,
                                 )
                             },

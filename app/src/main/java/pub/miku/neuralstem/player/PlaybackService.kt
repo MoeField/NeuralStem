@@ -6,8 +6,6 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
-import androidx.media3.common.AudioAttributes
-import androidx.media3.common.C
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
@@ -65,15 +63,8 @@ class PlaybackService : MediaSessionService() {
 
     override fun onCreate() {
         super.onCreate()
-        val player = ExoPlayer.Builder(this)
-            .setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setUsage(C.USAGE_MEDIA)
-                    .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
-                    .build(),
-                /* handleAudioFocus = */ true,
-            )
-            .build()
+        // R2/bugC：用统一构建器开启 AudioTrack 原生变速变调（绕过 Sonic 预填充饥饿）
+        val player = buildAudioExoPlayer(this, handleAudioFocus = true)
         singlePlayer = player
 
         // 主轨播放/暂停/seek → 同步给跟随轨（多轨模式下）
@@ -292,6 +283,35 @@ class PlaybackService : MediaSessionService() {
         return ok()
     }
 
+    /** ★3.2：应用默认微笑曲线（低+3/高+3）。 */
+    private fun handleApplyEqDefaultCurve(): SessionResult {
+        if (eqController.bandCount == 0) return err("EQ unavailable (bandCount=0)")
+        eqController.defaultCurve()
+        requestSnapshotPush()
+        Log.i(TAG, "EQ_DEFAULT_CURVE readBack=${eqController.readBackLevels().toList()}")
+        return ok()
+    }
+
+    /**
+     * ★3.2 诊断：把全部段设为**极端值**并开启（[MultiTrackSession.KEY_EQ_EXTREME]：0=最低 / 1=最高）。
+     * 用于“平台 EQ 到底有没有改变输出”的 A/B 人耳验证。
+     */
+    private fun handleApplyEqExtreme(args: Bundle): SessionResult {
+        val n = eqController.bandCount
+        if (n == 0) return err("EQ unavailable (bandCount=0)")
+        val range = eqController.levelRangeMb   // 如 -1500..1500 mB
+        val toMax = args.getInt(MultiTrackSession.KEY_EQ_EXTREME, 1) == 1
+        val v = (if (toMax) range.last else range.first).toShort()
+        eqController.setBandLevels(ShortArray(n) { v })
+        eqController.setEnabled(true)
+        requestSnapshotPush()
+        Log.i(
+            TAG,
+            "EQ_EXTREME toMax=$toMax mB=$v set=${List(n) { v }} readBack=${eqController.readBackLevels().toList()}",
+        )
+        return ok()
+    }
+
     // ---------------- 多轨：命令处理 ----------------
 
     private fun handleLoadMultiTrack(args: Bundle): SessionResult {
@@ -400,6 +420,8 @@ class PlaybackService : MediaSessionService() {
                 MultiTrackSession.CMD_SET_EQ_BAND -> handleSetEqBand(args)
                 MultiTrackSession.CMD_RESET_EQ -> handleResetEq()
                 MultiTrackSession.CMD_APPLY_EQ_TEST_CURVE -> handleApplyEqTestCurve()
+                MultiTrackSession.CMD_APPLY_EQ_DEFAULT_CURVE -> handleApplyEqDefaultCurve()
+                MultiTrackSession.CMD_APPLY_EQ_EXTREME -> handleApplyEqExtreme(args)
                 MultiTrackSession.CMD_DEBUG_POS -> handleDebugPos()
                 else -> SessionResult(SessionError.ERROR_NOT_SUPPORTED)
             }

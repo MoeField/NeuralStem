@@ -45,8 +45,9 @@ class SpeedPitchTest {
 
     @Test
     fun `速度边界值定义正确`() {
-        assertEquals(0.5f, PlayerViewModel.MIN_SPEED)
-        assertEquals(2.0f, PlayerViewModel.MAX_SPEED)
+        // ★R6：速度范围改由设置项 X 决定，这两个仅作回退默认（默认 X=2 → [0.5, 2.0]）
+        assertEquals(0.5f, PlayerViewModel.FALLBACK_MIN_SPEED)
+        assertEquals(2.0f, PlayerViewModel.FALLBACK_MAX_SPEED)
         assertEquals(-12f, PlayerViewModel.MIN_PITCH_SEMITONES)
         assertEquals(12f, PlayerViewModel.MAX_PITCH_SEMITONES)
     }

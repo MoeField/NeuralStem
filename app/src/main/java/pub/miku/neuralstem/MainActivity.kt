@@ -56,6 +56,8 @@ class MainActivity : ComponentActivity() {
                     object : Player.Listener {
                         override fun onPlayerError(error: PlaybackException) {
                             errorMsg.value = "播放失败: ${error.errorCodeName}"
+                            // 非 UI 通道证据：便于自动化断言是否出现 ERROR_CODE_TIMEOUT
+                            Log.e("PitchBugC", "onPlayerError: ${error.errorCodeName}", error)
                         }
                     }
                 }
@@ -150,6 +152,69 @@ class MainActivity : ComponentActivity() {
                         val info = playerVm.applyEqTestCurve()
                         Log.i("EqDemo", "EQ_TEST $info")
                         Log.i("EqDemo", "EQ_SUMMARY ${playerVm.eqSummary()}")
+                    }
+                }
+
+                // ★ R2/bugC：SoundTouch JNI 烟隄测试（不碰播放，纯 native）
+                //   adb shell am start -n pub.miku.neuralstem/.MainActivity --ez st_selftest true
+                //   证据：logcat 标签 SoundTouchSelfTest
+                if (intent?.getBooleanExtra("st_selftest", false) == true) {
+                    LaunchedEffect(Unit) {
+                        pub.miku.neuralstem.player.SoundTouchSelfTest.run()
+                    }
+                }
+
+                // ★ R2/bugC 自动化入口：复现“音调先调低 → 等一小会 → 再调高”。
+                //   adb shell am start -n pub.miku.neuralstem/.MainActivity \
+                //     -d "file:///...mp3" --ez auto_play true --ez pitch_bugc true
+                //   验证目标：不再报 ERROR_CODE_TIMEOUT；且即便触发也能自动恢复。
+                //   证据走 logcat：PlayerVm / PitchBugC 标签。
+                if (intent?.getBooleanExtra("pitch_bugc", false) == true) {
+                    LaunchedEffect(Unit) {
+                        // 等待音频就绪
+                        delay(4000)
+                        Log.i("PitchBugC", "① 调低：setPitchSemitones(-6)")
+                        playerVm.setPitchSemitones(-6f)
+                        delay(2000)
+                        Log.i("PitchBugC", "② 等待 2s（模拟'等一小会'）")
+                        delay(2000)
+                        Log.i("PitchBugC", "③ 调高：setPitchSemitones(+6)")
+                        playerVm.setPitchSemitones(6f)
+                        delay(3000)
+                        Log.i(
+                            "PitchBugC",
+                            "END state=${playerVm.state.value.isPlaying}/${playerVm.state.value.pitchSemitones} " +
+                                "pos=${playerVm.progress.positionMs} error=${playerVm.state.value.error}",
+                        )
+                    }
+                }
+
+                // ★ R2/bugC 压力测试：复现“速度+音调 短时间多调几次”的致命时间线
+                //   adb shell am start -n pub.miku.neuralstem/.MainActivity \
+                //     -d "file:///...mp3" --ez auto_play true --ez pitch_bugc_stress true
+                //   缘起：真机实测在 20s 内 6 次变速变调后触发
+                //   StuckPlayerException: Player stuck playing with no progress for 10000 ms
+                if (intent?.getBooleanExtra("pitch_bugc_stress", false) == true) {
+                    LaunchedEffect(Unit) {
+                        delay(4000)
+                        Log.i("PitchBugC", "STRESS speed=0.52"); playerVm.setSpeed(0.51736116f)
+                        delay(1800)
+                        Log.i("PitchBugC", "STRESS speed=1.64"); playerVm.setSpeed(1.6388888f)
+                        delay(3300)
+                        Log.i("PitchBugC", "STRESS pitch=-5"); playerVm.setPitchSemitones(-5f)
+                        delay(900)
+                        Log.i("PitchBugC", "STRESS speed=1.86"); playerVm.setSpeed(1.8611112f)
+                        delay(1600)
+                        Log.i("PitchBugC", "STRESS speed=0.90"); playerVm.setSpeed(0.8993056f)
+                        delay(3400)
+                        Log.i("PitchBugC", "STRESS pitch=+8"); playerVm.setPitchSemitones(8f)
+                        // 观察 15s：旧代码会在结尾 10s 后报 TIMEOUT
+                        delay(15000)
+                        Log.i(
+                            "PitchBugC",
+                            "STRESS_END playing=${playerVm.state.value.isPlaying} " +
+                                "pos=${playerVm.progress.positionMs} error=${playerVm.state.value.error}",
+                        )
                     }
                 }
 

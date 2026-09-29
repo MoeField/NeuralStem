@@ -50,13 +50,22 @@ object MultiTrackSession {
     /** 诊断/自动化：应用测试曲线并开启。 */
     const val CMD_APPLY_EQ_TEST_CURVE = "nst.applyEqTestCurve"
 
+    /** ★3.2：应用默认曲线（低+3dB / 高+3dB，“微笑”），首次开启 EQ 时用。 */
+    const val CMD_APPLY_EQ_DEFAULT_CURVE = "nst.applyEqDefaultCurve"
+
+    /**
+     * ★3.2 诊断：把全部段设为**极端值**（[KEY_EQ_EXTREME]：0=全最低 / 1=全最高）并开启。
+     * 用于“平台 EQ 到底有没有改变输出”的 A/B 人耳验证（定案后可移除）。
+     */
+    const val CMD_APPLY_EQ_EXTREME = "nst.applyEqExtreme"
+
     /** **M4/S1 诊断**：日志打印每条轨的 `currentPosition`（验证多轨 seek 后对齐）。 */
     const val CMD_DEBUG_POS = "nst.debugPos"
 
     val ALL_COMMANDS = listOf(
         CMD_LOAD, CMD_SET_VOLUME, CMD_TOGGLE_MUTE, CMD_TOGGLE_SOLO, CMD_EXIT,
         CMD_SET_EQ_ENABLED, CMD_SET_EQ_BAND, CMD_RESET_EQ, CMD_APPLY_EQ_TEST_CURVE,
-        CMD_DEBUG_POS,
+        CMD_APPLY_EQ_DEFAULT_CURVE, CMD_APPLY_EQ_EXTREME, CMD_DEBUG_POS,
     )
 
     // ---------------- 参数 / 快照键 ----------------
@@ -81,6 +90,9 @@ object MultiTrackSession {
 
     /** EQ 段增益（mB）。 */
     const val KEY_EQ_LEVEL_MB = "nst.eqLevelMb"
+
+    /** ★3.2 诊断：EQ 极端测试目标（Bundle int：0=全最低，1=全最高）。 */
+    const val KEY_EQ_EXTREME = "nst.eqExtreme"
 
     /**
      * EQ 状态快照（JSON）：{available, enabled, bands:[freqHz], levels:[mB]}。

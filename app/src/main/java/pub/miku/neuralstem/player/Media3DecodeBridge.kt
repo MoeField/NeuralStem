@@ -38,6 +38,98 @@ object Media3DecodeBridge {
         override fun hashCode(): Int = samples.contentHashCode()
     }
 
+    /**
+     * 流式解码：每解出一块 PCM 就回调，**不累积整曲**（内存 O(chunk)）。
+     *
+     * 用途：波形提取 —— 可实现“边解码边显示”；且不再需要整曲 PCM 驻留
+     * （旧 decodeToPcm 的 5min 立体声 ≈110MB 问题）。
+     *
+     * @param onChunk 回传 (float 交错样本, channels, sampleRate)；返回 false 则**提前终止**
+     *                （用于切歌/取消）。返回的样本为**本块的**，可在回调内立即处理。
+     * @return 是否跑完（false = 被 onChunk 取消）
+     */
+    fun decodeToPcmStreaming(
+        context: Context,
+        uri: Uri,
+        onChunk: (FloatArray, Int, Int) -> Boolean,
+    ): Boolean {
+        val extractor = MediaExtractor()
+        try {
+            extractor.setDataSource(context, uri, null)
+            var trackIndex = -1
+            var format: MediaFormat? = null
+            for (i in 0 until extractor.trackCount) {
+                val f = extractor.getTrackFormat(i)
+                if (f.getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true) {
+                    trackIndex = i; format = f; break
+                }
+            }
+            check(trackIndex >= 0) { "no audio track in $uri" }
+            val mime = format!!.getString(MediaFormat.KEY_MIME)!!
+            extractor.selectTrack(trackIndex)
+
+            val codec = MediaCodec.createDecoderByType(mime)
+            try {
+                codec.configure(format, null, null, 0)
+                codec.start()
+                val info = MediaCodec.BufferInfo()
+                var inputDone = false
+                var outputDone = false
+                var channels = 2
+                var sampleRate = 44100
+                var guard = 0
+
+                while (!outputDone && guard++ < 200_000) {
+                    if (!inputDone) {
+                        val inBuf = codec.dequeueInputBuffer(10_000)
+                        if (inBuf >= 0) {
+                            val buf = codec.getInputBuffer(inBuf)!!
+                            val size = extractor.readSampleData(buf, 0)
+                            if (size < 0) {
+                                codec.queueInputBuffer(inBuf, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                                inputDone = true
+                            } else {
+                                codec.queueInputBuffer(inBuf, 0, size, extractor.sampleTime, 0)
+                                extractor.advance()
+                            }
+                        }
+                    }
+                    when (val outIdx = codec.dequeueOutputBuffer(info, 10_000)) {
+                        MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                            val of = codec.outputFormat
+                            channels = of.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
+                            sampleRate = of.getInteger(MediaFormat.KEY_SAMPLE_RATE)
+                        }
+                        MediaCodec.INFO_TRY_AGAIN_LATER -> { /* busy wait */ }
+                        else -> if (outIdx >= 0) {
+                            val buf = codec.getOutputBuffer(outIdx)!!
+                            buf.position(info.offset)
+                            buf.limit(info.offset + info.size)
+                            val sb = buf.order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
+                            val n = sb.remaining()
+                            val floats = FloatArray(n)
+                            for (i in 0 until n) floats[i] = sb.get(i) / 32768f
+                            codec.releaseOutputBuffer(outIdx, false)
+                            if (n > 0) {
+                                if (!onChunk(floats, channels, sampleRate)) {
+                                    return false   // 取消
+                                }
+                            }
+                            if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) {
+                                outputDone = true
+                            }
+                        }
+                    }
+                }
+                return true
+            } finally {
+                codec.stop(); codec.release()
+            }
+        } finally {
+            extractor.release()
+        }
+    }
+
     fun decodeToPcm(context: Context, uri: Uri): DecodedPcm {
         val extractor = MediaExtractor()
         try {
@@ -115,7 +207,13 @@ object Media3DecodeBridge {
                 val outFormat = codec.outputFormat
                 val channels = outFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
                 val sampleRate = outFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE)
-                val pcmEnc = outFormat.getInteger(MediaFormat.KEY_PCM_ENCODING)
+                // ★ 坑 29：KEY_PCM_ENCODING 是**可选键**，部分设备（如 MTK/BF00A）
+                //   解码器输出 format 里不存在 → getInteger 会 NPE。缺省按 16-bit。
+                val pcmEnc = if (outFormat.containsKey(MediaFormat.KEY_PCM_ENCODING)) {
+                    outFormat.getInteger(MediaFormat.KEY_PCM_ENCODING)
+                } else {
+                    AudioFormat.ENCODING_PCM_16BIT
+                }
                 check(pcmEnc == AudioFormat.ENCODING_PCM_16BIT) {
                     "decoder gave PCM encoding $pcmEnc, only 16-bit handled"
                 }

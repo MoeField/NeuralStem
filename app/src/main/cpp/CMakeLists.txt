@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
-project(neuralstem_spike LANGUAGES C)
+# C++ 用于 SoundTouch（R2/bug C：替换 Sonic）；C 用于既有 JNI 胶水
+project(neuralstem_spike LANGUAGES C CXX)
 
 set(SHERPA_LIB_DIR ${CMAKE_SOURCE_DIR}/sherpa-libs/${ANDROID_ABI})
 
@@ -42,4 +43,47 @@ if(EXISTS ${ORT_LIB_DIR}/libonnxruntime.so)
     target_compile_options(neuralstem_ort PRIVATE -O2)
 else()
     message(WARNING "ort-libs/${ANDROID_ABI}/libonnxruntime.so 不存在，跳过 neuralstem_ort 目标")
+endif()
+
+# ============================================================================
+# R2 / bug C：SoundTouch（内置源码，LGPL-2.1，见 soundtouch/README.vendor.md）
+# 目的：替换 media3 内置 Sonic，避开“频繁变速变调→Sonic 预填充饥饿”导致的
+# StuckPlayerDetector→ERROR_CODE_TIMEOUT。（依据见 research_timescale.artifact.md）
+# 文件清单参照官方 source/Android-lib/jni/Android.mk。
+set(SOUNDTOUCH_DIR ${CMAKE_SOURCE_DIR}/soundtouch)
+
+add_library(soundtouch STATIC
+    ${SOUNDTOUCH_DIR}/source/AAFilter.cpp
+    ${SOUNDTOUCH_DIR}/source/FIFOSampleBuffer.cpp
+    ${SOUNDTOUCH_DIR}/source/FIRFilter.cpp
+    ${SOUNDTOUCH_DIR}/source/cpu_detect_x86.cpp
+    ${SOUNDTOUCH_DIR}/source/sse_optimized.cpp
+    ${SOUNDTOUCH_DIR}/source/mmx_optimized.cpp
+    ${SOUNDTOUCH_DIR}/source/RateTransposer.cpp
+    ${SOUNDTOUCH_DIR}/source/SoundTouch.cpp
+    ${SOUNDTOUCH_DIR}/source/InterpolateCubic.cpp
+    ${SOUNDTOUCH_DIR}/source/InterpolateLinear.cpp
+    ${SOUNDTOUCH_DIR}/source/InterpolateShannon.cpp
+    ${SOUNDTOUCH_DIR}/source/TDStretch.cpp
+    # 注：不包含 BPMDetect.cpp / PeakFinder.cpp —— 那是 BPM 检测，本项目不需要
+)
+target_include_directories(soundtouch PUBLIC
+    ${SOUNDTOUCH_DIR}/include
+    ${SOUNDTOUCH_DIR}/source)
+# 官方 Android.mk 用 -fvisibility=hidden（仅导出 JNI 符号）；-fexceptions 对应 Application.mk
+# ★ 16-bit 整数采样：media3 对 ENCODING_PCM_16BIT 永远 FORMAT_SUPPORTED_DIRECTLY；
+#   float 路径已实测不可行（BF00A 与骁龙 8 Gen3 的 floatSupport 均为 2，见研究文档）。
+#   用 PUBLIC 定义，让链接方（neuralstem_soundtouch）也继承同一宏，否则 SAMPLETYPE 不一致。
+target_compile_options(soundtouch PRIVATE -O2 -fexceptions -fvisibility=hidden)
+target_compile_definitions(soundtouch PUBLIC SOUNDTOUCH_INTEGER_SAMPLES=1)
+
+# JNI 包装（后续步骤填充 soundtouch_jni.cpp）
+if(EXISTS ${CMAKE_SOURCE_DIR}/soundtouch_jni.cpp)
+    add_library(neuralstem_soundtouch SHARED soundtouch_jni.cpp)
+    target_include_directories(neuralstem_soundtouch PRIVATE
+        ${SOUNDTOUCH_DIR}/include)
+    target_link_libraries(neuralstem_soundtouch soundtouch log)
+    target_compile_options(neuralstem_soundtouch PRIVATE -O2 -fexceptions)
+else()
+    message(STATUS "soundtouch_jni.cpp 不存在，暂不构建 neuralstem_soundtouch")
 endif()

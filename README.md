@@ -14,9 +14,9 @@
 |---|---|
 | **导入播放** | 支持 mp3 / wav / flac / aac / m4a / ogg（SAF 文件选择器） |
 | **波形交互** | 自绘波形进度条，拖动即**实时跳转**；已播 / 未播双色区分 |
-| **变速** | 0.5× – 2.0×，**变速不变调**，实时生效不中断 |
+| **变速** | 速度区间可调（设置项 X ∈ [1.2, 4] → 区间 `[1/X, X]`；默认 1.4 即 [0.71×, 1.40×]，最大 [0.25×, 4×]，**对数刻度** 1.0× 居中）；**变速不变调**，实时生效不中断 |
 | **变调** | ±12 半音，**变调不变速**，实时生效不中断 |
-| **本地 AI 分离** | 完全离线推理（sherpa-onnx / ONNX Runtime），输出人声 + 伴奏两条轨 |
+| **本地 AI 分离** | 完全离线推理（sherpa-onnx / ONNX Runtime）：**2 轨**（人声/伴奏）或 **4 轨**（鼓/贝斯/人声/其他）|
 | **多轨混音** | 两条 stem 同步播放，各轨独立音量 / 静音 / 独奏 |
 | **均衡器（EQ）** | 5 段均衡（平台 `audiofx.Equalizer`），单轨 / 多轨均可用 |
 | **后台播放** | 切后台 / 锁屏继续播，带系统媒体通知（`MediaSessionService`） |
@@ -25,8 +25,8 @@
 **核心流程**：
 
 ```
-导入音频 → 播放（波形拖动 / 变速变调 / EQ）
-        → 本地 AI 分离（2 轨）→ 多轨同步播放 + 各轨音量 / 静音 / 独奏
+导入音频 → 播放（波形拖动 / 变速变调 / EQ / 循环模式）
+        → 对当前曲本地 AI 分离（2 轨 或 4 轨）→ 多轨同步播放 + 各轨音量 / 静音 / 独奏
 ```
 
 ---
@@ -73,24 +73,24 @@ adb shell "cat /sdcard/Download/accompaniment.fp16.onnx | run-as $PKG sh -c 'cat
 
 1. 打开应用（主页 = **播放器**）
 2. 点「**导入音频**」选一首歌 → 自动播放
-3. 拖动**波形**跳转；用滑块调**速度 / 音高 / EQ**
-4. 左上角 **☰** 打开侧栏 →「**分离**」
-5. 点「**导入音频**」→「**开始分离**」（首次会提示检测设备性能）
-6. 分离完成 →「**▶ 去多轨播放**」→ 进入多轨混音面板，可调各轨音量 / 静音 / 独奏
+3. 拖动**波形**跳转；左栏**竖向滑块**调速度、**旋钮**调音高；底部控制行有**循环按钮**（顺序 / 循环歌单 / 单曲循环）
+4. 底部导航栏点「**分离**」→ **直接对当前播放曲**分离（无需再导入）→ 选模式（2-stem / 4-stem / 高质量）→「**开始分离**」
+5. 分离完成 → **自动切多轨**（「分离开关」可切回原曲）；「**分轨混音**」卡片调各轨音量 / 静音 / 独奏
+6. 底部导航栏「**EQ**」调均衡；「**设置**」含设备能力 / 模型分档 / EQ 提示 / 关于
 
 ---
 
 ## 界面结构
 
-导航壳（Drawer，左上角 ☰ 或侧滑唤起）：
+**底部导航栏**（5 项）：
 
 | 页面 | 内容 |
 |---|---|
-| **播放器** | 导入 / 播放暂停 / 波形拖动 / 变速变调 / EQ / 多轨混音面板 |
-| **分离** | 导入音频 → 本地分离（真实进度 % / 取消 / 清理缓存）→ 去多轨播放 |
-| **设置** | 设备能力 + 模型三档分组（⚡ 实时 / ⏱ 较慢 / 🐢 很慢）+ 默认引擎 + EQ 开关 |
-| **歌单** | 占位（不在需求内） |
-| **关于** | 版本号 / 构建信息 |
+| **歌单** | 文件 / 文件夹导入、排序、删除、点卡头选中播放（歌单 = 播放队列）|
+| **播放器** | 导入 / 播放暂停 / 波形拖动 / 变速变调 / 循环模式 / 分离开关 / 多轨混音 |
+| **分离** | 对**当前播放曲**分离（模式单选：2-stem / 4-stem / 高质量）+ 真实进度 % / 取消 / 清理缓存 |
+| **EQ** | 5 段均衡（总开关 + 各段滑块 + 重置）|
+| **设置** | 设备能力 + 模型三档分组（⚡ 实时 / ⏱ 较慢 / 🐢 很慢）+ 默认引擎 + 关于 |
 
 ---
 
@@ -100,7 +100,7 @@ adb shell "cat /sdcard/Download/accompaniment.fp16.onnx | run-as $PKG sh -c 'cat
 |---|---|
 | 语言 / UI | Kotlin + Jetpack Compose（Material 3） |
 | 音频播放 | **Media3 / ExoPlayer**（多实例架构，每轨一个实例） |
-| 变速变调 | ExoPlayer 内置 **Sonic**（`setPlaybackParameters`，无需手动挂 AudioProcessor） |
+| 变速变调 | **方案3：AudioTrack 原生**（`setEnableAudioOutputPlaybackParameters`，绕过 Sonic，避免频繁改参卡死）|
 | 波形 | 自绘 Compose Canvas（每秒 50 个包络点，与采样率无关） |
 | 本地分离 | **sherpa-onnx**（ONNX Runtime）· Spleeter 2-stem ONNX |
 | 均衡器 | 平台 `android.media.audiofx.Equalizer` |
@@ -118,12 +118,14 @@ UI 通过 `MediaController` 控制 —— 因此单轨与多轨的后台行为�
 ```
 app/src/main/java/pub/miku/neuralstem/
 ├── MainActivity.kt            入口（托管 AppShell）
-├── ui/AppShell.kt             Drawer 导航壳
+├── ui/AppShell.kt             **底部导航栏**（歌单/播放器/分离/EQ/设置）
 ├── ui/theme/                  Material 3 主题
 ├── player/                    播放侧
 │   ├── PlaybackService.kt     ★ MediaSessionService：持单轨 player + 多轨控制器 + EQ
 │   ├── PlayerViewModel.kt     经 MediaController 控制 + UI 状态
-│   ├── PlayerScreen.kt        播放器 UI
+│   ├── PlayerScreen.kt        播放器 UI（含循环按钮 / 分离开关 / 分轨混音卡片）
+│   ├── EqScreen.kt            ★EQ 独立页（复用 EqPanel）
+│   ├── EqPanel.kt             均衡器面板（5 段滑块 + 开关 + 重置）
 │   ├── WaveformExtractor.kt   波形包络提取（全格式）
 │   ├── WaveformView.kt        Compose 波形组件（拖动 seek / 多轨叠加）
 │   ├── MultiTrackController.kt  多 ExoPlayer 同步 + 音量/静音/独奏
@@ -131,9 +133,10 @@ app/src/main/java/pub/miku/neuralstem/
 │   ├── AudioEq.kt / EqController.kt  均衡器封装与多轨统一出口
 │   ├── TrackMixerPanel.kt     多轨混音面板
 │   └── Media3DecodeBridge.kt  平台 MediaExtractor+MediaCodec 解码桥
-├── settings/                  设置页（模型分组 / 默认引擎 / EQ）
+├── settings/                  设置页（模型分组 / 默认引擎 / 转盘时长 / 变速范围 / 关于）
 └── spike/                     分离侧
     ├── SeparationRepository.kt  分离宿主（进程级单例 + 缓存 + 取消）
+    ├── CurrentTrackBridge.kt    ★当前播放曲 Uri → File 桥（分离输入）
     ├── StreamingSeparator.kt    分块流式分离 + 交叉淡化拼接
     ├── SeparationScreen.kt      分离页 UI
     ├── FrameSource.kt           统一帧源（wav 流式 / 压缩格式解码 + 重采样）
@@ -162,7 +165,7 @@ app/src/ncm/                      可选模块：NCM 格式解析（默认不编
 ## 测试
 
 ```bash
-./gradlew app:testDebugUnitTest          # 单元测试（59 项）
+./gradlew app:testDebugUnitTest          # 单元测试（77 项）
 ./gradlew app:connectedDebugAndroidTest  # 仪器化测试（6 项，需设备在线）
 ```
 
@@ -195,7 +198,7 @@ app/src/ncm/                      可选模块：NCM 格式解析（默认不编
 |---|---|
 | [`doc/guide.md`](doc/guide.md) | 需求文档（功能 / 非功能需求、验收标准） |
 | [`doc/.memory.md`](doc/.memory.md) | 过程笔记与**全部实测数据**、决策依据 |
-| [`doc/.critical_steps.md`](doc/.critical_steps.md) | **47 条踩坑记录**（改代码前建议先看） |
+| [`doc/.critical_steps.md`](doc/.critical_steps.md) | **57+ 条踩坑记录**（改代码前建议先看） |
 | [`doc/research_separation.md`](doc/research_separation.md) | 分离方案选型调研 |
 | [`HANDOFF.md`](HANDOFF.md) | 项目现状 / 约定 / 下一步 |
 

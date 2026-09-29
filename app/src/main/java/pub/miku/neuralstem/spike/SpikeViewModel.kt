@@ -322,7 +322,10 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
      * 本节只负责「把页面状态与 repo 状态对齐」并转发参数。
      * 好处:切页面/切后台不中断(N5)、可取消、结果缓存(F3.3)。
      */
-    fun startSeparation() {
+    fun startSeparation(
+        /** C2（阶段 3.1）：首块 RTF 回调（best-effort 基准写回）；null = 不需要 */
+        onFirstChunkRtf: ((rtf: Float, ms: Long) -> Unit)? = null,
+    ) {
         val srcFile = pendingFile ?: run {
             _state.value = State.Error("先导入音频")
             return
@@ -338,7 +341,33 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
             engine = engineMode,
             uvrModelName = uvrModelName,
             chunkOverrideFrames = chunkSecondsOverride?.let { it * SeparationInput.MODEL_SAMPLE_RATE },
+            modelId = ModelRegistry.byId(
+                if (engineMode == SherpaSourceSeparation.MODE_UVR) {
+                    ModelRegistry.UVR_VARIANTS.firstOrNull { it.fileName == uvrModelName }?.id
+                } else {
+                    ModelRegistry.SPLEETER.id
+                } ?: ModelRegistry.SPLEETER.id,
+            )?.id,
+            onFirstChunkRtf = onFirstChunkRtf,
         )
+    }
+
+    /**
+     * 阶段 3.1（分离页重构）：把**宿主提供的源文件**（通常来自当前播放曲经
+     * [CurrentTrackBridge] 拷到 cacheDir）设为待分离输入，并解析元信息。
+     *
+     * 与 [importAudio] 的区别：不经 SAF —— 文件已在本地，只需 probe 并置 [State.Ready]。
+     *
+     * ★ **suspend**（而不是内部 `viewModelScope.launch`）：因为紧接着就要调 [startSeparation]，
+     *   而后者**同步读 [pendingFile]**。若此处 fire-and-forget，startSeparation 会在 probe
+     *   完成前读到 null → **静默不分离**（真机 E2E 抽到的竞态 bug）。故改为挂起，由调用方 await。
+     *
+     * @return 是否解析成功（成功才可 startSeparation）
+     */
+    suspend fun selectSeparationSource(file: File): Boolean {
+        val ok = loadLocalFileInternal(file)
+        Log.i(TAG, "selectSeparationSource: ${file.absolutePath} ok=$ok")
+        return ok
     }
 
     /** guide N5:取消分离任务 */

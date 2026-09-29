@@ -80,6 +80,27 @@ class DeviceBenchmark(private val app: Application) {
     }
 
     /**
+     * 阶段 3.1（C2 · 首片基准）：把**单个模型**的实测 RTF/耗时并入缓存。
+     *
+     * 用于「分离时用首块耗时推算 RTF」的场景：无需跑完整的 [run] 合成基准，
+     * 真实音频的第一块即可给出该模型在本机上的 RTF 估计，直接补进缓存，
+     * 让设置页分组 / 后续实时性判定受益。
+     *
+     * 只并**入**（保留其它已测模型），不覆盖整表。写入前按 [ModelBenchmark] 语义
+     * 校验参数（rtf>0、ms>0）——非法则忽略，避免污染缓存。
+     *
+     * @return true 表示已写入
+     */
+    fun store(modelId: String, rtf: Float, ms: Long): Boolean {
+        if (modelId.isBlank() || rtf <= 0f || ms <= 0L) return false
+        val merged = cached().toMutableMap()
+        merged[modelId] = ModelBenchmark(modelId, rtf, ms)
+        save(merged)
+        Log.i(TAG, "store: $modelId rtf=${String.format("%.2f", rtf)} ms=$ms (first-slice)")
+        return true
+    }
+
+    /**
      * 跑 benchmark。**只测已安装(模型文件存在)的模型** —— 没装的跳过。
      *
      * 注意:必须在**后台线程**调用(会阻塞数秒)。
