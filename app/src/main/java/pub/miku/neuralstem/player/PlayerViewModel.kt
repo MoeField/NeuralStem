@@ -11,6 +11,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
@@ -199,6 +200,8 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                 if (!_state.value.isMultiTrack) {
                     _state.value = _state.value.copy(isPlaying = isPlaying)
                 }
+                // ★健康播放后重置 AudioSink 恢复额度，避免“早一次偶发超时”把上限吃光
+                if (isPlaying) audioSinkRecoveryCount = 0
             }
 
             override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
@@ -227,7 +230,53 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                     waveformExtractor.extractAsync(AudioSource.MediaUri(uri))
                 }
             }
+
+            override fun onPlayerError(error: PlaybackException) {
+                // ★bug C 傅底 —— 致命错误（ERROR_CODE_TIMEOUT）自动重建 pipeline。
+                //   ERROR_CODE_TIMEOUT 实为 media3 StuckPlayerDetector 发出（主链路已用方案3
+                //   AudioTrack 原生，本恢复作为傅底：重设同一 mediaItem + seek 回原位）。
+                Log.e(TAG, "播放失败: ${error.errorCodeName}", error)
+                if (error.errorCode == PlaybackException.ERROR_CODE_TIMEOUT) {
+                    recoverFromAudioSinkTimeout()
+                }
+            }
         })
+    }
+
+    /** 过久未恢复的连续错误计数，避免无限重建风暴。 */
+    @Volatile
+    private var audioSinkRecoveryCount = 0
+
+    /**
+     * 致命播放错误后的恢复：重置参数归零 + 重设 mediaItem + seek 回原位。
+     *
+     * 折中：先重置到 1.0x/0 半音（最稳配置）把声先恢复出来，
+     * 同步把 UI 状态也回到 1.0x/0 —— 避免“UI 显示仍变调但实际已复位”的不一致。
+     */
+    private fun recoverFromAudioSinkTimeout() {
+        if (audioSinkRecoveryCount >= MAX_AUDIO_SINK_RECOVERIES) {
+            Log.w(TAG, "致命播放错误恢复已达上限($MAX_AUDIO_SINK_RECOVERIES)，放弃自动重建")
+            return
+        }
+        val p = mediaController ?: return
+        // 9-24 未存 originalUri，直接从 player 取当前 mediaItem
+        val item = p.currentMediaItem ?: return
+        val resumeMs = p.currentPosition.coerceAtLeast(0L)
+        audioSinkRecoveryCount++
+        Log.w(TAG, "★ 致命播放错误 → 重建 pipeline（第${audioSinkRecoveryCount}次），resume@${resumeMs}ms")
+
+        // 1) 取消未下发的防抖任务 + 参数归零（用最稳配置重建 sink）
+        paramDebounceJob?.cancel()
+        pendingParams = null
+        runCatching { p.playbackParameters = PlaybackParameters.DEFAULT }
+        _state.value = _state.value.copy(speed = 1f, pitchSemitones = 0f)
+
+        // 2) 重设同一 mediaItem（触发 decoder/audioSink 重建）+ prepare + seek + play
+        p.stop()
+        p.setMediaItem(item)
+        p.prepare()
+        p.seekTo(resumeMs)
+        p.play()
     }
 
     init {
@@ -613,6 +662,9 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
 
         /** ★防抖窗口（ms）：变速变调只保留最后一次下发（见 [applyPlaybackParameters]）。 */
         private const val PARAM_DEBOUNCE_MS = 150L
+
+        /** ★bug C 傅底：致命播放错误自动重建 pipeline 的最大次数。 */
+        private const val MAX_AUDIO_SINK_RECOVERIES = 3
 
         /** F2.1 速度范围 */
         const val MIN_SPEED = 0.5f
