@@ -9,6 +9,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import java.io.Closeable
 
@@ -29,6 +30,7 @@ import java.io.Closeable
  * 3. **共享 PlaybackParameters**:变速变调对所有轨用同一组参数(F4.4),
  *    避免各轨 Sonic 处理深度不同导致时间轴漂移
  */
+@UnstableApi
 class MultiTrackController(context: Context) : Closeable {
 
     /**
@@ -155,15 +157,8 @@ class MultiTrackController(context: Context) : Closeable {
      * @param primary true = 主轨（参与焦点管理）
      */
     private fun buildPlayer(primary: Boolean): ExoPlayer =
-        ExoPlayer.Builder(appContext)
-            .setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setUsage(C.USAGE_MEDIA)
-                    .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
-                    .build(),
-                /* handleAudioFocus = */ primary,
-            )
-            .build()
+        // ★R2/bug C：与单轨同一套构建器（AudioTrack 原生变速变调，绕过 Sonic）
+        buildAudioExoPlayer(appContext, handleAudioFocus = primary)
 
     /**
      * 焦点联动(guide N3)：主轨失焦时，暂停**全部**轨；

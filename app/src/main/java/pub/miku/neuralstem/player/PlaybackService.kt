@@ -65,15 +65,8 @@ class PlaybackService : MediaSessionService() {
 
     override fun onCreate() {
         super.onCreate()
-        val player = ExoPlayer.Builder(this)
-            .setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setUsage(C.USAGE_MEDIA)
-                    .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
-                    .build(),
-                /* handleAudioFocus = */ true,
-            )
-            .build()
+        // ★R2/bug C：统一构建器 → 开启 AudioTrack 原生变速变调（绕过 Sonic，避免频繁改参卡死）。
+        val player = buildAudioExoPlayer(this, handleAudioFocus = true)
         singlePlayer = player
 
         // 主轨播放/暂停/seek → 同步给跟随轨（多轨模式下）

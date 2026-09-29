@@ -17,6 +17,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.MoreExecutors
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -132,6 +133,11 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 连接前收到的多轨命令（坑 40：异步连接），连上后重放。 */
     private val pendingMtCommands = mutableListOf<Pair<String, Bundle>>()
+
+    /** ★防抖：只保留最后一次待下发的变速变调参数（见 [applyPlaybackParameters]）。 */
+    @Volatile
+    private var pendingParams: PlaybackParameters? = null
+    private var paramDebounceJob: Job? = null
 
     /**
      * ★状态机（骨架接入 · **I1**）：**换队列前先退多轨**的**单一判定点**。
@@ -507,8 +513,22 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         val s = speed ?: cur.speed
         val st = pitchSemitones ?: cur.pitchSemitones
         val params = PlaybackParameters(s, semitonesToRate(st))
-        // M3/P2(v2):变速变调经 controller 下发；多轨时 Service 负责同步到跟随轨
-        mediaController?.playbackParameters = params
+        // ★★防抖（bug C）：短时间多次改参会让 DefaultAudioSink 频繁重配底层 AudioTrack
+        //   （Sonic 改变输出采样率 → 重建）→ 撞上过渡中间态 → StuckPlayerDetector 判卡死。
+        //   现象：拖速度/音调滑块 → 毫秒内几十次改参 → 不动、没声、ERROR_CODE_TIMEOUT。
+        //   故：只保留「最后一次」请求，等待静默期后再下发。
+        pendingParams = params
+        paramDebounceJob?.cancel()
+        paramDebounceJob = viewModelScope.launch {
+            delay(PARAM_DEBOUNCE_MS)
+            val p = pendingParams ?: return@launch
+            pendingParams = null
+            // 下发前再校验：仅当与 player 当前值确有差异才下发（避免无谓重配）
+            val ctrl = mediaController ?: return@launch
+            if (ctrl.playbackParameters == p) return@launch
+            Log.i(TAG, "applyPlaybackParameters（防抖后）: speed=${p.speed} pitch=${p.pitch}")
+            ctrl.playbackParameters = p
+        }
     }
 
     /** 一键回到 1.0x / 0 半音 */
@@ -590,6 +610,9 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
 
     companion object {
         private const val TAG = "PlayerVm"
+
+        /** ★防抖窗口（ms）：变速变调只保留最后一次下发（见 [applyPlaybackParameters]）。 */
+        private const val PARAM_DEBOUNCE_MS = 150L
 
         /** F2.1 速度范围 */
         const val MIN_SPEED = 0.5f
