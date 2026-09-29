@@ -88,6 +88,10 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         val repeatMode: SettingsRepository.RepeatMode = SettingsRepository.RepeatMode.SEQUENTIAL,
         /** ★R3：内嵌封面（黑胶内圈）；null = 无。 */
         val cover: ImageBitmap? = null,
+        /** ★U3：分离开关（true=播多轨；false=播原曲）。 */
+        val separationOn: Boolean = false,
+        /** ★U3：是否已有可用分离结果（无则开开关需先分离）。 */
+        val stemsAvailable: Boolean = false,
     )
 
     /** Task 4.4:单条轨的 UI 状态(F4.2/F4.3) */
@@ -196,6 +200,13 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 设置持久化（Step3：循环按钮的播放模式）。 */
     private val settingsRepo = SettingsRepository(getApplication())
+
+    // ---- ★U3：分离开关（原曲 ↔ 多轨）----
+    /** 原曲（供“关开关”时重载）。 */
+    private var originalUri: Uri? = null
+    private var originalName: String = ""
+    /** 是否已把分离结果载入为多轨。 */
+    private var isMultiTrackLoaded = false
 
     /**
      * 对外暴露的 player(单轨)。连接完成前为 null。
@@ -463,7 +474,13 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         // ★Step3：应用当前播放模式（循环按钮）
         p.repeatMode = _state.value.repeatMode.toPlayerRepeatMode()
         p.play()
-        _state.value = _state.value.copy(fileName = displayName, hasMedia = true, playWhenReady = true)
+        // ★U3：记住原曲（供分离开关“回原曲”）；载入原曲 = 关分离。
+        originalUri = uri
+        originalName = displayName
+        isMultiTrackLoaded = false
+        _state.value = _state.value.copy(
+            fileName = displayName, hasMedia = true, playWhenReady = true, separationOn = false,
+        )
     }
 
     fun togglePlayPause() {
@@ -619,14 +636,46 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         mediaController?.playbackParameters =
             PlaybackParameters(cur.speed, semitonesToRate(cur.pitchSemitones))
         Log.i(TAG, "loadMultiTrack → Service: ${stems.size} stems")
+        isMultiTrackLoaded = true
+        _state.value = _state.value.copy(separationOn = true)
+    }
+
+    /** ★U3：标记“已有可用分离结果”（宿主传入分离产物后调用）。 */
+    fun markStemsAvailable() {
+        _state.value = _state.value.copy(stemsAvailable = true)
+    }
+
+    /**
+     * ★U3：切换“分离开关”。
+     * - on=true 且已有多轨（[isMultiTrackLoaded]）→ 切多轨；未载入 → 返回 false（宿主需先 [loadMultiTrack]）。
+     * - on=false → 退出多轨 + 重载原曲（单曲）。
+     *
+     * @return true = 已处理；false = 宿主需先分离
+     */
+    fun toggleSeparation(on: Boolean): Boolean {
+        if (on) {
+            if (!isMultiTrackLoaded) return false
+            mediaController?.play()
+            _state.value = _state.value.copy(separationOn = true)
+        } else {
+            // 回原曲：退出多轨 → 重载原曲（单曲）
+            exitMultiTrack()
+            val u = originalUri
+            val p = mediaController
+            if (u != null && p != null) runCatching { doLoad(p, u, originalName) }
+            _state.value = _state.value.copy(separationOn = false)
+        }
+        return true
     }
 
     /** 退出多轨模式，回到单轨播放（委托给 Service）。 */
     fun exitMultiTrack() {
         sendMtCommand(MultiTrackSession.CMD_EXIT)
+        isMultiTrackLoaded = false
         _state.value = _state.value.copy(
             isMultiTrack = false,
             tracks = emptyList(),
+            separationOn = false,
             durationMs = mediaController?.duration?.coerceAtLeast(0L) ?: 0L,
         )
     }
