@@ -48,6 +48,13 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         val durationMs: Long = 0L,
         val positionMs: Long = 0L,
         val isReady: Boolean = false,
+        /**
+         * ★UI 门控用：是否已**载入**媒体（doLoad 后即 true，**不随缓冲抖动**）。
+         * 为何不用 isReady：isReady 是“真正可播”的瞬时状态；seek 时 ExoPlayer 会
+         * `READY→BUFFERING→READY`，isReady 随之翻转 → 若用它门控 UI，整块
+         * 波形/控件会被**移除重建 → 闪**。（与历史 R1++ 一致）
+         */
+        val hasMedia: Boolean = false,
         /** 波形包络(Task 2);null = 还没提取完 */
         val waveform: WaveformData? = null,
         /** Task 3:速度倍率 0.5–2.0 */
@@ -256,7 +263,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         // ★Step3：应用当前播放模式（循环按钮）
         p.repeatMode = _state.value.repeatMode.toPlayerRepeatMode()
         p.play()
-        _state.value = _state.value.copy(fileName = displayName)
+        _state.value = _state.value.copy(fileName = displayName, hasMedia = true)
     }
 
     fun togglePlayPause() {
