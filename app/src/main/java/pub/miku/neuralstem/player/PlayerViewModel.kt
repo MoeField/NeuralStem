@@ -75,6 +75,10 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         val eqEnabled: Boolean = false,
         /** M2-D:硬件是否支持 EQ(不支持时 UI 应置灰) */
         val eqAvailable: Boolean = false,
+        /** ★Step7:EQ 各段中心频率(Hz) */
+        val eqFreqsHz: IntArray = IntArray(0),
+        /** ★Step7:EQ 各段当前增益(mB) */
+        val eqLevelsMb: ShortArray = ShortArray(0),
         /** ★Step3：播放模式（循环按钮显示）。 */
         val repeatMode: SettingsRepository.RepeatMode = SettingsRepository.RepeatMode.SEQUENTIAL,
     )
@@ -354,9 +358,15 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         if (json.isNullOrBlank()) return
         runCatching {
             val o = JSONObject(json)
+            val freqs = o.optJSONArray("bands")?.let { a -> IntArray(a.length()) { a.optInt(it) } } ?: IntArray(0)
+            val lv = o.optJSONArray("levels")?.let { a -> ShortArray(a.length()) { a.optInt(it).toShort() } } ?: ShortArray(0)
+            // ★I2：把 EQ 状态同步进状态机 → eqAvailable/eqEnabled 由状态机派生（单一真源）。
+            session.syncEq(o.optBoolean("available", false), o.optBoolean("enabled", false))
             _state.value = _state.value.copy(
-                eqAvailable = o.optBoolean("available", false),
-                eqEnabled = o.optBoolean("enabled", false),
+                eqAvailable = session.eqAvailable,
+                eqEnabled = session.eqEnabled,
+                eqFreqsHz = freqs,
+                eqLevelsMb = lv,
             )
         }.onFailure { Log.w(TAG, "eq snapshot parse failed", it) }
     }
@@ -513,13 +523,19 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     // M3-P3：EQ 已**搬进 PlaybackService**（多轨 player 在那里，能拿到会话）。
     // VM 不再持 EqController —— 控制经自定义命令下发，状态从快照读。
 
-    /** EQ 开关（下发到 Service）。 */
+    /** EQ 开关（下发到 Service）。
+     *  ★Step7：**首次开启**且当前曲线全零（用户未调过）时，先下发默认微笑曲线（低+3/高+3）。 */
     fun setEqEnabled(on: Boolean) {
+        if (on && _state.value.eqLevelsMb.all { it == 0.toShort() }) {
+            sendMtCommand(MultiTrackSession.CMD_APPLY_EQ_DEFAULT_CURVE)
+            Log.i(TAG, "setEqEnabled(true): 曲线全零 → 先应用默认微笑曲线")
+        }
         sendMtCommand(
             MultiTrackSession.CMD_SET_EQ_ENABLED,
             Bundle().apply { putBoolean(MultiTrackSession.KEY_EQ_ENABLED, on) },
         )
-        // 乐观更新（快照回来后会被校正）
+        // 乐观更新（快照回来后会被校正）；同时同步状态机。
+        session.syncEq(_state.value.eqAvailable, on)
         _state.value = _state.value.copy(eqEnabled = on)
         Log.i(TAG, "setEqEnabled → Service: $on")
     }

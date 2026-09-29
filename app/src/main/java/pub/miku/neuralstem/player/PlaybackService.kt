@@ -292,6 +292,15 @@ class PlaybackService : MediaSessionService() {
         return ok()
     }
 
+    /** ★Step7：应用默认微笑曲线（低+3/高+3）。 */
+    private fun handleApplyEqDefaultCurve(): SessionResult {
+        if (eqController.bandCount == 0) return err("EQ unavailable (bandCount=0)")
+        eqController.defaultCurve()
+        requestSnapshotPush()
+        Log.i(TAG, "EQ_DEFAULT_CURVE readBack=${eqController.readBackLevels().toList()}")
+        return ok()
+    }
+
     // ---------------- 多轨：命令处理 ----------------
 
     private fun handleLoadMultiTrack(args: Bundle): SessionResult {
@@ -400,6 +409,7 @@ class PlaybackService : MediaSessionService() {
                 MultiTrackSession.CMD_SET_EQ_BAND -> handleSetEqBand(args)
                 MultiTrackSession.CMD_RESET_EQ -> handleResetEq()
                 MultiTrackSession.CMD_APPLY_EQ_TEST_CURVE -> handleApplyEqTestCurve()
+                MultiTrackSession.CMD_APPLY_EQ_DEFAULT_CURVE -> handleApplyEqDefaultCurve()
                 MultiTrackSession.CMD_DEBUG_POS -> handleDebugPos()
                 else -> SessionResult(SessionError.ERROR_NOT_SUPPORTED)
             }
