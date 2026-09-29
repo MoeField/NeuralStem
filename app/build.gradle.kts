@@ -104,6 +104,8 @@ dependencies {
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.core.ktx)
+    // U5: 歌单文件夹导入（SAF Tree 递归扫描）
+    implementation(libs.androidx.documentfile)
     implementation(libs.androidx.lifecycle.runtime.ktx)
 
     // --- Task 0b Spike: sherpa-onnx ONNX 音轨分离(选型切换理由见 doc/research_separation.md §5) ---

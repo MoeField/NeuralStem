@@ -1,5 +1,6 @@
 package pub.miku.neuralstem.ui
 
+import android.net.Uri
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -20,8 +21,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.compose.viewModel
 import pub.miku.neuralstem.player.PlayerScreen
 import pub.miku.neuralstem.player.PlayerViewModel
+import pub.miku.neuralstem.playlist.PlaylistScreen
+import pub.miku.neuralstem.playlist.PlaylistViewModel
 import pub.miku.neuralstem.settings.SettingsScreen
 import pub.miku.neuralstem.spike.SeparationScreen
 import pub.miku.neuralstem.spike.Spleeter4Dsp
@@ -58,6 +62,8 @@ fun AppShell(
     initial: AppDestination = AppDestination.PLAYER,
 ) {
     var current by remember { mutableStateOf(initial) }
+    // 歌单 VM（供歌单页显示 + 点曲时解析 uri）
+    val playlistVm: PlaylistViewModel = viewModel()
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -115,11 +121,28 @@ fun AppShell(
                 playerVm = playerVm,
             )
 
-            // 恢复计划 Step 1：占位（后续 Step 恢复实现）
-            AppDestination.PLAYLIST -> PlaceholderScreen(
+            // Step 4（范围B）：歌单页（列表管理 + 持久化）
+            AppDestination.PLAYLIST -> PlaylistScreen(
                 modifier = Modifier.fillMaxSize().padding(padding),
-                title = "歌单",
-                note = "待恢复（原为占位；歌单页在后续步骤实现）。",
+                vm = playlistVm,
+                // 点曲 → 播这首（范围B：暂不走队列，用单曲播放）
+                onPlayTrack = { listId, idx ->
+                    playlistVm.listById(listId)?.tracks?.getOrNull(idx)?.let { t ->
+                        playerVm.loadAndPlay(Uri.parse(t.uri), t.title)
+                        current = AppDestination.PLAYER
+                    }
+                },
+                // 选中歌单（点卡片头）→ 播“上次/首曲”
+                onSelectPlaylist = { listId ->
+                    val list = playlistVm.listById(listId)
+                    val idx = list?.lastPlayedUri
+                        ?.let { u -> list.tracks.indexOfFirst { it.uri == u } }
+                        ?.takeIf { it >= 0 } ?: 0
+                    list?.tracks?.getOrNull(idx)?.let { t ->
+                        playerVm.loadAndPlay(Uri.parse(t.uri), t.title)
+                        current = AppDestination.PLAYER
+                    }
+                },
             )
 
             AppDestination.EQ -> PlaceholderScreen(
