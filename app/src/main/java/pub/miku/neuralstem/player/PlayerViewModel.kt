@@ -196,8 +196,10 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     private fun attachPlayerListeners(p: Player) {
         p.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
-                // 多轨模式下 isPlaying 由 MultiTrackController 的监听维护
-                if (!_state.value.isMultiTrack) {
+                // ★v2：session 的 player = singlePlayer，多轨时它**就是主轨**，其 isPlaying 即整组
+                //   播放态（跟随轨由 Service 镜像）。故**单/多轨均由此驱动**——旧代码多轨时
+                //   跳过更新，导致“多轨时播放/暂停按钮卡在旧态”。
+                if (_state.value.isPlaying != isPlaying) {
                     _state.value = _state.value.copy(isPlaying = isPlaying)
                 }
                 // ★健康播放后重置 AudioSink 恢复额度，避免“早一次偶发超时”把上限吃光
