@@ -82,6 +82,14 @@ class SessionStateMachine(private val effects: Effects) {
         mode = newMode
     }
 
+    /**
+     * ★I2：从 Service 的 EQ 快照**同步** EQ 可用性/开关（**无副作用**）。
+     * `eqAvailable` 因此**由本状态机派生**（不再是一个可能过时/粘性的独立布尔）。
+     */
+    fun syncEq(available: Boolean, enabled: Boolean) {
+        eq = if (available) EqState.Attached(emptyList(), enabled) else EqState.Unsupported
+    }
+
     var eq: EqState = EqState.Unsupported
         private set
 

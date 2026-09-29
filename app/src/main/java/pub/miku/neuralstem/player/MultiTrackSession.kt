@@ -50,13 +50,16 @@ object MultiTrackSession {
     /** 诊断/自动化：应用测试曲线并开启。 */
     const val CMD_APPLY_EQ_TEST_CURVE = "nst.applyEqTestCurve"
 
+    /** ★Step7：应用默认曲线（低+3dB / 高+3dB，“微笑”），首次开启 EQ 时用。 */
+    const val CMD_APPLY_EQ_DEFAULT_CURVE = "nst.applyEqDefaultCurve"
+
     /** **M4/S1 诊断**：日志打印每条轨的 `currentPosition`（验证多轨 seek 后对齐）。 */
     const val CMD_DEBUG_POS = "nst.debugPos"
 
     val ALL_COMMANDS = listOf(
         CMD_LOAD, CMD_SET_VOLUME, CMD_TOGGLE_MUTE, CMD_TOGGLE_SOLO, CMD_EXIT,
         CMD_SET_EQ_ENABLED, CMD_SET_EQ_BAND, CMD_RESET_EQ, CMD_APPLY_EQ_TEST_CURVE,
-        CMD_DEBUG_POS,
+        CMD_APPLY_EQ_DEFAULT_CURVE, CMD_DEBUG_POS,
     )
 
     // ---------------- 参数 / 快照键 ----------------

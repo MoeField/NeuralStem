@@ -100,6 +100,12 @@ class EqController(
 
     /** 设单段增益(便捷:基于当前曲线改一段)。 */
     fun setBandLevel(band: Int, levelMb: Short) {
+        // ★修复：首次写入时 targetLevels 可能为空 → 按当前段数初始化，避免丢弃首次写入。
+        if (targetLevels.isEmpty()) {
+            val n = bandCount
+            if (n == 0) return
+            targetLevels = ShortArray(n)
+        }
         if (band !in targetLevels.indices) return
         val copy = targetLevels.copyOf()
         copy[band] = levelMb
@@ -122,6 +128,25 @@ class EqController(
             eqs.values.forEach { it.reset() }
         }
     }
+
+    /**
+     * 默认曲线 —— 低频 **+3dB**、高频 **+3dB**（“微笑/V 形”），中频 0。
+     * 仅在首次开启 EQ（用户尚未调过）时应用，避免“开启听着没变化”。
+     * 依据各段中心频率判定：`f < 300` 或 `f ≥ 3000` → +300mB，其余 0。
+     */
+    fun defaultCurve() {
+        val n = bandCount
+        if (n == 0) return
+        val levels = ShortArray(n) { b ->
+            val f = bandFreqsHz.getOrElse(b) { 1000 }
+            if (f < 300 || f >= 3000) 300 else 0
+        }
+        setBandLevels(levels)
+        Log.i(TAG, "defaultCurve bands=$n set=${levels.toList()}")
+    }
+
+    /** 当前目标曲线是否全零（未调过）。 */
+    fun isFlat(): Boolean = targetLevels.all { it == 0.toShort() }
 
     /** 读回首条轨的实际段增益(验证写入生效)。 */
     fun readBackLevels(): ShortArray {

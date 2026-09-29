@@ -22,6 +22,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import pub.miku.neuralstem.player.EqScreen
 import pub.miku.neuralstem.player.PlayerScreen
 import pub.miku.neuralstem.player.PlayerViewModel
 import pub.miku.neuralstem.playlist.PlaylistScreen
@@ -145,10 +146,10 @@ fun AppShell(
                 },
             )
 
-            AppDestination.EQ -> PlaceholderScreen(
+            // Step 7：EQ 面板 + 独立页
+            AppDestination.EQ -> EqScreen(
                 modifier = Modifier.fillMaxSize().padding(padding),
-                title = "均衡器 (EQ)",
-                note = "待恢复（EQ 面板 + 独立页在后续步骤实现）。",
+                vm = playerVm,
             )
         }
     }
