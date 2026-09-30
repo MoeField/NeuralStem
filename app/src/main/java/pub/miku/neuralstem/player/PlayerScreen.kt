@@ -22,6 +22,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -195,6 +196,31 @@ fun PlayerScreen(
                 state.repeatMode.label,
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
+            // ---- ★Step9：分离开关（原曲 ↔ 多轨）+ 指引 ----
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(
+                    if (state.separationOn) "分离开关：多轨" else "分离开关：原曲",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Switch(
+                    checked = state.separationOn,
+                    onCheckedChange = { vm.toggleSeparation(it) },
+                )
+            }
+            Text(
+                "去「分离」页处理 →",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onOpenSpike() }
+                    .padding(vertical = 4.dp),
             )
         }
 
