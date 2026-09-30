@@ -33,6 +33,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.launch
+import pub.miku.neuralstem.export.StemExporter
 import java.io.File
 
 /**
@@ -71,6 +72,7 @@ fun SeparationScreen(
     val repoState by repo.state.collectAsState()
     var mode by rememberSaveable { mutableStateOf(SeparationMode.TWO_STEM) }
     var cacheMsg by remember { mutableStateOf<String?>(null) }
+    var exportMsg by remember { mutableStateOf<String?>(null) }
 
     val hasSong = fileName.isNotBlank() && !currentUri.isNullOrBlank()
     val busy = spikeState is SpikeViewModel.State.Separating ||
@@ -219,11 +221,17 @@ fun SeparationScreen(
                 )
                 Text("4-stem 分离中 ${s.percent}% — ${s.elapsedMs / 1000}s")
             }
-            is SeparationRepository.State.Done4 ->
+            is SeparationRepository.State.Done4 -> {
                 Text(
                     if (s.fromCache) "✅ 4-stem 命中缓存" else "✅ 4-stem 完成",
                     color = MaterialTheme.colorScheme.primary,
                 )
+                // ★U7：导出到 Music/separate/<歌名>/（WAV，不含 EQ/音量）。
+                Button(onClick = {
+                    exportMsg = StemExporter.export(app, fileName.ifBlank { "song" }, s.stemFiles)
+                }) { Text("导出到 Music/separate/") }
+                exportMsg?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+            }
             is SeparationRepository.State.Failed ->
                 Text("❌ ${s.message}", color = MaterialTheme.colorScheme.error)
             else -> Unit
