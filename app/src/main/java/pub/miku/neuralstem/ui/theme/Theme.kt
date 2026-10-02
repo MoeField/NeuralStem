@@ -1,16 +1,18 @@
 package pub.miku.neuralstem.ui.theme
 
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 
 /**
- * 阶段 UI / U0：**仅深色**主题（DJ 控制台风格）。
+ * 主题（**F5.3：浅色 + 跟随系统**）。
  *
- * 用户决策：「只提供深色吧」。
- * - 不再依赖系统深浅色（去掉 `isSystemInDarkTheme`）；
- * - 不再使用**动态取色**（`dynamicDarkColorScheme`）—— 那会覆盖我们的青绿强调色；
- * - 保留 `darkTheme` 形参仅为**兼容旧调用点**（已恒为 true）。
+ * - 深色 = DJ 控制台风格（近黑背景 + 青绿强调）；
+ * - 浅色 = 白底 + 更深的青绿（保证白底对比度）；
+ * - **跟随系统**：默认 [isSystemInDarkTheme]。
+ * - 不使用**动态取色**（`dynamicDarkColorScheme`）—— 会覆盖青绿强调色。
  */
 private val NeuralStemDark = darkColorScheme(
     primary = Accent,
@@ -28,14 +30,30 @@ private val NeuralStemDark = darkColorScheme(
     surfaceContainerHigh = SurfaceDark,
 )
 
+/** ★F5.3：浅色方案（白底 + 更深青绿）。 */
+private val NeuralStemLight = lightColorScheme(
+    primary = AccentLight,
+    onPrimary = OnAccentLight,
+    secondary = Accent2Light,
+    onSecondary = OnAccent2Light,
+    background = BgLight,
+    onBackground = OnBgLight,
+    surface = SurfaceLight,
+    onSurface = OnBgLight,
+    surfaceVariant = SurfaceVariantLight,
+    onSurfaceVariant = OnSurfaceVariantLight,
+    surfaceContainer = SurfaceVariantLight,
+    surfaceContainerHigh = SurfaceLight,
+)
+
 @Composable
 fun NeuralStemTheme(
-    // 兼容旧调用点；恒为深色
-    @Suppress("UNUSED_PARAMETER") darkTheme: Boolean = true,
+    /** ★F5.3：默认**跟随系统**（旧调用点不传即自动适配）。 */
+    darkTheme: Boolean = isSystemInDarkTheme(),
     content: @Composable () -> Unit,
 ) {
     MaterialTheme(
-        colorScheme = NeuralStemDark,
+        colorScheme = if (darkTheme) NeuralStemDark else NeuralStemLight,
         typography = Typography,
         content = content,
     )
