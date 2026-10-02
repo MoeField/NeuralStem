@@ -27,6 +27,18 @@ val SurfaceVariantDark = Color(0xFF1D262E) // 卡片内次级面（如分轨行�
 val OnBg = Color(0xFFE6EDF3)
 val OnSurfaceVariantDark = Color(0xFFB0BEC5)
 
+// ---- ★F5.3：浅色配色（跟随系统亮色时用）----
+// 亮色下用**更深的青绿**（白底上保证对比度）；其余为浅色分层。
+val AccentLight = Color(0xFF009B84)     // primary（亮色）
+val OnAccentLight = Color(0xFFFFFFFF)   // accent 上的文字
+val Accent2Light = Color(0xFF7C4DFF)    // secondary（亮色）
+val OnAccent2Light = Color(0xFFFFFFFF)
+val BgLight = Color(0xFFF5F8F9)         // 背景（亮）
+val SurfaceLight = Color(0xFFFFFFFF)    // 卡片表面（亮）
+val SurfaceVariantLight = Color(0xFFE6EDF0) // 次级面（亮）
+val OnBgLight = Color(0xFF1A1C1E)       // 文字（亮）
+val OnSurfaceVariantLight = Color(0xFF45494C)
+
 // ---- 波形双色（沿用 WaveformView 语义：已播/未播）----
 val WavePlayed = Accent
 val WaveRemaining = Color(0xFF37474F)
