@@ -33,7 +33,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -59,6 +61,8 @@ fun PlayerScreen(
     onOpenSpike: () -> Unit = {},
 ) {
     val state by vm.state.collectAsState()
+    // ★F5.4：触感反馈（分离完成在分离页；这里用于 1.0× 吸附）。
+    val haptic = LocalHapticFeedback.current
     // ★ 进度流传引用即可（子组件内部 collect）。
     val progressFlow = vm.progressFlow
 
@@ -132,7 +136,11 @@ fun PlayerScreen(
                     VerticalSlider(
                         modifier = Modifier.weight(1f).fillMaxWidth(),
                         value = state.speed,
-                        onValueChange = vm::setSpeed,
+                        onValueChange = { v ->
+                            // ★F5.4：吸附到 1.0× 时给一次触感。
+                            if (v == 1f && state.speed != 1f) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            vm.setSpeed(v)
+                        },
                         // ★区间由设置项 X 决定 = [1/X, X]
                         valueRange = settings.speedSliderMin..settings.speedSliderMax,
                         label = { "%.2fx".format(it) },
