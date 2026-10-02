@@ -29,7 +29,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.launch
@@ -70,6 +72,8 @@ fun SeparationScreen(
     val spikeState by vm.state.collectAsState()
     val repo = remember { SeparationRepository.get(app) }
     val repoState by repo.state.collectAsState()
+    // ★F5.4：分离完成时的触感反馈。
+    val haptic = LocalHapticFeedback.current
     var mode by rememberSaveable { mutableStateOf(SeparationMode.TWO_STEM) }
     var cacheMsg by remember { mutableStateOf<String?>(null) }
     var exportMsg by remember { mutableStateOf<String?>(null) }
@@ -85,10 +89,16 @@ fun SeparationScreen(
     LaunchedEffect(spikeState, repoState) {
         val wasS = prevSpike; prevSpike = spikeState
         val s = spikeState
-        if (s is SpikeViewModel.State.Done && wasS !is SpikeViewModel.State.Done) onPlayStems(s)
+        if (s is SpikeViewModel.State.Done && wasS !is SpikeViewModel.State.Done) {
+            onPlayStems(s)
+            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+        }
         val wasR = prevRepo; prevRepo = repoState
         val r = repoState
-        if (r is SeparationRepository.State.Done4 && wasR !is SeparationRepository.State.Done4) onPlayStems4(r.stemFiles)
+        if (r is SeparationRepository.State.Done4 && wasR !is SeparationRepository.State.Done4) {
+            onPlayStems4(r.stemFiles)
+            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+        }
     }
 
     /** 开始分离：Uri→File → 按模式启动。 */
