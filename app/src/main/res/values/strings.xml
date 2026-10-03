@@ -7,7 +7,7 @@
     <string name="nav_playlist">歌单</string>
     <string name="nav_player">播放器</string>
     <string name="nav_separate">分离</string>
-    <string name="nav_eq">EQ</string>
+    <string name="nav_mix">混音</string>
     <string name="nav_settings">设置</string>
 
     <!-- 播放器 -->
@@ -37,8 +37,11 @@
     <string name="settings_device">设备能力</string>
     <string name="settings_about">关于</string>
 
-    <!-- EQ -->
-    <string name="eq_title">均衡器 (EQ)</string>
+    <!-- 混音页（EQ + 分轨混音） -->
+    <string name="mix_title">混音</string>
+    <string name="mix_tracks">分轨混音</string>
+    <string name="mix_tracks_empty">分轨混音：尚未分离。请先在「分离」页分离当前曲。</string>
+    <string name="mix_eq">均衡器 (EQ)</string>
     <string name="eq_enable">启用 EQ</string>
     <string name="eq_reset">重置 EQ</string>
     <string name="eq_not_ready">尚未就绪：播放一首歌后 EQ 可用。</string>

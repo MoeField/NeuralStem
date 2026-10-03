@@ -26,7 +26,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import pub.miku.neuralstem.R
-import pub.miku.neuralstem.player.EqScreen
+import pub.miku.neuralstem.player.MixScreen
 import pub.miku.neuralstem.player.PlayerScreen
 import pub.miku.neuralstem.player.PlayerViewModel
 import pub.miku.neuralstem.playlist.PlaylistScreen
@@ -55,7 +55,7 @@ enum class AppDestination(@StringRes val labelRes: Int) {
     PLAYLIST(R.string.nav_playlist),
     PLAYER(R.string.nav_player),
     SEPARATE(R.string.nav_separate),
-    EQ(R.string.nav_eq),
+    MIX(R.string.nav_mix),
     SETTINGS(R.string.nav_settings),
 }
 
@@ -159,8 +159,8 @@ fun AppShell(
                 },
             )
 
-            // Step 7：EQ 面板 + 独立页
-            AppDestination.EQ -> EqScreen(
+            // Step 7 / 方案1：混音页（EQ + 分轨混音）
+            AppDestination.MIX -> MixScreen(
                 modifier = Modifier.fillMaxSize().padding(padding),
                 vm = playerVm,
             )
@@ -173,7 +173,7 @@ private fun glyphFor(dest: AppDestination): String = when (dest) {
     AppDestination.PLAYLIST -> "\u2630"   // ☰
     AppDestination.PLAYER -> "\u25B6"     // ▶
     AppDestination.SEPARATE -> "\u2702"   // ✂
-    AppDestination.EQ -> "\u2637"         // ☷
+    AppDestination.MIX -> "\u2637"        // ☷
     AppDestination.SETTINGS -> "\u2699"   // ⚙
 }
 

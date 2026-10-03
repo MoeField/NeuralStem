@@ -50,7 +50,7 @@ class PlayerUiTest {
 
     @Test
     fun 底部导航栏含五个导航项() {
-        for (item in listOf("歌单", "播放器", "分离", "EQ", "设置")) {
+        for (item in listOf("歌单", "播放器", "分离", "混音", "设置")) {
             composeRule.onAllNodesWithText(item).onFirst().assertIsDisplayed()
         }
     }
@@ -64,9 +64,10 @@ class PlayerUiTest {
     }
 
     @Test
-    fun 点击EQ导航项显示占位页() {
-        composeRule.onAllNodesWithText("EQ").onFirst().performClick()
+    fun 点击混音导航项显示混音页() {
+        composeRule.onAllNodesWithText("混音").onFirst().performClick()
         composeRule.waitForIdle()
+        // 混音页含 EQ 区
         composeRule.onNodeWithText("均衡器 (EQ)").assertIsDisplayed()
     }
 }
