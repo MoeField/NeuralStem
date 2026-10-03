@@ -1,6 +1,7 @@
 package pub.miku.neuralstem.ui
 
 import android.net.Uri
+import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -21,8 +22,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import pub.miku.neuralstem.R
 import pub.miku.neuralstem.player.EqScreen
 import pub.miku.neuralstem.player.PlayerScreen
 import pub.miku.neuralstem.player.PlayerViewModel
@@ -48,12 +51,12 @@ import pub.miku.neuralstem.spike.Spleeter4Dsp
  * 不引入 Navigation 库（页面不多，用枚举状态切换即可）；
  * 图标用**文本字形**（项目零 material-icons 依赖）。
  */
-enum class AppDestination(val label: String) {
-    PLAYLIST("歌单"),
-    PLAYER("播放器"),
-    SEPARATE("分离"),
-    EQ("EQ"),
-    SETTINGS("设置"),
+enum class AppDestination(@StringRes val labelRes: Int) {
+    PLAYLIST(R.string.nav_playlist),
+    PLAYER(R.string.nav_player),
+    SEPARATE(R.string.nav_separate),
+    EQ(R.string.nav_eq),
+    SETTINGS(R.string.nav_settings),
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -72,7 +75,7 @@ fun AppShell(
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
-            TopAppBar(title = { Text("NeuralStem") })
+            TopAppBar(title = { Text(stringResource(R.string.app_name)) })
         },
         bottomBar = {
             NavigationBar {
@@ -81,7 +84,7 @@ fun AppShell(
                         selected = dest == current,
                         onClick = { current = dest },
                         icon = { Text(glyphFor(dest)) },
-                        label = { Text(dest.label) },
+                        label = { Text(stringResource(dest.labelRes)) },
                     )
                 }
             }

@@ -1,3 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- ★I18N 框架（默认 = 中文）。专有名词（EQ/stem/BPM/Vocal 等）保留英文。 -->
     <string name="app_name">NeuralStem</string>
+
+    <!-- 导航（底栏） -->
+    <string name="nav_playlist">歌单</string>
+    <string name="nav_player">播放器</string>
+    <string name="nav_separate">分离</string>
+    <string name="nav_eq">EQ</string>
+    <string name="nav_settings">设置</string>
+
+    <!-- 播放器 -->
+    <string name="player_no_media">尚未导入音频</string>
+    <string name="player_import">导入音频</string>
+    <string name="player_play">播放</string>
+    <string name="player_pause">暂停</string>
+    <string name="player_spike">Spike 分离</string>
+    <string name="player_reset">重置</string>
+    <string name="player_sep_on">分离开关：多轨</string>
+    <string name="player_sep_off">分离开关：原曲</string>
+    <string name="player_go_separate">去「分离」页处理 →</string>
+
+    <!-- 分离页 -->
+    <string name="sep_title">分离</string>
+    <string name="sep_current">当前曲目</string>
+    <string name="sep_no_song">先在播放器导入并播放一首歌</string>
+    <string name="sep_mode">分离模式</string>
+    <string name="sep_start">开始分离</string>
+    <string name="sep_running">分离中…</string>
+    <string name="sep_cancel">取消分离</string>
+    <string name="sep_clear_cache">清理缓存</string>
+    <string name="sep_export">导出到 Music/separate/</string>
+
+    <!-- 设置 -->
+    <string name="settings_title">设置</string>
+    <string name="settings_device">设备能力</string>
+    <string name="settings_about">关于</string>
+
+    <!-- EQ -->
+    <string name="eq_title">均衡器 (EQ)</string>
+    <string name="eq_enable">启用 EQ</string>
+    <string name="eq_reset">重置 EQ</string>
+    <string name="eq_not_ready">尚未就绪：播放一首歌后 EQ 可用。</string>
 </resources>
