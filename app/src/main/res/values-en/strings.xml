@@ -7,7 +7,7 @@
     <string name="nav_playlist">Playlists</string>
     <string name="nav_player">Player</string>
     <string name="nav_separate">Separate</string>
-    <string name="nav_eq">EQ</string>
+    <string name="nav_mix">Mix</string>
     <string name="nav_settings">Settings</string>
 
     <!-- Player -->
@@ -37,8 +37,11 @@
     <string name="settings_device">Device capability</string>
     <string name="settings_about">About</string>
 
-    <!-- EQ -->
-    <string name="eq_title">Equalizer (EQ)</string>
+    <!-- Mix page (EQ + track mixer) -->
+    <string name="mix_title">Mix</string>
+    <string name="mix_tracks">Track mixer</string>
+    <string name="mix_tracks_empty">Track mixer: not separated yet. Separate the current song on the “Separate” page first.</string>
+    <string name="mix_eq">Equalizer (EQ)</string>
     <string name="eq_enable">Enable EQ</string>
     <string name="eq_reset">Reset EQ</string>
     <string name="eq_not_ready">Not ready: play a song to enable EQ.</string>

@@ -10,7 +10,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -144,21 +143,7 @@ fun PlayerScreen(
                 )
             }
         }
-
-        // ---- 底部：分轨混音（多轨时）----
-        Box(modifier = Modifier.fillMaxWidth().heightIn(max = 240.dp)) {
-            if (state.isMultiTrack && state.tracks.isNotEmpty()) {
-                Column(modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
-                    TrackMixerPanel(
-                        tracks = state.tracks,
-                        onVolumeChange = vm::setTrackVolume,
-                        onToggleMute = vm::toggleMute,
-                        onToggleSolo = vm::toggleSolo,
-                        onExit = vm::exitMultiTrack,
-                    )
-                }
-            }
-        }
+        // ★方案1：「分轨混音」已移到**混音页**（转盘/速度条因此恢复大尺寸）。
     }
 }
 
