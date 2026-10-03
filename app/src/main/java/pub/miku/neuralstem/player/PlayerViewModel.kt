@@ -299,6 +299,14 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                 pendingSeekMs = null
                 _progress.value = Progress(0L, _progress.value.durationMs)
                 _anchor.value = null
+                // ★P2：多轨载入时，Service 会给主轨 setMediaItem(vocals) → 本回调触发。
+                //   但多轨时转盘外环应显示**原曲波形**（外环=装饰化进度条），而非 stem 波形。
+                //   故多轨下**不**把 waveform/cover 置空、**不**提取当前( stem)媒体项，
+                //   而是保证显示原曲波形/封面。
+                if (isMultiTrackLoaded) {
+                    ensureOriginalWaveformForMultiTrack()
+                    return
+                }
                 _state.value = _state.value.copy(waveform = null, cover = null)
                 mediaItem?.localConfiguration?.uri?.let { uri ->
                     waveformExtractor.extractAsync(AudioSource.MediaUri(uri))
@@ -621,6 +629,15 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun loadMultiTrack(stems: List<Triple<String, String, File>>) {
         if (stems.isEmpty()) return
+        // ★P2 修复：多轨时转盘外环应显示**原曲波形**（外环=装饰化进度条）。
+        //   Service 会给主轨(=session player) setMediaItem → onMediaItemTransition 触发，
+        //   默认会把波形重提取为**主轨(vocals)的波形**。故：
+        //   ① 置 isMultiTrackLoaded=true —— **必须在 sendMtCommand 之前**！
+        //      controller 已连接时命令会立即执行，setMediaItem→onMediaItemTransition
+        //      可能同步发生；若标志晚设，skip 就会落空（真机实测踩过）。
+        //   ② ensureOriginalWaveformForMultiTrack()：原曲波形缺失时从 originalUri 补提取。
+        isMultiTrackLoaded = true
+        ensureOriginalWaveformForMultiTrack()
         // 多轨状态经 MediaController.Listener.onExtrasChanged 回传（构建时已注册）
         // 进入多轨前暂停单轨（Service 内部也会暂停，双保险）
         mediaController?.pause()
@@ -644,7 +661,6 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         mediaController?.playbackParameters =
             PlaybackParameters(cur.speed, semitonesToRate(cur.pitchSemitones))
         Log.i(TAG, "loadMultiTrack → Service: ${stems.size} stems")
-        isMultiTrackLoaded = true
         // ★一致性修复：多轨“已载入 = 有媒体”，否则 UI 会显示“尚未导入音频”而实际在响。
         //   fileName 若为空（如自动化直接载 stems）给一个回退名，避免标题空白。
         _state.value = _state.value.copy(
@@ -652,6 +668,21 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             hasMedia = true,
             fileName = _state.value.fileName.ifBlank { "分离结果" },
         )
+    }
+
+    /**
+     * ★P2：多轨状态下保证转盘外环显示**原曲波形/封面**。
+     * 原曲波形已存在时不动（避免多余重提取）；否则从 [originalUri] 补提取。
+     */
+    private fun ensureOriginalWaveformForMultiTrack() {
+        val u = originalUri
+        if (_state.value.waveform == null && u != null) {
+            Log.i(TAG, "P2: 多轨缺原曲波形 → 从 originalUri 补提取: $u")
+            waveformExtractor.extractAsync(AudioSource.MediaUri(u))
+        }
+        if (_state.value.cover == null && u != null) {
+            coverExtractor.extractAsync(u)
+        }
     }
 
     /** ★U3：标记“已有可用分离结果”（宿主传入分离产物后调用）。 */
