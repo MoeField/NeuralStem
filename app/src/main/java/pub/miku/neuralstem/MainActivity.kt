@@ -73,7 +73,11 @@ class MainActivity : ComponentActivity() {
                 //   adb shell am start -n pub.miku.neuralstem/.MainActivity \
                 //     -d "<content or file uri>" --ez auto_play true
                 intent?.data?.let { uri ->
-                    if (intent.getBooleanExtra("auto_play", false)) {
+                    // ★互斥：若同时给了 mt_vocals/mt_accomp（多轨入口），则本单曲入口**不载入**，
+                    //   否则两个入口会同时 loadAndPlay + loadMultiTrack → **两首同时出声**。
+                    val hasMt = intent.getStringExtra("mt_vocals") != null &&
+                        intent.getStringExtra("mt_accomp") != null
+                    if (intent.getBooleanExtra("auto_play", false) && !hasMt) {
                         LaunchedEffect(uri) {
                             playerVm.loadAndPlay(uri, uri.lastPathSegment ?: "auto")
                             // M3.5/T4 自动化：可选“N ms 后再载入第二首”（验证切歌时 EQ 重挂）
