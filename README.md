@@ -162,7 +162,7 @@ app/src/ncm/                      可选模块：NCM 格式解析（默认不编
 ## 测试
 
 ```bash
-./gradlew app:testDebugUnitTest          # 单元测试（59 项）
+./gradlew app:testDebugUnitTest          # 单元测试（89 项）
 ./gradlew app:connectedDebugAndroidTest  # 仪器化测试（6 项，需设备在线）
 ```
 
