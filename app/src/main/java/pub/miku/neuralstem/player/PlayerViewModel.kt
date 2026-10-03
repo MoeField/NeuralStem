@@ -238,6 +238,10 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             mediaController = c
             attachPlayerListeners(c)
             Log.i(TAG, "MediaController connected to PlaybackService")
+            // ★P3：先从 Session 回填 VM 本地状态（治“VM 重建后显示‘尚未导入音频’却有声音”）。
+            //   置于重放 pendingLoad **之前**：若本次确实有待载入请求，replay 的 doLoad
+            //   会覆盖回填值（以新曲为准）；无待载入请求时回填值保留（=重建场景）。
+            restoreFromSession(c)
             // 重放连接前收到的载入请求
             val replay = pendingLoad
             pendingLoad = {}
@@ -245,6 +249,32 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             // M3/P2:重放连接前收到的多轨命令
             flushMtCommands(c)
         }, MoreExecutors.directExecutor())
+    }
+
+    /**
+     * ★P3：从已连接的 MediaController 回填 VM 本地状态。
+     *
+     * 场景：Service 仍存活且已在播，但 VM 被重建（新实例，`_state` 归默认）→
+     * 会出现“显示‘尚未导入音频’却有声音”。本方法从当前 `mediaItem` 回填
+     * `fileName / hasMedia / currentUri`，让 UI 与实际一致。
+     *
+     * 无当前媒体项时（正常冷启动）为 no-op。
+     *
+     * 局限（已知，不在 P3 范围）：多轨场景下当前 mediaItem 是**主轨(vocals stem)**，
+     * 故这里**不**设置 [originalUri]/[originalName]（避免把 stem 当成“原曲”）；
+     * 多轨的轨迹状态由快照 [applyTracksSnapshot] 另行同步。
+     */
+    private fun restoreFromSession(c: MediaController) {
+        val item = c.currentMediaItem ?: return
+        val uri = item.localConfiguration?.uri
+        val title = item.mediaMetadata.title?.toString()
+        if (uri == null && title == null) return
+        _state.value = _state.value.copy(
+            fileName = title ?: _state.value.fileName,
+            hasMedia = true,
+            currentUri = uri?.toString() ?: _state.value.currentUri,
+        )
+        Log.i(TAG, "P3: restoreFromSession → fileName=$title, uri=$uri")
     }
 
     /** 把所有 UI 监听挂到 session 的 player 上(波形、播放态、错误)。 */
