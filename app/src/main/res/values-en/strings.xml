@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- ★I18N: English (default strings.xml is Chinese). Proper nouns (EQ/stem/BPM/Vocal) kept as-is. -->
+    <string name="app_name">NeuralStem</string>
+
+    <!-- Navigation (bottom bar) -->
+    <string name="nav_playlist">Playlists</string>
+    <string name="nav_player">Player</string>
+    <string name="nav_separate">Separate</string>
+    <string name="nav_eq">EQ</string>
+    <string name="nav_settings">Settings</string>
+
+    <!-- Player -->
+    <string name="player_no_media">No audio imported</string>
+    <string name="player_import">Import audio</string>
+    <string name="player_play">Play</string>
+    <string name="player_pause">Pause</string>
+    <string name="player_spike">Spike separation</string>
+    <string name="player_reset">Reset</string>
+    <string name="player_sep_on">Separation: multi-track</string>
+    <string name="player_sep_off">Separation: original</string>
+    <string name="player_go_separate">Go to “Separate” page →</string>
+
+    <!-- Separation -->
+    <string name="sep_title">Separate</string>
+    <string name="sep_current">Current track</string>
+    <string name="sep_no_song">Import and play a song first</string>
+    <string name="sep_mode">Separation mode</string>
+    <string name="sep_start">Start separation</string>
+    <string name="sep_running">Separating…</string>
+    <string name="sep_cancel">Cancel</string>
+    <string name="sep_clear_cache">Clear cache</string>
+    <string name="sep_export">Export to Music/separate/</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_device">Device capability</string>
+    <string name="settings_about">About</string>
+
+    <!-- EQ -->
+    <string name="eq_title">Equalizer (EQ)</string>
+    <string name="eq_enable">Enable EQ</string>
+    <string name="eq_reset">Reset EQ</string>
+    <string name="eq_not_ready">Not ready: play a song to enable EQ.</string>
+</resources>
