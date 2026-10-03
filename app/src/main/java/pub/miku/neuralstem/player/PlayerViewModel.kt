@@ -645,7 +645,13 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             PlaybackParameters(cur.speed, semitonesToRate(cur.pitchSemitones))
         Log.i(TAG, "loadMultiTrack → Service: ${stems.size} stems")
         isMultiTrackLoaded = true
-        _state.value = _state.value.copy(separationOn = true)
+        // ★一致性修复：多轨“已载入 = 有媒体”，否则 UI 会显示“尚未导入音频”而实际在响。
+        //   fileName 若为空（如自动化直接载 stems）给一个回退名，避免标题空白。
+        _state.value = _state.value.copy(
+            separationOn = true,
+            hasMedia = true,
+            fileName = _state.value.fileName.ifBlank { "分离结果" },
+        )
     }
 
     /** ★U3：标记“已有可用分离结果”（宿主传入分离产物后调用）。 */
