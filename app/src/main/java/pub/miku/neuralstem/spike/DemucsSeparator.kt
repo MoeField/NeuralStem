@@ -1,6 +1,7 @@
 package pub.miku.neuralstem.spike
 
 import android.util.Log
+import java.util.Arrays
 import java.util.concurrent.Executors
 
 /**
@@ -48,19 +49,29 @@ class DemucsSeparator(
         val step = WAVE - overlap
         Log.i(TAG, "demucs: total=$total ch=$channels win=$WAVE overlap=$overlap step=$step")
 
-        // 4 源 × 2ch 的累加缓冲 + 权重（与位置对应）
-        val acc = Array(4) { Array(2) { FloatArray(total) } }
-        val wsum = FloatArray(total)
+        // ★ OOM 修复：不再分配 size=total 的 acc（完整歌 4×2×total Float = 几 GB/百 MB）。
+        //   改为**滑动窗口**：块 b 写 [sB, sB+WAVE)；下一块写 [sB+step, ...)。
+        //   处理完块 b 后，[sB, sB+step) 区域**不会再被后续块触碰** → 可立即归一化 + 落盘 + 丢弃。
+        //   缓冲只需覆盖 [sB, sB+WAVE+step) → W = WAVE + step。内存 O(WAVE)，与歌长无关。
+        val W = WAVE + step
+        // acc[src][c][r] where r = 绝对位置 - base（base = 当前块 start）。
+        val acc = Array(4) { Array(2) { FloatArray(W) } }
+        val wsum = FloatArray(W)
 
         var b = 0
         var s = 0
         var tModel = 0L; var tStft = 0L; var tIstft = 0L; var tRead = 0L
         // iSTFT 并行池（4 个 stem 并行）。用完即关。
         val isttfPool = Executors.newFixedThreadPool(4)
+        // 落盘用交织缓冲（每次 flush 的区域）
+        val outInter = Array(4) { FloatArray(step * 2) }
         try {
             while (s < total || (total < WAVE && b == 0)) {
                 var start = s
                 if (start + WAVE > total) start = (total - WAVE).coerceAtLeast(0)   // 末块向前对齐
+                // 注：末块“向前对齐”时 start 可能小于上一块的 s+step → 需保证 base 连续性。
+                // 下方 flush 按 start 推进，末块不会产生新的 final 区域（见循环末判断）。
+                val base = s
                 val tr = System.currentTimeMillis()
                 val block = readBlock(start, channels)
                 tRead += System.currentTimeMillis() - tr
@@ -80,37 +91,67 @@ class DemucsSeparator(
                 val perStemSpec = 4 * DemucsStft.BINS * frames
                 val stemStride = 2 * WAVE
 
-                // ★ iSTFT 并行化：4 个 stem 互相独立（各自 specStem/time，且 accum 写入
-                //   acc[src][c] 各 src 不相交）→ 安全并行。占原总耗时 ~22%，低风险提速。
+                // 把本块结果按“相对 base”的偏移写入滑动窗口 acc。
+                val relBase = start - base   // 通常 0；末块对齐时可能 < 0（则丢弃超前的部分）
                 val ti = System.currentTimeMillis()
-                val tasks = (0 until 4).map { src ->
-                    isttfPool.submit {
-                        val specStem = FloatArray(perStemSpec)
-                        System.arraycopy(out.spec, src * perStemSpec, specStem, 0, perStemSpec)
-                        val time = DemucsStft.istftPacked(specStem, frames, WAVE)
-                        val addBase = src * stemStride
-                        for (c in 0 until 2) {
-                            val a = acc[src][c]
-                            val addOff = addBase + c * WAVE
-                            for (i in 0 until WAVE) {
-                                val idx = start + i
-                                if (idx >= total) break
-                                a[idx] += (time[c][i] + out.add[addOff + i]) * weight(i, overlap)
-                            }
+                val tasks = (0 until 4).map { src -> isttfPool.submit {
+                    val specStem = FloatArray(perStemSpec)
+                    System.arraycopy(out.spec, src * perStemSpec, specStem, 0, perStemSpec)
+                    val time = DemucsStft.istftPacked(specStem, frames, WAVE)
+                    val addBase = src * stemStride
+                    for (c in 0 until 2) {
+                        val a = acc[src][c]
+                        val addOff = addBase + c * WAVE
+                        for (i in 0 until WAVE) {
+                            val r = relBase + i
+                            if (r < 0 || r >= W) continue
+                            val abs = base + r
+                            if (abs >= total) break
+                            a[r] += (time[c][i] + out.add[addOff + i]) * weight(i, overlap)
                         }
                     }
-                }
+                } }
                 tasks.forEach { fut -> fut.get() }
                 tIstft += System.currentTimeMillis() - ti
 
                 for (i in 0 until WAVE) {
-                    val idx = start + i
-                    if (idx >= total) break
-                    wsum[idx] += weight(i, overlap)
+                    val r = relBase + i
+                    if (r < 0 || r >= W) continue
+                    val abs = base + r
+                    if (abs >= total) break
+                    wsum[r] += weight(i, overlap)
                 }
                 b++
+
+                // ★ flush：把 [base, base+step) （相对 [0, step)）归一化 + 写盘（仅当不会被后续块触碰）。
+                //   是否 safe：下一块 start = base + step（末块除外）。末块（start+WAVE>=total）后直接 flush 剩余。
+                val isLast = (start + WAVE >= total)
+                val flushLen = if (isLast) minOf(W, total - base) else step
+                if (flushLen > 0) {
+                    for (src in 0 until 4) {
+                        val inter = outInter[src]
+                        for (i in 0 until flushLen) {
+                            val w = if (wsum[i] > 1e-8f) wsum[i] else 1f
+                            inter[i * 2] = acc[src][0][i] / w
+                            inter[i * 2 + 1] = acc[src][1][i] / w
+                        }
+                        writers[src].append(if (flushLen * 2 == inter.size) inter else inter.copyOf(flushLen * 2))
+                    }
+                    // 滑动：把 [flushLen, W) 左移到 [0, W-flushLen)
+                    val keep = W - flushLen
+                    if (keep > 0) {
+                        for (src in 0 until 4) for (c in 0 until 2)
+                            System.arraycopy(acc[src][c], flushLen, acc[src][c], 0, keep)
+                        System.arraycopy(wsum, flushLen, wsum, 0, keep)
+                    }
+                    // flush 区域清零（重新填充前保持干净）
+                    for (src in 0 until 4) for (c in 0 until 2)
+                        Arrays.fill(acc[src][c], keep, W, 0f)
+                    Arrays.fill(wsum, keep, W, 0f)
+                }
+
                 onProgress?.invoke(minOf(start + WAVE, total), total)
-                if (start + WAVE >= total) break
+                if (isLast) break
                 s += step
             }
         } finally {
@@ -118,16 +159,6 @@ class DemucsSeparator(
         }
         Log.i(TAG, "timing(ms): read=$tRead stft=$tStft model=$tModel istft=$tIstft blocks=$b")
 
-        // 归一 + 落盘（交织）
-        for (src in 0 until 4) {
-            val inter = FloatArray(total * 2)
-            for (i in 0 until total) {
-                val w = if (wsum[i] > 1e-8f) wsum[i] else 1f
-                inter[i * 2] = acc[src][0][i] / w
-                inter[i * 2 + 1] = acc[src][1][i] / w
-            }
-            writers[src].append(inter)
-        }
         val stats = Stats(total, total, b)
         Log.i(TAG, "demucs done: in=${stats.inputFrames} out=${stats.outputFrames} blocks=${stats.blocks}")
         return stats
