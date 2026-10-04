@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
@@ -68,9 +69,19 @@ class TestPanelActivity : ComponentActivity() {
                 val isBusy by busy.collectAsState()
                 val repoState by repo.state.collectAsState()
 
-                // 把 repo 状态变化也打进屏上日志（无需各模块改造）。
+                // 把 repo 状态变化也打进屏上日志（Running 限频：仅整 10% 打，避免刷屏）。
+                var lastPct = -1
                 LaunchedEffect(repoState) {
-                    TestLog.append("Repo", repoState.toString())
+                    when (val s = repoState) {
+                        is SeparationRepository.State.Running -> {
+                            val pct = s.percent / 10 * 10
+                            if (pct != lastPct) {
+                                lastPct = pct
+                                TestLog.append("Repo", "Running ${pct}% elapsed=${s.elapsedMs}ms pss=${s.peakPssMb}MB")
+                            }
+                        }
+                        else -> TestLog.append("Repo", s.toString())
+                    }
                 }
 
                 Column(modifier = Modifier.fillMaxSize().padding(12.dp)) {
@@ -119,7 +130,13 @@ class TestPanelActivity : ComponentActivity() {
 
                     // ---- 屏上日志 ----
                     Text("日志（屏上）", style = MaterialTheme.typography.titleSmall)
+                    val listState = rememberLazyListState()
+                    // 新行出现时自动滚到底（否则最新 Done 行在可见区之外）
+                    LaunchedEffect(lines.size) {
+                        if (lines.isNotEmpty()) listState.scrollToItem(lines.size - 1)
+                    }
                     LazyColumn(
+                        state = listState,
                         modifier = Modifier
                             .fillMaxWidth()
                             .weight(1f)
