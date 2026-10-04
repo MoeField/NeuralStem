@@ -6,17 +6,20 @@
 
 ---
 
-## ★★ 当前状态（2026-10-04，先看这里）
+## ★★ 当前状态（2026-10-05，先看这里）
 
 > **main = 「状态机线」，就是最新在推的线。本文件其余章节描述的就是它。**
-> （旧版顶部那个“大幅回退、已回退到 9-24”的 Banner 已作废 —— 那是**回退当刻**的状态，之后新线已推进到 10-03。）
+> （旧版顶部那个“大幅回退、已回退到 9-24”的 Banner 已作废 —— 那是**回退当刻**的状态。）
 
 | 项 | 值 |
 |---|---|
-| 当前分支 / HEAD | `main` = `74aa265`（2026-10-03）|
+| 当前分支 / HEAD | `main` = `535694f`（2026-10-05）|
 | 工作区 | 干净（无未提交改动）|
-| 构建 / 单测 | `assembleDebug` ✅ 、单测 **89** ✅（实跑 `testDebugUnitTest` 计数）|
+| 构建 / 单测 | `assembleDebug` ✅ 、单测 **106** ✅（实跑 `testDebugUnitTest` 计数）|
 | 另一分支 | `checkpoint-2026-09-29`（`360db84`）—— **更早的另一条线，仅作参考** |
+
+> ❗ **新对话请先读 artifact「冷启动入口」（单页 + 现状/断点/方法论）**，再回来看本文。
+> artifact 路径示意：`冷启动入口.artifact.md`（会话 artifact 目录）。
 
 ### 为什么有两条线？（回退的真相）
 
@@ -29,21 +32,24 @@
 | 只存在于 **main**（状态机线） | 只存在于 **checkpoint**（参考线） |
 |---|---|
 | `SessionState.kt` + `SessionStateMachineTest`（状态机） | `SoundTouchAudioProcessor*.kt` + `cpp/soundtouch/` + `soundtouch_jni.cpp` |
-| `values-en/strings.xml`（I18N 框架） | `WaveformCache.kt`（波形提速） |
-| `MixScreen`（混音页）、`SettingsRepository` 等 | `QualitySeparationSection.kt`、`CollapsibleCard.kt` |
+| `values-en/strings.xml`（I18N 框架） | `WaveformCache.kt`（波形缓存 + 渐进加载） |
+| `MixScreen`（混音页）、`SettingsRepository`、`TierRegistry`（分离档位）等 | `QualitySeparationSection.kt`、`CollapsibleCard.kt` |
 
-> ⇒ 两个待办**其实 checkpoint 已做过原型**：R2/bug C（SoundTouch 变速音质）、波形提速（WaveformCache）。
+> ⇒ 两个待办**其实 checkpoint 已做过原型**：R2/bug C（SoundTouch 变速音质）、**波形缓存 + 渐进加载（WaveformCache）**。
 > 需要时可直接从 `checkpoint-2026-09-29` 取参考。
 
 ### ★ 新对话冷启动游标（从这里接着干）
 
-- **恢复计划进度**：**Step 0–10 已全部完成** + **批次 4（F5.3/F5.4/I18N框架/F5.2/混音页）已起步**。
-- **当前批次**：**批次 2 ✅ / 同族小修 P2 ✅ P3 ✅**；下一批 = **批次 3（分离流程分析，先只分析）**。
-- **下一步顺序**：① ~~批次2 文档修正~~ ✅ → ② ~~同族小修 P2 清 waveform/cover + P3 `restoreFromSession`~~ ✅ → ③ **批次3 分离流程分析** ⬅ 当前 → ④ 批次4 收尾（F5.1/I18N）→ ⑤ 批次5（R5/波形提速/分离前台化/SoundTouch）。
+- **已完成**：核心需求 P0–P4/N3–N5 ✅；恢复计划 Step 0–10 ✅；批次4 起步 ✅；
+  **播放队列 R-a ✅；歌单 R1–R5 ✅；状态机收敛 3a ✅；DevTools（命令总线 + 测试面板）✅；
+  分离档位 D-1/D-2/D-3 ✅；Demucs 完整歌 OOM 修复 ✅；benchmark（BF00A+Gen3）✅**。
+- **下一步顺序**：① ~~D-3~~ ✅ → ② **R-h 波形缓存 + 渐进加载** ⬅ → ③ T-4 循环×队列验收 →
+  ④ R-d 进度记忆 / T-6 失效曲 → ⑤ T-7 3b 状态机收敛收尾 → ⑥ G-1/G-2 benchmark 门控 + 对照表 →
+  ⑦ 打磨（F5.1/F5.5/I18N）→ 🚪 可发布版本 → 演示视频。
 - **演示视频门控**：**在“可发布版本”完工前完全不考虑做**（用户明确）。
-- **新纪律（必守）**：git **每一步都 commit**；**每完成一小步就追加 `.memory.md` + 更新本游标**；隔几步主动问用户。
+- **必守纪律**：git **每一步都 commit**；**每完成一小步就追加 `.memory.md` 顶部高频日志 + 更新本游标**。
 
-> 旧纪律“每完成一步先写 memory”仍在，但**执行改为“高频追加 + 带游标”**（防止断线后重建理解烧大量上下文）。
+> 详见 `doc/.todo.md`（待办总账）与 artifact「冷启动入口」（带方法论/工具/环境坑速查）。
 
 ---
 
