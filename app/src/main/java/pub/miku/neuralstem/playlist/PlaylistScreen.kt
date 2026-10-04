@@ -59,18 +59,19 @@ fun PlaylistScreen(
     onTrackRemoved: (listId: String, removedUri: String) -> Unit = { _, _ -> },
     // 歌单**排序**后通知（若是当前歌单 → 同步队列顺序）。
     onTrackMoved: (listId: String, from: Int, to: Int) -> Unit = { _, _, _ -> },
-    // 当前正在播放的歌单/下标（用于高亮当前曲）。
-    currentListId: String? = null,
+    // 当前正在播放的曲目下标（用于高亮）；列表选中状态由 VM 的 selectedListId 派生。
     currentTrackIndex: Int = -1,
     // ★ 当前播放曲的 uri —— **高亮按 uri（曲目身份）**，排序/删其它曲后仍正确。
     currentUri: String? = null,
 ) {
     val lists by vm.lists.collectAsState()
+    // ★R1：当前选中歌单（单一真源，来自 VM；恒存在）。
+    val selectedListId by vm.selectedListId.collectAsState()
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     // ★ 进入歌单页 / 当前曲目变化时**重新加载**：歌单可能被播放器侧（导入等）改过，
     //   而本 VM 的 _lists 是内存缓存 → 否则数量/曲目显示陈旧。
-    LaunchedEffect(currentListId) { vm.reload() }
+    LaunchedEffect(selectedListId) { vm.reload() }
     var newName by remember { mutableStateOf("") }
     var expandedId by remember { mutableStateOf<String?>(null) }
 
@@ -139,14 +140,15 @@ fun PlaylistScreen(
                             // ★ 点左侧信息区 = 选中该歌单并播放（停当前 → 播它上次/首曲）
                             Column(
                                 modifier = Modifier.weight(1f)
-                                    .clickable { onSelectPlaylist(p.id) },
+                                    .clickable { vm.selectList(p.id); onSelectPlaylist(p.id) },
                             ) {
-                                val isCurrentList = p.id == currentListId
+                                // ★R1：高亮 = 当前**选中**歌单（恒存在）
+                                val isSelected = p.id == selectedListId
                                 Text(
-                                    (if (isCurrentList) "♪ " else "") + p.name +
+                                    (if (isSelected) "♪ " else "") + p.name +
                                         if (p.isDefault) "（默认）" else "",
                                     style = MaterialTheme.typography.titleSmall,
-                                    color = if (isCurrentList) MaterialTheme.colorScheme.primary
+                                    color = if (isSelected) MaterialTheme.colorScheme.primary
                                     else MaterialTheme.colorScheme.onSurface,
                                 )
                                 Text(
@@ -180,7 +182,7 @@ fun PlaylistScreen(
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
                                     // ★ 高亮按“曲目身份（uri）”而非 index：排序/删其它曲后仍正确。
-                                    val isCurrent = p.id == currentListId &&
+                                    val isCurrent = p.id == selectedListId &&
                                         (if (currentUri != null) t.uri == currentUri
                                         else idx == currentTrackIndex)
                                     Text(
@@ -200,12 +202,13 @@ fun PlaylistScreen(
                                             onClick = { vm.moveTrack(p.id, idx, idx + 1); onTrackMoved(p.id, idx, idx + 1) },
                                             enabled = idx < p.tracks.size - 1,
                                         ) { Text("↓") }
-                                    }
-                                    TextButton(onClick = {
-                                        vm.removeTrack(p.id, t.uri)
-                                        onTrackRemoved(p.id, t.uri)
-                                    }) {
-                                        Text("移除")
+                                        // ★R3：移除仅**文件歌单**可用（文件夹歌单由文件管理器代劳）
+                                        TextButton(onClick = {
+                                            vm.removeTrack(p.id, t.uri)
+                                            onTrackRemoved(p.id, t.uri)
+                                        }) {
+                                            Text("移除")
+                                        }
                                     }
                                 }
                             }

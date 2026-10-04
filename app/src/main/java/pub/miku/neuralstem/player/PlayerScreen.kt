@@ -56,6 +56,10 @@ fun PlayerScreen(
     modifier: Modifier = Modifier,
     vm: PlayerViewModel = viewModel(),
     onOpenSpike: () -> Unit = {},
+    // ★R2：仅当选中“选择型（FILE）歌单”时可导入；文件夹歌单不提供导入。
+    importEnabled: Boolean = true,
+    // ★R2：导入成功后通知宿主（→ 追加进当前选中歌单）。
+    onImported: (Uri, String) -> Unit = { _, _ -> },
 ) {
     val state by vm.state.collectAsState()
     // ★F5.4：触感反馈（分离完成在分离页；这里用于 1.0× 吸附）。
@@ -76,7 +80,10 @@ fun PlayerScreen(
                     it, Intent.FLAG_GRANT_READ_URI_PERMISSION,
                 )
             }
-            vm.loadAndPlay(it, queryDisplayName(context, it))
+            val name = queryDisplayName(context, it)
+            vm.loadAndPlay(it, name)
+            // ★R2：导入同时追加进当前选中歌单（由宿主落到 PlaylistViewModel）。
+            onImported(it, name)
         }
     }
 
@@ -98,9 +105,12 @@ fun PlayerScreen(
         )
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = {
-                pickAudio.launch(arrayOf("audio/*", "application/ogg", "application/x-flac"))
-            }) { Text("导入音频") }
+            // ★R2：文件夹歌单不导入（importEnabled=false 时隐藏）
+            if (importEnabled) {
+                Button(onClick = {
+                    pickAudio.launch(arrayOf("audio/*", "application/ogg", "application/x-flac"))
+                }) { Text("导入音频") }
+            }
 
             Button(
                 onClick = vm::togglePlayPause,

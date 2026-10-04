@@ -30,6 +30,7 @@ import pub.miku.neuralstem.player.MixScreen
 import pub.miku.neuralstem.player.PlayerScreen
 import pub.miku.neuralstem.player.PlayerViewModel
 import pub.miku.neuralstem.playlist.PlaylistScreen
+import pub.miku.neuralstem.playlist.PlaylistStore
 import pub.miku.neuralstem.playlist.PlaylistViewModel
 import pub.miku.neuralstem.settings.SettingsScreen
 import pub.miku.neuralstem.spike.SeparationScreen
@@ -71,6 +72,11 @@ fun AppShell(
     val playlistVm: PlaylistViewModel = viewModel()
     // 播放器状态（供分离页传“当前曲”）
     val playerState by playerVm.state.collectAsState()
+    // ★R1/R2：当前选中歌单（单一真源；恒存在）；其类型决定播放页是否可导入。
+    val playlistLists by playlistVm.lists.collectAsState()
+    val selectedListId by playlistVm.selectedListId.collectAsState()
+    val selectedList = playlistLists.firstOrNull { it.id == selectedListId }
+    val importEnabled = selectedList?.type == PlaylistStore.ListType.FILE
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -95,6 +101,14 @@ fun AppShell(
                 modifier = Modifier.fillMaxSize().padding(padding),
                 vm = playerVm,
                 onOpenSpike = { current = AppDestination.SEPARATE },
+                // ★R2：仅选中“选择型(FILE)歌单”时可导入；导入结果追加进该歌单。
+                importEnabled = importEnabled,
+                onImported = { uri, title ->
+                    playlistVm.appendTrack(
+                        selectedListId,
+                        PlaylistStore.TrackRef(uri.toString(), title),
+                    )
+                },
             )
 
             AppDestination.SEPARATE -> SeparationScreen(
@@ -146,17 +160,33 @@ fun AppShell(
                         current = AppDestination.PLAYER
                     }
                 },
-                // 选中歌单（点卡片头）→ 播“上次/首曲”
+                // 选中歌单（点卡片头）→ 空歌单则清播放器（R4）；否则播“上次/首曲”
                 onSelectPlaylist = { listId ->
                     val list = playlistVm.listById(listId)
-                    val idx = list?.lastPlayedUri
-                        ?.let { u -> list.tracks.indexOfFirst { it.uri == u } }
-                        ?.takeIf { it >= 0 } ?: 0
-                    list?.tracks?.getOrNull(idx)?.let { t ->
-                        playerVm.loadAndPlay(Uri.parse(t.uri), t.title)
+                    val track = list?.let { l ->
+                        val idx = l.lastPlayedUri
+                            ?.let { u -> l.tracks.indexOfFirst { it.uri == u } }
+                            ?.takeIf { it >= 0 } ?: 0
+                        l.tracks.getOrNull(idx)
+                    }
+                    if (track == null) {
+                        // ★R4：选中的歌单没曲 → 播放器清空 + 提示导入
+                        playerVm.clearCurrent()
+                    } else {
+                        playerVm.loadAndPlay(Uri.parse(track.uri), track.title)
                         current = AppDestination.PLAYER
                     }
                 },
+                // ★R4：清空的若是**当前选中**歌单 → 播放器清曲（非选中无影响）
+                onPlaylistCleared = { listId ->
+                    if (listId == selectedListId) playerVm.clearCurrent()
+                },
+                // ★R5：删除的若是**当前选中**歌单（非默认可删）→ VM 回落默认 + 播放器清曲
+                onPlaylistRemoved = { listId ->
+                    if (listId == selectedListId) playerVm.clearCurrent()
+                },
+                // 当前播放曲 uri（高亮用；列表选中状态由 VM.selectedListId 派生）
+                currentUri = playerState.currentUri,
             )
 
             // Step 7 / 方案1：混音页（EQ + 分轨混音）

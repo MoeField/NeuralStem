@@ -755,6 +755,44 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         )
     }
 
+    /**
+     * ★R4：清空当前播放（当前歌单被清空时调）。
+     *
+     * 停播 + 清 mediaItem + 重置为“尚未导入音频”的初态；并清空原曲记忆
+     * （[originalUri]/[originalName]）以防分离开关“回原曲”回一个已不存在的曲。
+     */
+    fun clearCurrent() {
+        // 若在多轨，先退回单轨（关跟随轨）
+        if (_state.value.isMultiTrack) {
+            sendMtCommand(MultiTrackSession.CMD_EXIT)
+            isMultiTrackLoaded = false
+        }
+        val p = mediaController
+        p?.stop()
+        p?.clearMediaItems()
+        originalUri = null
+        originalName = ""
+        _state.value = _state.value.copy(
+            fileName = "",
+            hasMedia = false,
+            playWhenReady = false,
+            isPlaying = false,
+            isReady = false,
+            durationMs = 0L,
+            isMultiTrack = false,
+            tracks = emptyList(),
+            separationOn = false,
+            currentUri = null,
+            waveform = null,
+            cover = null,
+        )
+        _progress.value = Progress(0L, 0L)
+        _anchor.value = null
+        lastShownMs = -1L
+        pendingSeekMs = null
+        Log.i(TAG, "clearCurrent: 当前播放已清空")
+    }
+
     /** F4.2 设某轨音量 */
     fun setTrackVolume(trackId: String, volume: Float) {
         sendMtCommand(

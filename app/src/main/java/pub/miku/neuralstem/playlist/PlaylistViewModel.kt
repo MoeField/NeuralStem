@@ -31,6 +31,41 @@ class PlaylistViewModel(app: Application) : AndroidViewModel(app) {
     private val _lists = MutableStateFlow(store.load())
     val lists: StateFlow<List<PlaylistStore.Playlist>> = _lists.asStateFlow()
 
+    // ============================ ★R1：当前选中歌单（恒存在，不为空） ============================
+    // 需求（用户定）：**任何时候都存在唯一“选中歌单”**；若未明确选中 / 选中的被删除 →
+    // 回落默认歌单。绝不允许“无选中”状态。
+    // - R2：导入只能进“选择型（FILE）”歌单（文件夹歌单不提供导入）。
+    // - R5：删除当前歌单（非默认）→ 回落默认。
+
+    private val _selectedListId = MutableStateFlow(store.defaultListId)
+    val selectedListId: StateFlow<String> = _selectedListId.asStateFlow()
+
+    /** 当前选中的歌单（恒非空——由 [ensureValidSelection] 保证）。 */
+    val selectedList: PlaylistStore.Playlist?
+        get() = _lists.value.firstOrNull { it.id == _selectedListId.value }
+
+    /** 选中某歌单（不存在则忽略）。 */
+    fun selectList(id: String) {
+        if (_lists.value.any { it.id == id }) _selectedListId.value = id
+    }
+
+    /**
+     * ★R1/R5：保证选中态指向一个**存在**的歌单；否则回落默认歌单。
+     * 在 [reload]/[deleteList] 后调用。
+     */
+    private fun ensureValidSelection() {
+        val cur = _selectedListId.value
+        val exists = _lists.value.any { it.id == cur }
+        if (!exists) {
+            val fallback = if (_lists.value.any { it.id == defaultListId }) defaultListId
+            else _lists.value.firstOrNull()?.id
+            if (fallback != null && fallback != cur) {
+                Log.i(TAG, "selected list $cur 不存在 → 回落 $fallback")
+                _selectedListId.value = fallback
+            }
+        }
+    }
+
     private fun persist() = store.save(_lists.value)
 
     /**
@@ -41,6 +76,7 @@ class PlaylistViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun reload() {
         _lists.value = store.load()
+        ensureValidSelection()
     }
 
     // ---------------- 新建 ----------------
@@ -71,6 +107,8 @@ class PlaylistViewModel(app: Application) : AndroidViewModel(app) {
         }
         _lists.value = _lists.value.filterNot { it.id == id }
         persist()
+        // ★R5：删了当前选中的歌单 → 回落默认（保证选中态恒存在）。
+        ensureValidSelection()
     }
 
     /** 清空某歌单的所有曲目（**默认歌单也允许**；不动磁盘文件）。 */
