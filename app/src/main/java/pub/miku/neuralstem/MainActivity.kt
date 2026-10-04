@@ -220,6 +220,12 @@ class MainActivity : ComponentActivity() {
             "clear" -> playerVm.clearCurrent()
             "next" -> playerVm.playNext()
             "prev" -> playerVm.playPrev()
+            // toggleSep: a0 = true/false（分离开关；验证“关→再开恢复”）
+            "togglesep" -> {
+                val on = a0?.toBooleanStrictOrNull() ?: true
+                val ok = playerVm.toggleSeparation(on)
+                Log.i("TestCmd", "toggleSeparation($on) → $ok")
+            }
             // queue: args = 交替的 uri,title（最多 2 首）；测试用
             "queue" -> {
                 val pairs = cmd.args.chunked(2).mapNotNull { (u, t) ->

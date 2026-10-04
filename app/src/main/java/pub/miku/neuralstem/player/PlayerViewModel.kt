@@ -211,6 +211,13 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     private var isMultiTrackLoaded = false
 
     /**
+     * ★R-b：**记住最近一次分离结果**（上次 loadMultiTrack 的 stems）。
+     * 让「分离开关」关掉后**再打开能恢复**（而非丢失结果、被迫重新分离）。
+     * 仅在“换曲 / 清空”时清除。
+     */
+    private var lastStems: List<Triple<String, String, File>>? = null
+
+    /**
      * 对外暴露的 player(单轨)。连接完成前为 null。
      * 类型为 [Player] —— [MediaController] 与 ExoPlayer 均实现它,
      * 所以既有调用点无需改动。
@@ -498,8 +505,12 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         doLoad(p, uri, displayName)
     }
 
-    /** 真正的载入逻辑(连接就绪后调用)。 */
-    private fun doLoad(p: Player, uri: Uri, displayName: String) {
+    /**
+     * 真正的载入逻辑(连接就绪后调用)。
+     * @param resetStems true（默认）= 这是一次“**换新曲**” → 旧分离结果作废（清 lastStems）。
+     *   false = “**回原曲**”（分离开关闭）→ **保留** lastStems，便于开关再开恢复。
+     */
+    private fun doLoad(p: Player, uri: Uri, displayName: String, resetStems: Boolean = true) {
         // ★I1（状态机不变量）：换曲前若处于多轨 → 先退多轨（关跟随轨）。
         //   否则跟随轨 ExoPlayer 不会被停 → 新曲（主轨）+ 旧 stems（跟随轨）**两首同时响**。
         session.beforeSetQueue()
@@ -523,9 +534,14 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         originalUri = uri
         originalName = displayName
         isMultiTrackLoaded = false
+        // ★R-b：仅“换新曲”时作废分离结果；“回原曲”保留（否则开关关→开就丢结果）。
+        if (resetStems) {
+            lastStems = null
+        }
         _state.value = _state.value.copy(
             fileName = displayName, hasMedia = true, playWhenReady = true,
             separationOn = false, currentUri = uri.toString(),
+            stemsAvailable = if (resetStems) false else _state.value.stemsAvailable,
         )
     }
 
@@ -720,6 +736,9 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun loadMultiTrack(stems: List<Triple<String, String, File>>) {
         if (stems.isEmpty()) return
+        // ★R-b：记住本次 stems（供分离开关“关→再开”恢复）；并标记可用。
+        lastStems = stems
+        _state.value = _state.value.copy(stemsAvailable = true)
         // ★P2 修复：多轨时转盘外环应显示**原曲波形**（外环=装饰化进度条）。
         //   Service 会给主轨(=session player) setMediaItem → onMediaItemTransition 触发，
         //   默认会把波形重提取为**主轨(vocals)的波形**。故：
@@ -782,23 +801,33 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * ★U3：切换“分离开关”。
-     * - on=true 且已有多轨（[isMultiTrackLoaded]）→ 切多轨；未载入 → 返回 false（宿主需先 [loadMultiTrack]）。
-     * - on=false → 退出多轨 + 重载原曲（单曲）。
+     * ★U3/★R-b：切换“分离开关”。
+     * - on=true：若已有分离结果（[lastStems]）→ **`loadMultiTrack` 恢复多轨**
+     *   （不再要求“当前正载入多轨”，修复“关掉后必须重跑分离”的 bug）；
+     *   没有结果 → 返回 false（宿主需先分离）。
+     * - on=false：退多轨 + 重载原曲（**保留** [lastStems]，可再开）。
      *
      * @return true = 已处理；false = 宿主需先分离
      */
     fun toggleSeparation(on: Boolean): Boolean {
         if (on) {
-            if (!isMultiTrackLoaded) return false
+            val stems = lastStems
+            if (stems.isNullOrEmpty()) {
+                Log.i(TAG, "toggleSeparation(true): 无分离结果 → 需先分离")
+                return false
+            }
+            // ★R-b：已有结果 → 直接恢复多轨（不必重跑分离）
+            Log.i(TAG, "toggleSeparation(true): 用 lastStems(${stems.size}) 恢复多轨")
+            loadMultiTrack(stems)
             mediaController?.play()
-            _state.value = _state.value.copy(separationOn = true)
+            return true
         } else {
-            // 回原曲：退出多轨 → 重载原曲（单曲）
+            // 回原曲：退出多轨 → 重载原曲（单曲）；**保留 lastStems**
             exitMultiTrack()
             val u = originalUri
             val p = mediaController
-            if (u != null && p != null) runCatching { doLoad(p, u, originalName) }
+            // ★R-b：回原曲 = resetStems=false（**保留** lastStems，开关再开可恢复）
+            if (u != null && p != null) runCatching { doLoad(p, u, originalName, resetStems = false) }
             _state.value = _state.value.copy(separationOn = false)
         }
         return true
@@ -833,6 +862,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         p?.clearMediaItems()
         originalUri = null
         originalName = ""
+        lastStems = null
         _state.value = _state.value.copy(
             fileName = "",
             hasMedia = false,
