@@ -252,15 +252,14 @@ private fun ControlsArea(
             onSeek = vm::seekTo,
             modifier = Modifier.fillMaxWidth(),
         )
+        // ★R-a：控制行**不设**上/下一首按钮 —— 切歌交给「横向滑动唱片」（DeckView）。
         Row(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Button(onClick = { vm.playPrev() }) { Text("⏮") }
             Button(onClick = { vm.seekTo((vm.progress.positionMs - 10_000).coerceAtLeast(0)) }) { Text("-10s") }
             Button(onClick = vm::togglePlayPause) { Text(if (state.playWhenReady) "暂停" else "播放") }
             Button(onClick = { vm.seekTo(vm.progress.positionMs + 10_000) }) { Text("+10s") }
-            Button(onClick = { vm.playNext() }) { Text("⏭") }
             Button(onClick = vm::cycleRepeatMode) {
                 Text(state.repeatMode.glyph, style = MaterialTheme.typography.titleMedium)
             }
