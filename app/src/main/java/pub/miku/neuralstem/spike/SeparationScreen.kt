@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.launch
 import pub.miku.neuralstem.export.StemExporter
+import pub.miku.neuralstem.player.SeparationTask
 import java.io.File
 
 /**
@@ -69,9 +70,8 @@ fun SeparationScreen(
     val ctx = LocalContext.current
     val app = ctx.applicationContext as Application
     val scope = rememberCoroutineScope()
-    val spikeState by vm.state.collectAsState()
-    val repo = remember { SeparationRepository.get(app) }
-    val repoState by repo.state.collectAsState()
+    // ★3a-2：分离任务状态 = 单一真源（来自状态机）；repoState 不再直接读。
+    val separationTask by vm.separationTask.collectAsState()
     // ★F5.4：分离完成时的触感反馈。
     val haptic = LocalHapticFeedback.current
     var mode by rememberSaveable { mutableStateOf(SeparationMode.TWO_STEM) }
@@ -79,26 +79,29 @@ fun SeparationScreen(
     var exportMsg by remember { mutableStateOf<String?>(null) }
 
     val hasSong = fileName.isNotBlank() && !currentUri.isNullOrBlank()
-    val busy = spikeState is SpikeViewModel.State.Separating ||
-        repoState is SeparationRepository.State.Preparing ||
-        repoState is SeparationRepository.State.Running
+    // ★3a-2：busy 单一来源（不再拼接 spikeState + repoState）。
+    val busy = separationTask is SeparationTask.Preparing ||
+        separationTask is SeparationTask.Running
 
-    // ---- 完成 → 自动切多轨（**只对「非 Done → Done」的转换**响应，忽略进入时的遗留态）----
-    var prevSpike by remember { mutableStateOf<SpikeViewModel.State?>(spikeState) }
-    var prevRepo by remember { mutableStateOf<SeparationRepository.State?>(repoState) }
-    LaunchedEffect(spikeState, repoState) {
-        val wasS = prevSpike; prevSpike = spikeState
-        val s = spikeState
-        if (s is SpikeViewModel.State.Done && wasS !is SpikeViewModel.State.Done) {
-            onPlayStems(s)
-            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+    // ---- 完成 → 自动切多轨（★I3：**一次性消费**，天然只响应"Running→Done 转换"，----
+    //      不响应进入时的遗留态；不再用 prevSpike/prevRepo 手搓 → 重建也不会误触发）----
+    LaunchedEffect(separationTask) {
+        val done = vm.consumeSeparationDone() ?: return@LaunchedEffect
+        when (done) {
+            is SeparationTask.Done2 -> onPlayStems(
+                SpikeViewModel.State.Done(
+                    vocalsFile = done.vocalsFile,
+                    accompanimentFile = done.accompanimentFile,
+                    modelLoadMs = done.modelLoadMs,
+                    inferTimeMs = done.inferTimeMs,
+                    peakPssMb = done.peakPssMb,
+                    audioDurationMs = done.audioDurationMs,
+                    fromCache = done.fromCache,
+                ),
+            )
+            is SeparationTask.Done4 -> onPlayStems4(done.stemFiles)
         }
-        val wasR = prevRepo; prevRepo = repoState
-        val r = repoState
-        if (r is SeparationRepository.State.Done4 && wasR !is SeparationRepository.State.Done4) {
-            onPlayStems4(r.stemFiles)
-            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-        }
+        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
     }
 
     /** 开始分离：Uri→File → 按模式启动。 */
@@ -119,8 +122,9 @@ fun SeparationScreen(
                     }
                     vm.startSeparation()
                 }
-                SeparationMode.FOUR_STEM -> repo.start4(src)
-                SeparationMode.HIGH_QUALITY -> repo.start4(src) // Demucs 未装 → 回退 4-stem
+                // ★3a-2：4-stem 经 VM（先订阅驱动状态机），不再直接 repo.start4
+                SeparationMode.FOUR_STEM -> vm.start4Stem(src)
+                SeparationMode.HIGH_QUALITY -> vm.start4Stem(src) // Demucs 未装 → 回退 4-stem
             }
         }
     }
@@ -204,50 +208,39 @@ fun SeparationScreen(
             modifier = Modifier.fillMaxWidth(),
         ) { Text(if (busy) "分离中…" else "开始分离") }
 
-        // ---- 进度 / 结果 ----
-        when (val s = spikeState) {
-            is SpikeViewModel.State.Separating -> {
+        // ---- 进度 / 结果（★3a-2：**单一真源** separationTask；不再并列读 spikeState + repoState）----
+        when (val t = separationTask) {
+            is SeparationTask.Preparing -> Text("准备中…")
+            is SeparationTask.Running -> {
                 LinearProgressIndicator(
-                    progress = { s.percent / 100f },
+                    progress = { t.percent / 100f },
                     modifier = Modifier.fillMaxWidth(),
                 )
-                Text("分离中 ${s.percent}% — 已耗时 ${s.elapsedMs / 1000}s")
+                Text("分离中 ${t.percent}%")
             }
-            is SpikeViewModel.State.Done ->
+            is SeparationTask.Done2 -> Text(
+                if (t.fromCache) "✅ 命中缓存（未重新推理）" else "✅ 分离完成",
+                color = MaterialTheme.colorScheme.primary,
+            )
+            is SeparationTask.Done4 -> {
                 Text(
-                    if (s.fromCache) "✅ 命中缓存（未重新推理）" else "✅ 分离完成",
-                    color = MaterialTheme.colorScheme.primary,
-                )
-            is SpikeViewModel.State.Error ->
-                Text("❌ ${s.message}", color = MaterialTheme.colorScheme.error)
-            else -> Unit
-        }
-        when (val s = repoState) {
-            is SeparationRepository.State.Preparing -> Text("准备中…")
-            is SeparationRepository.State.Running -> {
-                LinearProgressIndicator(
-                    progress = { s.percent / 100f },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Text("4-stem 分离中 ${s.percent}% — ${s.elapsedMs / 1000}s")
-            }
-            is SeparationRepository.State.Done4 -> {
-                Text(
-                    if (s.fromCache) "✅ 4-stem 命中缓存" else "✅ 4-stem 完成",
+                    if (t.fromCache) "✅ 4-stem 命中缓存" else "✅ 4-stem 完成",
                     color = MaterialTheme.colorScheme.primary,
                 )
                 // ★U7：导出到 Music/separate/<歌名>/（WAV，不含 EQ/音量）。
                 Button(onClick = {
-                    exportMsg = StemExporter.export(app, fileName.ifBlank { "song" }, s.stemFiles)
+                    exportMsg = StemExporter.export(app, fileName.ifBlank { "song" }, t.stemFiles)
                 }) { Text("导出到 Music/separate/") }
                 exportMsg?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
             }
-            is SeparationRepository.State.Failed ->
-                Text("❌ ${s.message}", color = MaterialTheme.colorScheme.error)
-            else -> Unit
+            is SeparationTask.Failed ->
+                Text("❌ ${t.message}", color = MaterialTheme.colorScheme.error)
+            SeparationTask.Cancelled ->
+                Text("分离已取消", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            SeparationTask.Idle -> Unit
         }
         if (busy) {
-            Button(onClick = { vm.cancelSeparation(); repo.cancel() }) { Text("取消分离") }
+            Button(onClick = { vm.cancelSeparation() }) { Text("取消分离") }
         }
 
         HorizontalDivider()
