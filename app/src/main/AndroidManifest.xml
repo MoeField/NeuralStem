@@ -58,6 +58,13 @@
         <service
             android:name=".devtools.TestCommandService"
             android:exported="true" />
+
+        <!-- ★测试面板（debug 工具）：按钮 + 屏上日志，避开 vivo 吞 logcat。
+             adb shell am start (component=pub.miku.neuralstem/.devtools.TestPanelActivity) -->
+        <activity
+            android:name=".devtools.TestPanelActivity"
+            android:exported="true"
+            android:label="测试面板" />
     </application>
 
 </manifest>
