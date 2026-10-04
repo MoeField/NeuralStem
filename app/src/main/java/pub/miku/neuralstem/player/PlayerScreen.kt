@@ -11,6 +11,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -253,15 +254,31 @@ private fun ControlsArea(
             modifier = Modifier.fillMaxWidth(),
         )
         // ★R-a：控制行**不设**上/下一首按钮 —— 切歌交给「横向滑动唱片」（DeckView）。
+        // 快退/快进用 ⏪/⏩ 符号（语义 = ±10s 跳转），比文字更紧凑。
         Row(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Button(onClick = { vm.seekTo((vm.progress.positionMs - 10_000).coerceAtLeast(0)) }) { Text("-10s") }
+            Button(onClick = { vm.seekTo((vm.progress.positionMs - 10_000).coerceAtLeast(0)) }) {
+                Text("⏪", style = MaterialTheme.typography.titleMedium)
+            }
             Button(onClick = vm::togglePlayPause) { Text(if (state.playWhenReady) "暂停" else "播放") }
-            Button(onClick = { vm.seekTo(vm.progress.positionMs + 10_000) }) { Text("+10s") }
-            Button(onClick = vm::cycleRepeatMode) {
-                Text(state.repeatMode.glyph, style = MaterialTheme.typography.titleMedium)
+            Button(onClick = { vm.seekTo(vm.progress.positionMs + 10_000) }) {
+                Text("⏩", style = MaterialTheme.typography.titleMedium)
+            }
+            Button(
+                onClick = vm::cycleRepeatMode,
+                // 紧凑内容边距（避免默认横向 padding 把 "↻₁" 逼窄 → 换行）。
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+            ) {
+                // ★ maxLines=1 + softWrap=false：防止 "↻₁" 两个码点被容器宽度逼成两行
+                // （否则 “₁” 会掉到下面，按钮高度翻倍 —— 真机实测）。
+                Text(
+                    state.repeatMode.glyph,
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    softWrap = false,
+                )
             }
         }
         Text(
