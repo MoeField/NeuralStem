@@ -1,6 +1,7 @@
 package pub.miku.neuralstem.spike
 
 import android.app.Application
+import android.util.Log
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -12,7 +13,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -25,7 +25,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -37,13 +36,15 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.launch
 import pub.miku.neuralstem.export.StemExporter
 import pub.miku.neuralstem.player.SeparationTask
+import pub.miku.neuralstem.settings.SettingsRepository
 import java.io.File
 
 /**
  * 分离页（**Step 10 重构**）：**直接作用于当前播放曲**（不再手动导入）。
  *
  * - 顶部显示当前曲目（歌单名 + 曲名 + n/N）；无曲时空态。
- * - **模式单选**（[SeparationMode]：2-stem / 4-stem / 高质量）+ 一个「开始分离」按钮。
+ * - **档位按钮**（★D-3）：按轨数 2 行（2 轨：快速/均衡/质量；4 轨：快速/质量），
+ *   点即跑；每档的**具体模型**在设置里选（[SettingsRepository.tierOption]）。
  * - **分离开关**与播放页同一状态（[onToggleSeparation]）。
  * - 完成 → **自动切多轨**（[onPlayStems]/[onPlayStems4]，**只对转换响应**，避免遗留 Done 误触发）。
  * - 布局用 [FlowRow]/全宽，避免 720px 宽屏挤压。
@@ -74,7 +75,6 @@ fun SeparationScreen(
     val separationTask by vm.separationTask.collectAsState()
     // ★F5.4：分离完成时的触感反馈。
     val haptic = LocalHapticFeedback.current
-    var mode by rememberSaveable { mutableStateOf(SeparationMode.TWO_STEM) }
     var cacheMsg by remember { mutableStateOf<String?>(null) }
     var exportMsg by remember { mutableStateOf<String?>(null) }
 
@@ -104,8 +104,8 @@ fun SeparationScreen(
         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
     }
 
-    /** 开始分离：Uri→File → 按模式启动。 */
-    fun start() {
+    /** ★D-3：点「档位」→ 用设置里该档选的模型启动分离。 */
+    fun startTier(tc: TierChoices) {
         val uri = currentUri ?: return
         scope.launch {
             val src = CurrentTrackBridge.toFile(app, uri)
@@ -113,19 +113,10 @@ fun SeparationScreen(
                 cacheMsg = "无法读取当前曲目（Uri 不可访问）"
                 return@launch
             }
-            when (mode) {
-                SeparationMode.TWO_STEM -> {
-                    // ★ 先 await 源解析再启动（否则 startSeparation 会读到 null → 静默不分离）
-                    if (!vm.selectSeparationSource(src)) {
-                        cacheMsg = "当前曲目解析失败，无法分离"
-                        return@launch
-                    }
-                    vm.startSeparation()
-                }
-                // ★3a-2：4-stem 经 VM（先订阅驱动状态机），不再直接 repo.start4
-                SeparationMode.FOUR_STEM -> vm.start4Stem(src)
-                SeparationMode.HIGH_QUALITY -> vm.start4Stem(src) // Demucs 未装 → 回退 4-stem
-            }
+            val repo = SettingsRepository(app)
+            val opt = repo.tierOption(tc.stem, tc.tier) ?: tc.default()
+            Log.i("SepScreen", "startTier: ${tc.stem}/${tc.tier} → ${opt.id} (${opt.displayName})")
+            vm.startOption(src, opt)
         }
     }
 
@@ -184,29 +175,38 @@ fun SeparationScreen(
             )
         }
 
-        // ---- 模式单选（FlowRow 避免挤成竖条）----
-        Text("分离模式", style = MaterialTheme.typography.titleMedium)
-        FlowRow(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            SeparationMode.entries.forEach { m ->
-                FilterChip(selected = mode == m, onClick = { mode = m }, label = { Text(m.label) })
+        // ---- ★D-3：按轨数 2 行；每行 = 档位按钮（点即跑）；按钮显示当前选中模型 ----
+        Text("分离", style = MaterialTheme.typography.titleMedium)
+        val settingsRepo = remember { SettingsRepository(app) }
+        TierRegistry.ALL.groupBy { it.stem }.forEach { (stem, rows) ->
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    (if (stem == StemCount.TWO) "2 轨（人声+伴奏）" else "4 轨（人声/鼓/贝斯/其他）"),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    rows.forEach { tc ->
+                        val opt = settingsRepo.tierOption(tc.stem, tc.tier) ?: tc.default()
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Button(
+                                onClick = { startTier(tc) },
+                                enabled = hasSong && !busy,
+                            ) { Text(tc.tier.label) }
+                            Text(
+                                opt.displayName,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
             }
         }
-        Text(
-            mode.hint,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-
-        // ---- 开始（全宽）----
-        Button(
-            onClick = { start() },
-            enabled = hasSong && !busy,
-            modifier = Modifier.fillMaxWidth(),
-        ) { Text(if (busy) "分离中…" else "开始分离") }
 
         // ---- 进度 / 结果（★3a-2：**单一真源** separationTask；不再并列读 spikeState + repoState）----
         when (val t = separationTask) {
@@ -255,11 +255,4 @@ fun SeparationScreen(
             cacheMsg?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
         }
     }
-}
-
-/** 分离模式（单选）。 */
-enum class SeparationMode(val label: String, val hint: String) {
-    TWO_STEM("2-stem", "Spleeter 2-stem：人声 / 伴奏（最快）"),
-    FOUR_STEM("4-stem", "Spleeter 4-stems：人声 / 鼓 / 贝斯 / 其他"),
-    HIGH_QUALITY("高质量", "Demucs（已安装则用）或 Spleeter 4-stem，音质优先"),
 }

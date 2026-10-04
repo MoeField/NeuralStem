@@ -431,6 +431,45 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
         repo.start4(source)
     }
 
+    /**
+     * ★D-3：按「档位选中的 [SepOption]」启动分离（统一入口）。
+     *
+     * 屏蔽三套引擎：sherpa(2-stem/UVR) → [SeparationRepository.start]；
+     * Spleeter4 → [SeparationRepository.start4]；Demucs → [SeparationRepository.startDemucs]。
+     * 均先驱动状态机（[SessionStateMachine.onSeparationPreparing]）。
+     */
+    fun startOption(source: File, opt: SepOption) {
+        when (opt) {
+            is SepOption.Sherpa -> {
+                engineOverride = true
+                engineMode = opt.spec.engine
+                if (opt.spec.engine == SherpaSourceSeparation.MODE_UVR) {
+                    uvrModelName = opt.spec.fileName
+                }
+                Log.i(TAG, "startOption(Sherpa): ${opt.spec.id} engine=${opt.spec.engine}")
+                session.onSeparationPreparing()
+                pushSeparationTask()
+                repo.start(
+                    source = source,
+                    engine = engineMode,
+                    uvrModelName = uvrModelName,
+                    chunkOverrideFrames = chunkSecondsOverride
+                        ?.let { it * SeparationInput.MODEL_SAMPLE_RATE },
+                )
+            }
+            SepOption.Spleeter4 -> {
+                Log.i(TAG, "startOption: Spleeter4")
+                start4Stem(source)
+            }
+            SepOption.Demucs -> {
+                Log.i(TAG, "startOption: Demucs")
+                session.onSeparationPreparing()
+                pushSeparationTask()
+                repo.startDemucs(source)
+            }
+        }
+    }
+
     /** guide N5:取消分离任务 */
     fun cancelSeparation() {
         repo.cancel()
