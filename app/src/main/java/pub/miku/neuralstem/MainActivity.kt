@@ -16,6 +16,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import kotlinx.coroutines.delay
+import pub.miku.neuralstem.devtools.TestCommandBus
 import pub.miku.neuralstem.player.PlayerViewModel
 import pub.miku.neuralstem.ui.AppShell
 import pub.miku.neuralstem.ui.theme.NeuralStemTheme
@@ -173,6 +174,17 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
+                // ★T0：测试命令总线消费循环（adb broadcast → 动作级驱动；见 devtools/）。
+                //   执行点调用**与 UI 点击相同**的 VM 方法（测试路径 = 用户路径）。
+                LaunchedEffect(Unit) {
+                    TestCommandBus.pending.collect { cmd ->
+                        if (cmd == null) return@collect
+                        TestCommandBus.consume()
+                        if (cmd.delayMs > 0) delay(cmd.delayMs)
+                        dispatchTestCommand(cmd)
+                    }
+                }
+
                 // M2-C:AppShell 取代原先「直接显示 PlayerScreen」;分离页现为其一导航项，
                 // 分离结果直接回调 playerVm，不再走跨 Activity 的 setResult（消除坑 32）。
                 AppShell(playerVm = playerVm, snackbarHostState = snackbar)
@@ -185,5 +197,39 @@ class MainActivity : ComponentActivity() {
         // VM 随 ViewModelStore 在旋转/重建间存活;仅真正退出(finish)时释放 player。
         // 重建场景若释放,重建后拿到的是已 release 的 player(实测踩坑)。
         if (isFinishing) playerVm.release()
+    }
+
+    /**
+     * ★T0：执行一条测试命令。
+     *
+     * **原则**：每条命令调用与 UI 点击**完全相同**的 [PlayerViewModel] 方法，
+     * 保证“测试路径 = 用户路径”，避免测试与真实行为分叉。
+     */
+    private fun dispatchTestCommand(cmd: TestCommandBus.Command) {
+        val a0 = cmd.args.getOrNull(0)
+        val a1 = cmd.args.getOrNull(1)
+        when (cmd.name) {
+            "help" -> Log.i("TestCmd", TestCommandBus.helpText)
+            "load" -> if (a0 != null) {
+                playerVm.loadAndPlay(Uri.parse(a0), a1 ?: a0.substringAfterLast('/'))
+            }
+            "play" -> playerVm.play()
+            // 无独立 pause 方法（UI 只有 toggle）；pause 作为 toggle 别名。
+            "pause", "toggle" -> playerVm.togglePlayPause()
+            "seek" -> a0?.toLongOrNull()?.let { playerVm.seekTo(it) }
+            "clear" -> playerVm.clearCurrent()
+            "eq" -> playerVm.setEqEnabled(a0?.toBooleanStrictOrNull() ?: false)
+            "inmt" -> if (a0 != null && a1 != null) {
+                playerVm.loadMultiTrack(
+                    listOf(
+                        Triple("vocals", "人声", File(a0)),
+                        Triple("accompaniment", "伴奏", File(a1)),
+                    ),
+                )
+                playerVm.play()
+            }
+            "exitsmt" -> playerVm.exitMultiTrack()
+            else -> Log.w("TestCmd", "未知命令: ${cmd.name}（--es cmd help 查看清单）")
+        }
     }
 }
