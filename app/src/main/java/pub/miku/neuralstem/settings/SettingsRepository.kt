@@ -5,6 +5,10 @@ import android.content.Context
 import android.util.Log
 import pub.miku.neuralstem.spike.ModelRegistry
 import pub.miku.neuralstem.spike.ModelSpec
+import pub.miku.neuralstem.spike.SepOption
+import pub.miku.neuralstem.spike.StemCount
+import pub.miku.neuralstem.spike.Tier
+import pub.miku.neuralstem.spike.TierRegistry
 
 /**
  * 设置持久化(阶段 M2 任务 E)。
@@ -109,6 +113,35 @@ class SettingsRepository(app: Application) {
 
     /** 派生：速度滑块上限 = X。 */
     val speedSliderMax: Float get() = SpeedRange.sliderMax(speedRangeX)
+
+    // ============================ ★分离档位：每档选模型（D-2）============================
+    //
+    // 只有「候选 ≥ 2」的档需要在设置里选（2轨·均衡、2轨·质量）；其余档固定单模型。
+    // 按 `<stem>_<tier>` 存 **SepOption.id**（模型/引擎稳定 id）。
+
+    /** 某档选中的模型 id（默认 = 该档 [TierChoices.defaultId]）。 */
+    fun tierModelId(stem: StemCount, tier: Tier): String {
+        val def = TierRegistry.find(stem, tier)?.defaultId ?: ""
+        return prefs.getString("tier_${stem.name}_${tier.name}", def) ?: def
+    }
+
+    /** 设置某档的模型 id（仅接受该档候选内的 id，否则忽略）。 */
+    fun setTierModelId(stem: StemCount, tier: Tier, id: String) {
+        val choices = TierRegistry.find(stem, tier) ?: return
+        if (choices.candidates.none { it.id == id }) {
+            Log.w(TAG, "setTierModelId 忽略非法 id=$id for $stem/$tier")
+            return
+        }
+        prefs.edit().putString("tier_${stem.name}_${tier.name}", id).apply()
+        Log.i(TAG, "tierModel $stem/$tier = $id")
+    }
+
+    /** 解析某档选中的 [SepOption]（id 无效时回退默认）。 */
+    fun tierOption(stem: StemCount, tier: Tier): SepOption? {
+        val choices = TierRegistry.find(stem, tier) ?: return null
+        val id = tierModelId(stem, tier)
+        return choices.candidates.firstOrNull { it.id == id } ?: choices.default()
+    }
 
     companion object {
         private const val TAG = "SettingsRepo"

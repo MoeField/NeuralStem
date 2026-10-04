@@ -3,6 +3,7 @@ package pub.miku.neuralstem.settings
 import android.app.Application
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -12,6 +13,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
@@ -34,6 +36,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import pub.miku.neuralstem.player.PlayerViewModel
+import pub.miku.neuralstem.spike.TierRegistry
 
 /**
  * 设置页(阶段 M2 任务 E)。
@@ -162,6 +165,11 @@ fun SettingsScreen(
 
         // Step5：变速范围（单一项 X → 滑块 [1/X, X]）
         SpeedRangeSetting()
+
+        HorizontalDivider()
+
+        // ★D-2：分离档位选模型（仅“候选 ≥2”的档展示：2轨·均衡 / 2轨·质量）
+        TierModelSetting()
     }
 }
 
@@ -283,4 +291,53 @@ private fun BenchmarkPrompt(onRunNow: () -> Unit, onLater: () -> Unit) {
         confirmButton = { TextButton(onClick = onRunNow) { Text("现在检测") } },
         dismissButton = { TextButton(onClick = onLater) { Text("稍后") } },
     )
+}
+
+/**
+ * ★D-2：分离档位选模型。
+ *
+ * 只展示「候选 ≥ 2」的档（= 2轨·均衡 / 2轨·质量）；其余档固定单模型，无需选择。
+ * 选中项持久化到 [SettingsRepository]；分离页按“档位”跑时取这里的选择。
+ */
+@Composable
+private fun TierModelSetting() {
+    val ctx = LocalContext.current
+    val repo = remember { SettingsRepository(ctx.applicationContext as Application) }
+    // 只有多候选的档需要选择
+    val tierRows = remember { TierRegistry.ALL.filter { it.candidates.size > 1 } }
+    if (tierRows.isEmpty()) return
+
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text("分离档位模型", style = MaterialTheme.typography.titleMedium)
+        Text(
+            "单模型档（快速 / 4轨）无需选择；下面只列出有多候选的档。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        tierRows.forEach { tc ->
+            var selected by remember { mutableStateOf(repo.tierModelId(tc.stem, tc.tier)) }
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    "${tc.stem.label} · ${tc.tier.label}",
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                // 候选以 FilterChip 单选呈现（零新增依赖；与分离页风格一致）
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    tc.candidates.forEach { opt ->
+                        FilterChip(
+                            selected = selected == opt.id,
+                            onClick = {
+                                selected = opt.id
+                                repo.setTierModelId(tc.stem, tc.tier, opt.id)
+                            },
+                            label = { Text(opt.displayName) },
+                        )
+                    }
+                }
+            }
+        }
+    }
 }
