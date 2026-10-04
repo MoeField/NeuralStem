@@ -93,17 +93,20 @@ sealed interface SeparationTask {
  * ★R-a：**播放队列**（歌单 = 队列）。
  *
  * 用途：支撑上/下一首、自动下一首、循环×队列。**单一真源**（收归状态机）。
- * [trackIds] 存**曲目 uri** 列表（顺序 = 歌单顺序）；[currentIndex] 为当前曲在其中的下标。
+ * 队列项带 `uri` 与 `title`（load 时需要标题）。顺序 = 歌单顺序。
  */
 sealed interface QueueState {
     /** 无队列（如仅单曲播放/多轨直接载入）。 */
     data object Empty : QueueState
 
     /** 有队列。[currentIndex] 可能越界（如被删）—— 由调用方校验。 */
-    data class Active(val trackIds: List<String>, val currentIndex: Int) : QueueState {
-        val currentId: String? get() = trackIds.getOrNull(currentIndex)
+    data class Active(val tracks: List<QueueTrack>, val currentIndex: Int) : QueueState {
+        val current: QueueTrack? get() = tracks.getOrNull(currentIndex)
     }
 }
+
+/** 队列中的一首曲（uri + 显示标题）。 */
+data class QueueTrack(val uri: String, val title: String)
 
 // ============================ 状态机 ============================
 
@@ -186,9 +189,9 @@ class SessionStateMachine(private val effects: Effects) {
      * @param trackIds 曲目 uri 列表（顺序=歌单顺序）
      * @param startIndex 起始下标（越界则归 0；空列表则置 [QueueState.Empty]）
      */
-    fun setQueue(trackIds: List<String>, startIndex: Int = 0) {
-        queue = if (trackIds.isEmpty()) QueueState.Empty
-        else QueueState.Active(trackIds, startIndex.coerceIn(0, trackIds.size - 1))
+    fun setQueue(tracks: List<QueueTrack>, startIndex: Int = 0) {
+        queue = if (tracks.isEmpty()) QueueState.Empty
+        else QueueState.Active(tracks, startIndex.coerceIn(0, tracks.size - 1))
     }
 
     /** 清空队列（回到无队列的单曲语义）。 */
@@ -203,7 +206,7 @@ class SessionStateMachine(private val effects: Effects) {
     fun advanceQueue(): Boolean {
         val a = queue as? QueueState.Active ?: return false
         val next = a.currentIndex + 1
-        if (next >= a.trackIds.size) return false
+        if (next >= a.tracks.size) return false
         queue = a.copy(currentIndex = next)
         return true
     }
@@ -220,7 +223,7 @@ class SessionStateMachine(private val effects: Effects) {
     /** 回到队列开头（循环歌单时“到尾绕回”）。 */
     fun wrapQueueToStart(): Boolean {
         val a = queue as? QueueState.Active ?: return false
-        if (a.trackIds.isEmpty()) return false
+        if (a.tracks.isEmpty()) return false
         queue = a.copy(currentIndex = 0)
         return true
     }
@@ -229,17 +232,17 @@ class SessionStateMachine(private val effects: Effects) {
      * 移除队列中某曲（如失效曲）。会自动维持 [currentIndex] 合理性：
      * 移除当前曲时下标不变（指向“下一个”）；移除更前的曲则下标前移。
      */
-    fun removeFromQueue(trackId: String) {
+    fun removeFromQueue(uri: String) {
         val a = queue as? QueueState.Active ?: return
-        val removedIdx = a.trackIds.indexOf(trackId)
+        val removedIdx = a.tracks.indexOfFirst { it.uri == uri }
         if (removedIdx < 0) return
-        val newIds = a.trackIds.filterNot { it == trackId }
-        if (newIds.isEmpty()) {
+        val newTracks = a.tracks.filterNot { it.uri == uri }
+        if (newTracks.isEmpty()) {
             queue = QueueState.Empty
             return
         }
         val newIndex = a.currentIndex - (if (removedIdx < a.currentIndex) 1 else 0)
-        queue = QueueState.Active(newIds, newIndex.coerceIn(0, newIds.size - 1))
+        queue = QueueState.Active(newTracks, newIndex.coerceIn(0, newTracks.size - 1))
     }
 
     // ============================ 多轨 ============================

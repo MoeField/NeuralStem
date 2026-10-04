@@ -153,27 +153,23 @@ fun AppShell(
             AppDestination.PLAYLIST -> PlaylistScreen(
                 modifier = Modifier.fillMaxSize().padding(padding),
                 vm = playlistVm,
-                // 点曲 → 播这首（范围B：暂不走队列，用单曲播放）
+                // ★R-a：点曲 → **以整个歌单为队列**、从该下标开始播。
                 onPlayTrack = { listId, idx ->
-                    playlistVm.listById(listId)?.tracks?.getOrNull(idx)?.let { t ->
-                        playerVm.loadAndPlay(Uri.parse(t.uri), t.title)
+                    playlistVm.listById(listId)?.tracks?.let { tracks ->
+                        playerVm.playQueue(tracks.map { Uri.parse(it.uri) to it.title }, idx)
                         current = AppDestination.PLAYER
                     }
                 },
-                // 选中歌单（点卡片头）→ 空歌单则清播放器（R4）；否则播“上次/首曲”
+                // 选中歌单（点卡片头）→ 空歌单则清播放器（R4）；否则从“上次/首曲”开始播队列
                 onSelectPlaylist = { listId ->
-                    val list = playlistVm.listById(listId)
-                    val track = list?.let { l ->
-                        val idx = l.lastPlayedUri
-                            ?.let { u -> l.tracks.indexOfFirst { it.uri == u } }
-                            ?.takeIf { it >= 0 } ?: 0
-                        l.tracks.getOrNull(idx)
-                    }
-                    if (track == null) {
+                    val tracks = playlistVm.listById(listId)?.tracks
+                    if (tracks.isNullOrEmpty()) {
                         // ★R4：选中的歌单没曲 → 播放器清空 + 提示导入
                         playerVm.clearCurrent()
                     } else {
-                        playerVm.loadAndPlay(Uri.parse(track.uri), track.title)
+                        val last = playlistVm.listById(listId)?.lastPlayedUri
+                        val idx = last?.let { u -> tracks.indexOfFirst { it.uri == u } }?.takeIf { it >= 0 } ?: 0
+                        playerVm.playQueue(tracks.map { Uri.parse(it.uri) to it.title }, idx)
                         current = AppDestination.PLAYER
                     }
                 },
