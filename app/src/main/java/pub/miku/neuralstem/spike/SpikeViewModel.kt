@@ -11,6 +11,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import pub.miku.neuralstem.player.SeparationTask
@@ -473,9 +474,11 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
             }
 
             // 用 CompletableDeferred 等终态（直接监听 repo.state，UI 镜像由 init 的常驻订阅负责）
+            // ★bug fix：StateFlow 订阅会**立即 emit 当前值**（上一轮残留终态）→ 必须 drop(1)
+            //   否则 done 会提前用旧值完成（真机实测：AUTO SPIKE 28ms 就误报 FAILED）。
             val done = CompletableDeferred<SeparationRepository.State>()
             val waiter = viewModelScope.launch {
-                repo.state.collect { s ->
+                repo.state.drop(1).collect { s ->
                     if (s !is SeparationRepository.State.Idle &&
                         s !is SeparationRepository.State.Preparing &&
                         s !is SeparationRepository.State.Running
