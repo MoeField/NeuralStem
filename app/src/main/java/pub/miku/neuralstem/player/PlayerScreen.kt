@@ -220,6 +220,9 @@ private fun DeckArea(
             isPlaying = state.isPlaying,
             secPerTurn = secPerTurn,
             onTogglePlayPause = vm::togglePlayPause,
+            // ★R-a：横向滑动唱片 → 上/下一首（队列）
+            onPrev = { vm.playPrev() },
+            onNext = { vm.playNext() },
             onSeekFraction = { f ->
                 val d = progressFlow.value.durationMs
                 val dur = if (d > 0) d else state.durationMs
@@ -253,9 +256,11 @@ private fun ControlsArea(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            Button(onClick = { vm.playPrev() }) { Text("⏮") }
             Button(onClick = { vm.seekTo((vm.progress.positionMs - 10_000).coerceAtLeast(0)) }) { Text("-10s") }
             Button(onClick = vm::togglePlayPause) { Text(if (state.playWhenReady) "暂停" else "播放") }
             Button(onClick = { vm.seekTo(vm.progress.positionMs + 10_000) }) { Text("+10s") }
+            Button(onClick = { vm.playNext() }) { Text("⏭") }
             Button(onClick = vm::cycleRepeatMode) {
                 Text(state.repeatMode.glyph, style = MaterialTheme.typography.titleMedium)
             }

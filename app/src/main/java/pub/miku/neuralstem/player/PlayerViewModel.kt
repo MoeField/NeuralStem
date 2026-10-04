@@ -303,6 +303,11 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                     isReady = playbackState == Player.STATE_READY,
                     durationMs = p.duration.coerceAtLeast(0L),
                 )
+                // ★R-a：曲目自然播完 → 自动下一首（顺序到尾停/循环绕回；见 playNext）。
+                if (playbackState == Player.STATE_ENDED) {
+                    Log.i(TAG, "STATE_ENDED → autoAdvanceOnEnded")
+                    autoAdvanceOnEnded()
+                }
                 // M2-D:AudioTrack 会话在准备好后才有效。注意 VM 持有的是
                 // MediaController(不是真实 ExoPlayer) —— 会话 id 在 Service 里，
                 // 故 EQ 挂载走 [PlaybackService.onPlayerReadyForEq] 钩子（见 attachEqHook）。
@@ -522,6 +527,62 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             fileName = displayName, hasMedia = true, playWhenReady = true,
             separationOn = false, currentUri = uri.toString(),
         )
+    }
+
+    // ============================ ★R-a：播放队列（歌单=队列）============================
+
+    /**
+     * 把整个歌单作为**播放队列**载入，并从 [startIndex] 开始播。
+     * ★单一真源：队列存状态机 [session]；本方法只负责“把队列当前曲 load 出来”。
+     */
+    fun playQueue(tracks: List<Pair<Uri, String>>, startIndex: Int = 0) {
+        val q = tracks.map { QueueTrack(it.first.toString(), it.second) }
+        session.setQueue(q, startIndex)
+        val cur = (session.queue as? QueueState.Active)?.current ?: return
+        Log.i(TAG, "playQueue: ${q.size} 首, start=$startIndex → ${cur.title}")
+        loadAndPlay(Uri.parse(cur.uri), cur.title)
+    }
+
+    /** 下一首（手动/自动共用）。按 repeatMode 决定尾部行为。返回是否切了歌。 */
+    fun playNext(): Boolean {
+        val advanced = session.advanceQueue()
+        if (advanced) {
+            loadCurrentQueueTrack()
+            return true
+        }
+        // 到尾部：循环歌单 → 绕回开头；否则不动。
+        if (_state.value.repeatMode == SettingsRepository.RepeatMode.LOOP_ALL) {
+            if (session.wrapQueueToStart()) {
+                loadCurrentQueueTrack()
+                return true
+            }
+        }
+        Log.i(TAG, "playNext: 无下一首（mode=${_state.value.repeatMode}）")
+        return false
+    }
+
+    /** 上一首。头部则不动。返回是否切了歌。 */
+    fun playPrev(): Boolean {
+        if (session.retreatQueue()) {
+            loadCurrentQueueTrack()
+            return true
+        }
+        Log.i(TAG, "playPrev: 已是第一首")
+        return false
+    }
+
+    /** 载入队列当前曲（不改变队列下标）。 */
+    private fun loadCurrentQueueTrack() {
+        val cur = (session.queue as? QueueState.Active)?.current ?: return
+        loadAndPlay(Uri.parse(cur.uri), cur.title)
+    }
+
+    /** 自动下一首（曲目自然播完时由 STATE_ENDED 触发）。 */
+    private fun autoAdvanceOnEnded() {
+        // 单曲循环由 media3 自处理（REPEAT_MODE_ONE，不会 STATE_ENDED）——通常不会进这里。
+        if (session.queue is QueueState.Active) {
+            playNext()
+        }
     }
 
     fun togglePlayPause() {

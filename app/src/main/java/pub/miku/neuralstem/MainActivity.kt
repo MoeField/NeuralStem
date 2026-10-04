@@ -218,6 +218,15 @@ class MainActivity : ComponentActivity() {
             "pause", "toggle" -> playerVm.togglePlayPause()
             "seek" -> a0?.toLongOrNull()?.let { playerVm.seekTo(it) }
             "clear" -> playerVm.clearCurrent()
+            "next" -> playerVm.playNext()
+            "prev" -> playerVm.playPrev()
+            // queue: args = 交替的 uri,title（最多 2 首）；测试用
+            "queue" -> {
+                val pairs = cmd.args.chunked(2).mapNotNull { (u, t) ->
+                    if (u.isBlank()) null else Uri.parse(u) to t
+                }
+                if (pairs.isNotEmpty()) playerVm.playQueue(pairs, 0)
+            }
             "eq" -> playerVm.setEqEnabled(a0?.toBooleanStrictOrNull() ?: false)
             "inmt" -> if (a0 != null && a1 != null) {
                 playerVm.loadMultiTrack(

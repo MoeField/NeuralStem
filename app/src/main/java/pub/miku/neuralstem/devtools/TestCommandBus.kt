@@ -70,6 +70,8 @@ object TestCommandBus {
           toggle                      播放/暂停（pause 为其别名）
           seek    a0=ms               跳转
           clear                       清空当前曲（同 R4 的 clearCurrent）
+          next / prev                 下一首 / 上一首（队列）
+          queue   a0..a3              队列：交替 uri,title（最多 2 首）
           eq      a0=on(bool)         开关 EQ
           inmt    a0=vocals a1=accomp 载入多轨（abs 路径）
           exitsmt                     退出多轨

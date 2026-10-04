@@ -195,13 +195,17 @@ class SessionStateMachineTest {
 
     // ---------------- R-a：播放队列 ----------------
 
+    /** 构造队列项（uri=title=名字）。 */
+    private fun qt(vararg names: String) = names.map { QueueTrack(it, it) }
+
     @Test
     fun `队列：setQueue 起始下标越界则钳到合法区间，空列表置 Empty`() {
         val (_, sm) = newSm()
-        sm.setQueue(listOf("a", "b", "c"), startIndex = 9)
-        assertEquals("越界 → 钳到末位", QueueState.Active(listOf("a", "b", "c"), 2), sm.queue)
-        sm.setQueue(listOf("a", "b", "c"), startIndex = -5)
-        assertEquals("负数 → 钳到 0", QueueState.Active(listOf("a", "b", "c"), 0), sm.queue)
+        val abc = qt("a", "b", "c")
+        sm.setQueue(abc, startIndex = 9)
+        assertEquals("越界 → 钳到末位", QueueState.Active(abc, 2), sm.queue)
+        sm.setQueue(abc, startIndex = -5)
+        assertEquals("负数 → 钳到 0", QueueState.Active(abc, 0), sm.queue)
         sm.setQueue(emptyList())
         assertTrue(sm.queue is QueueState.Empty)
     }
@@ -209,7 +213,7 @@ class SessionStateMachineTest {
     @Test
     fun `队列：advance 到尾部返回 false 且不越界`() {
         val (_, sm) = newSm()
-        sm.setQueue(listOf("a", "b"), 0)
+        sm.setQueue(qt("a", "b"), 0)
         assertTrue(sm.advanceQueue())
         assertEquals(1, (sm.queue as QueueState.Active).currentIndex)
         assertFalse("已在尾部 → false", sm.advanceQueue())
@@ -219,7 +223,7 @@ class SessionStateMachineTest {
     @Test
     fun `队列：retreat 到头部返回 false`() {
         val (_, sm) = newSm()
-        sm.setQueue(listOf("a", "b"), 1)
+        sm.setQueue(qt("a", "b"), 1)
         assertTrue(sm.retreatQueue())
         assertEquals(0, (sm.queue as QueueState.Active).currentIndex)
         assertFalse(sm.retreatQueue())
@@ -228,7 +232,7 @@ class SessionStateMachineTest {
     @Test
     fun `队列：wrapQueueToStart 回开头（循环歌单用）`() {
         val (_, sm) = newSm()
-        sm.setQueue(listOf("a", "b", "c"), 2)
+        sm.setQueue(qt("a", "b", "c"), 2)
         assertTrue(sm.wrapQueueToStart())
         assertEquals(0, (sm.queue as QueueState.Active).currentIndex)
     }
@@ -236,29 +240,29 @@ class SessionStateMachineTest {
     @Test
     fun `队列：removeFromQueue 索引自动维持（删当前 → 指向下一个）`() {
         val (_, sm) = newSm()
-        sm.setQueue(listOf("a", "b", "c"), 1)
+        sm.setQueue(qt("a", "b", "c"), 1)
         sm.removeFromQueue("b")   // 删当前曲
         val q = sm.queue as QueueState.Active
-        assertEquals(listOf("a", "c"), q.trackIds)
+        assertEquals(listOf("a", "c"), q.tracks.map { it.uri })
         assertEquals("删当前 → 下标不变（指向下一个）", 1, q.currentIndex)
-        assertEquals("c", q.currentId)
+        assertEquals("c", q.current?.uri)
     }
 
     @Test
     fun `队列：removeFromQueue 删更前的曲则下标前移`() {
         val (_, sm) = newSm()
-        sm.setQueue(listOf("a", "b", "c"), 2)
+        sm.setQueue(qt("a", "b", "c"), 2)
         sm.removeFromQueue("a")
         val q = sm.queue as QueueState.Active
-        assertEquals(listOf("b", "c"), q.trackIds)
+        assertEquals(listOf("b", "c"), q.tracks.map { it.uri })
         assertEquals(1, q.currentIndex)
-        assertEquals("c", q.currentId)
+        assertEquals("c", q.current?.uri)
     }
 
     @Test
     fun `队列：清空后回归 Empty`() {
         val (_, sm) = newSm()
-        sm.setQueue(listOf("a"), 0)
+        sm.setQueue(qt("a"), 0)
         sm.clearQueue()
         assertTrue(sm.queue is QueueState.Empty)
     }
