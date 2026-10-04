@@ -5,6 +5,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 
 /**
  * ★ 状态机骨架（`SessionStateMachine`）的 JVM 单测。
@@ -108,13 +109,52 @@ class SessionStateMachineTest {
     fun `I3 分离 Done 只能被消费一次`() {
         val (_, sm) = newSm()
         sm.startSeparation()
-        sm.onSeparationDone(cached = true)
+        val done = SeparationTask.Done2(
+            vocalsFile = File("v.wav"),
+            accompanimentFile = File("a.wav"),
+            modelLoadMs = 0,
+            inferTimeMs = 1,
+            peakPssMb = 2f,
+            audioDurationMs = 3,
+            fromCache = true,
+        )
+        sm.onSeparationDone(done)
 
         val first = sm.consumeSeparationDone()
-        assertEquals(SeparationTask.Done(cached = true), first)
+        assertEquals(done, first)
         assertTrue("消费后应回到 Idle", sm.separation is SeparationTask.Idle)
 
         assertNull("再次消费应为 null（遗留态不会触发）", sm.consumeSeparationDone())
+    }
+
+    @Test
+    fun `I3 4-stem Done4 同样可被一次性消费`() {
+        val (_, sm) = newSm()
+        sm.startSeparation()
+        val done = SeparationTask.Done4(
+            stemFiles = listOf(File("v.wav"), File("d.wav")),
+            inferTimeMs = 1, peakPssMb = 2f, audioDurationMs = 3,
+        )
+        sm.onSeparationDone(done)
+        assertEquals(done, sm.consumeSeparationDone())
+        assertNull(sm.consumeSeparationDone())
+    }
+
+    @Test
+    fun `I3 Preparing 不是 Done（消费为 null）`() {
+        val (_, sm) = newSm()
+        sm.onSeparationPreparing()
+        assertTrue(sm.separation is SeparationTask.Preparing)
+        assertNull(sm.consumeSeparationDone())
+    }
+
+    @Test
+    fun `I3 Cancelled 不是 Done 且不残留 Done`() {
+        val (_, sm) = newSm()
+        sm.startSeparation()
+        sm.onSeparationCancelled()
+        assertTrue(sm.separation is SeparationTask.Cancelled)
+        assertNull(sm.consumeSeparationDone())
     }
 
     @Test

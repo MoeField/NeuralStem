@@ -1,5 +1,7 @@
 package pub.miku.neuralstem.player
 
+import java.io.File
+
 /**
  * ★ 会话状态机（骨架）。
  *
@@ -44,9 +46,47 @@ sealed interface EqState {
 /** 分离任务（一次性消费语义）。 */
 sealed interface SeparationTask {
     data object Idle : SeparationTask
+
+    /** 准备中（源解析 / 模型加载）。 */
+    data object Preparing : SeparationTask
+
     data class Running(val percent: Int) : SeparationTask
-    data class Done(val cached: Boolean) : SeparationTask
-    data class Failed(val message: String) : SeparationTask
+
+    /**
+     * 完成态（**2-stem / 4-stem 两型**）：两者均实现 [SeparationDone]，
+     * 一律经 [SessionStateMachine.consumeSeparationDone] **一次性消费**。
+     */
+    sealed interface SeparationDone : SeparationTask {
+        val fromCache: Boolean
+        val inferTimeMs: Long
+        val peakPssMb: Float
+        val audioDurationMs: Long
+    }
+
+    /** 2-stem 完成（人声 / 伴奏）。 */
+    data class Done2(
+        val vocalsFile: File,
+        val accompanimentFile: File,
+        val modelLoadMs: Long,
+        override val inferTimeMs: Long,
+        override val peakPssMb: Float,
+        override val audioDurationMs: Long,
+        override val fromCache: Boolean = false,
+    ) : SeparationDone
+
+    /** 4-stem 完成（stemFiles 顺序 = 人声/鼓/贝斯/其他）。 */
+    data class Done4(
+        val stemFiles: List<File>,
+        override val inferTimeMs: Long,
+        override val peakPssMb: Float,
+        override val audioDurationMs: Long,
+        override val fromCache: Boolean = false,
+    ) : SeparationDone
+
+    data class Failed(val message: String, val cause: Throwable? = null) : SeparationTask
+
+    /** 用户取消（区别于 [Failed]：不是错误，不弹错误提示）。 */
+    data object Cancelled : SeparationTask
 }
 
 // ============================ 状态机 ============================
@@ -167,30 +207,41 @@ class SessionStateMachine(private val effects: Effects) {
 
     // ============================ I3：分离（一次性消费）============================
 
+    /** 进入准备态（源解析 / 模型加载）。 */
+    fun onSeparationPreparing() {
+        separation = SeparationTask.Preparing
+    }
+
     fun startSeparation() {
         separation = SeparationTask.Running(0)
     }
 
+    /** 进度：仅当处于 [SeparationTask.Running] 时推进（Preparing 不算）。 */
     fun onSeparationProgress(percent: Int) {
         if (separation is SeparationTask.Running) separation = SeparationTask.Running(percent)
     }
 
-    fun onSeparationDone(cached: Boolean) {
-        separation = SeparationTask.Done(cached)
+    /** 完成：接受 [SeparationTask.Done2] 或 [SeparationTask.Done4]。 */
+    fun onSeparationDone(done: SeparationTask.SeparationDone) {
+        separation = done
     }
 
-    fun onSeparationFailed(message: String) {
-        separation = SeparationTask.Failed(message)
+    fun onSeparationFailed(message: String, cause: Throwable? = null) {
+        separation = SeparationTask.Failed(message, cause)
+    }
+
+    fun onSeparationCancelled() {
+        separation = SeparationTask.Cancelled
     }
 
     /**
-     * **消费**一次 [SeparationTask.Done]（返回并清空）；无则返回 `null`。
+     * **消费**一次分离完成结果（[SeparationTask.Done2]/[SeparationTask.Done4]）；无则返回 `null`。
      *
      * UI 只能经此拿到结果 → 天然“只响应 `Running→Done` 的**转换**、不响应遗留态”，
-     * 从而根治“一进分离页就误触发自动切多轨”。
+     * 从而根治“一进分离页就误触发自动切多轨”。消费后回到 [SeparationTask.Idle]。
      */
-    fun consumeSeparationDone(): SeparationTask.Done? {
-        val d = separation as? SeparationTask.Done ?: return null
+    fun consumeSeparationDone(): SeparationTask.SeparationDone? {
+        val d = separation as? SeparationTask.SeparationDone ?: return null
         separation = SeparationTask.Idle
         return d
     }
