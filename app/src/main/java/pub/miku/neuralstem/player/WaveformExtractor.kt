@@ -7,6 +7,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -53,6 +54,13 @@ data class WaveformData(
  *   (5 分钟歌 = 15000 点 × 2 × 4B ≈ 120KB,远小于波形库常见做法)
  *
  * 输出经 StateFlow 交给 [WaveformView];提取在 Default 线程池,可取消(切歌时)。
+ *
+ * R-h(W-2,从 checkpoint 线移植)：
+ * - **缓存优先**(仅 [AudioSource.MediaUri])：命中 [WaveformCache] 则**秒出**，免除全曲解码。
+ * - **流式 + 节流 emit**(仅 MediaUri)：边解码边算包络，每 ≥[EMIT_THROTTLE_MS] ms emit 一次
+ *   已解码部分 → 进页 ~1s 内即可显示波形开头并逐步铺满(不再整曲一次性出现)。
+ * - **只缓存完整波形**：中途被取消(切歌)会得到“半截波形”，写缓存会导致下次命中残缺
+ *   (参 checkpoint `.critical_steps.md` 坑 60)，故仅 `complete==true` 时落盘。
  */
 class WaveformExtractor(
     private val scope: CoroutineScope,
@@ -68,13 +76,32 @@ class WaveformExtractor(
         job?.cancel()
         _waveform.value = null
         job = scope.launch(Dispatchers.Default) {
+            // 本协程的 Job（供同步解码循环检查“是否已取消”，见 extractFromExtractor）。
+            val selfJob = currentCoroutineContext()[Job]
             try {
-                val data = when (source) {
-                    is AudioSource.WavFile -> extractFromWav(source.file)
-                    is AudioSource.MediaUri -> extractFromExtractor(source)
+                // ★ 缓存优先（仅 MediaUri）：命中则秒出，免除全曲解码。
+                if (source is AudioSource.MediaUri) {
+                    val cached = WaveformCache.load(contextProvider(), source.uri)
+                    if (cached != null) {
+                        Log.i(TAG, "waveform(cache hit): points=${cached.pointCount}, dur=${cached.durationMs}ms")
+                        _waveform.value = cached
+                        return@launch
+                    }
                 }
-                Log.i(TAG, "waveform ready: points=${data.pointCount}, dur=${data.durationMs}ms")
-                _waveform.value = data
+                val result = when (source) {
+                    is AudioSource.WavFile -> ExtractResult(extractFromWav(source.file), complete = true)
+                    is AudioSource.MediaUri -> extractFromExtractor(source, selfJob)
+                }
+                Log.i(
+                    TAG,
+                    "waveform ready: points=${result.data.pointCount}, dur=${result.data.durationMs}ms complete=${result.complete}",
+                )
+                _waveform.value = result.data
+                // ★ 只在**完整解完**时写缓存：中途被取消会得到“半截波形”，
+                //   若写入，下次命中就会显示残缺（曾导致某首歌波形“卡在一半”）。
+                if (source is AudioSource.MediaUri && result.complete) {
+                    WaveformCache.save(contextProvider(), source.uri, result.data)
+                }
             } catch (t: Throwable) {
                 if (t is CancellationException) throw t
                 Log.e(TAG, "waveform extraction failed", t)
@@ -86,6 +113,9 @@ class WaveformExtractor(
     companion object {
         private const val TAG = "Waveform"
         const val POINTS_PER_SECOND = 50
+
+        /** 增量 emit 节流（ms）：避免每块都重组/刷新。 */
+        private const val EMIT_THROTTLE_MS = 300L
 
         /**
          * 从 float PCM 交织数据计算包络。
@@ -162,11 +192,81 @@ class WaveformExtractor(
         }
     }
 
-    private fun extractFromExtractor(source: AudioSource.MediaUri): WaveformData {
-        // 平台 MediaExtractor+MediaCodec 解码(Task 2 修订):覆盖 wav/mp3/flac/aac 全格式
-        val decoded = Media3DecodeBridge.decodeToPcm(contextProvider(), source.uri)
-        return computeEnvelope(decoded.samples, decoded.channels, decoded.sampleRate)
+    /**
+     * 从 MediaUri 提取包络（流式）。
+     * @return [ExtractResult]：`data` 为包络；`complete` 表示**是否完整解完**
+     *   （false = 被取消/中途终止）——**只有完整时才应写缓存**，否则会缓存“半截波形”。
+     */
+    private fun extractFromExtractor(source: AudioSource.MediaUri, selfJob: Job?): ExtractResult {
+        // ★ 流式：边解码边算包络，**定期 emit 已解码部分**（不再整曲驻留）→
+        //   进页 ~1s 内即可显示波形开头，并逐步铺满。
+        // 每包络点固定 20ms（=1/POINTS_PER_SECOND）→ 不需预估总时长；
+        // 增量边界天然对齐，pointCount 单调增长。
+        val accMin = ArrayList<Float>(4096)
+        val accMax = ArrayList<Float>(4096)
+        var framesPerPoint = 0
+        var sampleRate = 0
+        // 当前正在累积的点（跨解码块时保留半满状态）
+        var curLo = Float.MAX_VALUE
+        var curHi = -Float.MAX_VALUE
+        var curFrames = 0
+        var totalFrames = 0L
+        var lastEmitMs = 0L
+        val t0 = System.nanoTime()
+
+        fun flushPoint() {
+            accMin.add(if (curLo == Float.MAX_VALUE) 0f else curLo)
+            accMax.add(if (curHi == -Float.MAX_VALUE) 0f else curHi)
+            curLo = Float.MAX_VALUE; curHi = -Float.MAX_VALUE; curFrames = 0
+        }
+
+        val completed = Media3DecodeBridge.decodeToPcmStreaming(contextProvider(), source.uri) { samples, ch, sr ->
+            // 首次拿到格式
+            if (framesPerPoint == 0) {
+                sampleRate = sr
+                framesPerPoint = (sr / POINTS_PER_SECOND).coerceAtLeast(1)
+            }
+            var i = 0
+            val n = samples.size
+            while (i < n) {
+                // 取一个声道样本（包络用途足够，省一半遍历）
+                val v = samples[i]
+                if (v < curLo) curLo = v
+                if (v > curHi) curHi = v
+                curFrames++
+                if (curFrames >= framesPerPoint) flushPoint()
+                i += ch
+            }
+            totalFrames += (n / ch).toLong()
+            // 节流 emit：每 ≥300ms 发一次（避免过度重组/刷新）
+            val now = System.currentTimeMillis()
+            if (now - lastEmitMs >= EMIT_THROTTLE_MS && accMin.isNotEmpty()) {
+                lastEmitMs = now
+                _waveform.value = WaveformData(
+                    accMin.toFloatArray(), accMax.toFloatArray(), sampleRate, totalFrames,
+                )
+            }
+            // ★ 关键：协程被取消（切歌）时返回 false → 终止同步解码循环。
+            //   否则 job.cancel() 停不住阻塞在 MediaCodec 的解码 → 旧歌波形持续 emit，
+            //   与新歌交替 → 外环“乱跳”。
+            selfJob?.isActive ?: true
+        }
+        // 收尾：把半满的点也写出去（若 curFrames>0）
+        if (curFrames > 0) flushPoint()
+        val data = WaveformData(
+            accMin.toFloatArray(), accMax.toFloatArray(), sampleRate, totalFrames,
+        )
+        val totalMs = (System.nanoTime() - t0) / 1_000_000
+        Log.i(
+            TAG,
+            "waveform(stream) done: points=${data.pointCount}, dur=${data.durationMs}ms " +
+                "complete=$completed | total=${totalMs}ms",
+        )
+        return ExtractResult(data, completed)
     }
+
+    /** 流式提取结果：包络 + 是否完整。 */
+    private data class ExtractResult(val data: WaveformData, val complete: Boolean)
 
     /** 解码桥需要 context;由持有方(VM)注入,避免本类持有 Activity */
     lateinit var contextProvider: () -> Context
