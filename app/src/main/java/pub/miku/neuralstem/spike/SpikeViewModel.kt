@@ -7,11 +7,14 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import pub.miku.neuralstem.player.SeparationTask
+import pub.miku.neuralstem.player.SessionStateMachine
 import pub.miku.neuralstem.settings.SettingsRepository
 import java.io.File
 
@@ -58,6 +61,34 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
     private val _state = MutableStateFlow<State>(State.Idle)
     val state: StateFlow<State> = _state.asStateFlow()
 
+    // ============================ 3a-2：分离任务状态机（单一真源） ============================
+    //
+    // 旧实现：分离进度/结果分散在 SpikeVM.State（镜像）+ Repo.State（真源），UI 两边都读
+    // → “双读” + `prevXxx` 手搓转换判定（S-a/S-b/S-d/S-e/S-f）。
+    // 新实现：**分离任务状态由 [SessionStateMachine.separation] 单一持有**，UI 只读
+    // [separationTask]；完成经 [consumeSeparationDone] **一次性消费**（I3）。
+    // 本 VM 不需要副作用（EQ/多轨在播放侧），故 Effects 全为 no-op。
+
+    private val session = SessionStateMachine(object : SessionStateMachine.Effects {
+        override fun closeFollowers() {}
+        override fun attachEq(sessionIds: List<Int>, enabled: Boolean) {}
+        override fun detachEq() {}
+    })
+
+    private val _separationTask = MutableStateFlow<SeparationTask>(SeparationTask.Idle)
+    val separationTask: StateFlow<SeparationTask> = _separationTask.asStateFlow()
+
+    /** ★3a-2：常驻 repo 订阅（幂等，init 时建立一次）。 */
+    private var repoSubscription: Job? = null
+
+    /** 把 SM 当前的分离态镜像到对外流（单一出口，避免双读）。 */
+    private fun pushSeparationTask() {
+        _separationTask.value = session.separation
+    }
+
+    /** ★I3：消费一次分离完成结果（返回并清空）。UI 完成回调只经此。 */
+    fun consumeSeparationDone() = session.consumeSeparationDone().also { pushSeparationTask() }
+
     /** Task 4.2:分离任务宿主(进程级单例),切页面/切后台不中断 */
     private val repo = SeparationRepository.get(app)
 
@@ -76,6 +107,9 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
     init {
         // M2-F:应用设置里的默认引擎(仅当用户未通过 extra 指定时)
         applyDefaultEngine()
+        // ★3a-2：常驻订阅 repo → 驱动状态机（不再只在“开始时订阅”）。
+        //   否则：页面重入 / VM 重建时 SM 停在 Idle，即使 repo 正在跑/已完成。
+        subscribeRepo()
     }
 
     /** 从设置读取默认引擎并应用。 */
@@ -284,15 +318,52 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
      * 不订阅,导致缓存命中/完成时 UI 停在「分离中 0%」。
      * 现改为「一次性订阅到终态」,按钮路径与自动路径共用。
      */
-    private fun subscribeRepo(onFinal: (SeparationRepository.State) -> Unit = {}) {
-        viewModelScope.launch {
+    private fun subscribeRepo() {
+        if (repoSubscription != null) return
+        repoSubscription = viewModelScope.launch {
             repo.state.collect { s ->
+                // ★3a-2：把 repo 态驱动进状态机（单一真源），再镜像到 [separationTask]。
+                when (s) {
+                    is SeparationRepository.State.Preparing -> session.onSeparationPreparing()
+                    is SeparationRepository.State.Running -> {
+                        // 首个 Running 若还在 Preparing，先进入 Running(0)
+                        if (session.separation !is SeparationTask.Running) session.startSeparation()
+                        session.onSeparationProgress(s.percent)
+                    }
+                    is SeparationRepository.State.Done -> session.onSeparationDone(
+                        SeparationTask.Done2(
+                            vocalsFile = s.vocalsFile,
+                            accompanimentFile = s.accompanimentFile,
+                            modelLoadMs = s.modelLoadMs,
+                            inferTimeMs = s.inferTimeMs,
+                            peakPssMb = s.peakPssMb,
+                            audioDurationMs = s.audioDurationMs,
+                            fromCache = s.fromCache,
+                        ),
+                    )
+                    is SeparationRepository.State.Done4 -> session.onSeparationDone(
+                        SeparationTask.Done4(
+                            stemFiles = s.stemFiles,
+                            inferTimeMs = s.inferTimeMs,
+                            peakPssMb = s.peakPssMb,
+                            audioDurationMs = s.audioDurationMs,
+                            fromCache = s.fromCache,
+                        ),
+                    )
+                    is SeparationRepository.State.Failed ->
+                        session.onSeparationFailed(s.message, s.cause)
+                    SeparationRepository.State.Cancelled -> session.onSeparationCancelled()
+                    SeparationRepository.State.Idle -> Unit
+                }
+                pushSeparationTask()
+
+                // 既有镜像（供页面本地 State 消费者；逐步收起）
                 when (s) {
                     is SeparationRepository.State.Preparing ->
                         _state.value = State.Separating(0, 0f, 0)
                     is SeparationRepository.State.Running ->
                         _state.value = State.Separating(s.elapsedMs, s.peakPssMb, s.percent)
-                    is SeparationRepository.State.Done -> {
+                    is SeparationRepository.State.Done ->
                         _state.value = State.Done(
                             vocalsFile = s.vocalsFile,
                             accompanimentFile = s.accompanimentFile,
@@ -302,30 +373,19 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
                             audioDurationMs = s.audioDurationMs,
                             fromCache = s.fromCache,
                         )
-                        onFinal(s)
-                        return@collect
-                    }
-                    is SeparationRepository.State.Failed -> {
+                    is SeparationRepository.State.Failed ->
                         _state.value = State.Error(s.message, s.cause)
-                        onFinal(s)
-                        return@collect
-                    }
-                    SeparationRepository.State.Cancelled -> {
+                    SeparationRepository.State.Cancelled ->
                         _state.value = State.Error("分离已取消")
-                        onFinal(s)
-                        return@collect
-                    }
                     SeparationRepository.State.Idle -> Unit
                     is SeparationRepository.State.Done4 -> {
-                        // M4/S3：4-stem 结果不驱 2-stem 的 spike UI；只记录并结束。
-                        // 正式四轨 UX 在 AppShell/SeparationScreen（后续阶段）。
+                        // M4/S3：4-stem 结果不驱 2-stem 的 spike State；只记录。
+                        // 正式四轨 UX 走 [separationTask]（Done4）。
                         Log.i(
                             TAG,
                             "OUT(4-stem) ${s.stemFiles.joinToString { "${it.name}(${it.length()}B)" }}",
                         )
                         _state.value = State.Idle
-                        onFinal(s)
-                        return@collect
                     }
                 }
             }
@@ -347,9 +407,9 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
         // M2-F:若自动化未显式指定引擎,则每次按设置里的默认引擎刷新
         // (用户改了默认引擎无需重建 VM 即生效)
         if (!engineOverride) applyDefaultEngine()
+        session.onSeparationPreparing()
+        pushSeparationTask()
         _state.value = State.Separating(0, 0f, 0)
-        // 先订阅再启动,避免错过快速终态(如缓存命中)
-        subscribeRepo()
         repo.start(
             source = srcFile,
             engine = engineMode,
@@ -358,10 +418,24 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
         )
     }
 
+    /**
+     * ★3a-2：启动 **4-stem** 分离（经本 VM，以确保状态机也收到转移）。
+     *
+     * 旧路径：`SeparationScreen` 直接 `repo.start4(src)` → 状态机看不到 → 仍需 UI 双读 repo。
+     * 新路径：统一经此方法“先订阅（驱动 SM）再启动”，与 2-stem 同构。
+     */
+    fun start4Stem(source: File) {
+        session.onSeparationPreparing()
+        pushSeparationTask()
+        repo.start4(source)
+    }
+
     /** guide N5:取消分离任务 */
     fun cancelSeparation() {
         repo.cancel()
         _state.value = State.Error("分离已取消")
+        session.onSeparationCancelled()
+        pushSeparationTask()
     }
 
     /**
@@ -398,9 +472,18 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
                 return@launch
             }
 
-            // 用 CompletableDeferred 等终态(subscribeRepo 负责镜像 UI)
+            // 用 CompletableDeferred 等终态（直接监听 repo.state，UI 镜像由 init 的常驻订阅负责）
             val done = CompletableDeferred<SeparationRepository.State>()
-            subscribeRepo { done.complete(it) }
+            val waiter = viewModelScope.launch {
+                repo.state.collect { s ->
+                    if (s !is SeparationRepository.State.Idle &&
+                        s !is SeparationRepository.State.Preparing &&
+                        s !is SeparationRepository.State.Running
+                    ) {
+                        done.complete(s)
+                    }
+                }
+            }
             repo.start(
                 source = srcFile,
                 engine = engineMode,
@@ -409,6 +492,7 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
                     ?.let { it * SeparationInput.MODEL_SAMPLE_RATE },
             )
             val final = done.await()
+            waiter.cancel()
 
             val total = System.currentTimeMillis() - t0
             val d = final as? SeparationRepository.State.Done
@@ -450,6 +534,9 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
     fun reset() {
         pendingFile = null
         _state.value = State.Idle
+        // 清空分离任务态（页面重置；不影响 repo 任务）
+        session.consumeSeparationDone()  // 若为完成态则消费掉
+        pushSeparationTask()
     }
 
     /** M4/S3：供 4-stem 路径复用「已导入的源文件」。 */
