@@ -34,6 +34,23 @@ import androidx.media3.exoplayer.ExoPlayer
  * ⇒ **放弃 SoundTouch（类保留在仓库未接线）**。
  *
  * 单轨（[PlaybackService]）与多轨（[MultiTrackController]）**共用本工厂**，路径一致。
+ *
+ * ## ★ 已知限制：MP3 某些位置 seek 后卡死（ERROR_CODE_TIMEOUT）—— 设备解码器缺陷，App 层无法根治
+ * **现象**：播放中 seek 到某些 MP3 位置（本例 CBR mp3 的 ~62s）→ 10s 无进展 →
+ *   `StuckPlayerDetector` 报 `ERROR_CODE_TIMEOUT` → 由 `recoverFromAudioSinkTimeout()` 重建
+ *   pipeline 自恢复（有 ~10s 卡顿）。
+ * **实测（T0 命令总线稳定复现）**：
+ *   - audio_flinger 卡窗内 `0 active tracks / FrmRdy=0`（确实无帧，非误判）；
+ *   - ffmpeg 同位置解码无错（文件未损坏）；
+ *   - wav 同位置不卡（定位为 MP3 解码相关）；
+ *   - `setConstantBitrateSeekingEnabled(true)` **无效**（定位无问题）；
+ *   - 自定义 `MediaCodecSelector` 优先厂商解码器 **无效** —— 实测
+ *     `DEFAULT.getDecoderInfos("audio/mpeg")` 在该设备**只返回软件解码器**
+ *     `c2.android.mp3.decoder`（无 `c2.mtk.*` 候选可选）。
+ * **结论**：设备唯一可用的**软件 MP3 解码器在特定 seek 后挂起**（`Handler on a dead thread`）
+ *   —— 系统/厂商编解码器缺陷，App 层无解码器可换。
+ * **对策**：保留现有 `recoverFromAudioSinkTimeout()` 兜底（可恢复）。如需根治，
+ *   只能引第三方软解（如 FFmpeg 扩展）或等系统修复。详见 `.critical_steps.md`。
  */
 @UnstableApi
 fun buildRenderersFactory(context: Context): DefaultRenderersFactory =
