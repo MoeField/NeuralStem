@@ -72,6 +72,8 @@ object TestCommandBus {
           clear                       清空当前曲（同 R4 的 clearCurrent）
           next / prev                 下一首 / 上一首（队列）
           queue   a0..a3              队列：交替 uri,title（最多 2 首）
+          repeat  a0=seq|all|one     设置播放模式（同循环按钮选定的模式）
+          cyclerepeat                 切换播放模式（同循环按钮点击）
           eq      a0=on(bool)         开关 EQ
           inmt    a0=vocals a1=accomp 载入多轨（abs 路径）
           exitsmt                     退出多轨

@@ -18,6 +18,7 @@ import androidx.media3.common.Player
 import kotlinx.coroutines.delay
 import pub.miku.neuralstem.devtools.TestCommandBus
 import pub.miku.neuralstem.player.PlayerViewModel
+import pub.miku.neuralstem.settings.SettingsRepository
 import pub.miku.neuralstem.ui.AppShell
 import pub.miku.neuralstem.ui.theme.NeuralStemTheme
 import java.io.File
@@ -220,6 +221,15 @@ class MainActivity : ComponentActivity() {
             "clear" -> playerVm.clearCurrent()
             "next" -> playerVm.playNext()
             "prev" -> playerVm.playPrev()
+            // repeat: a0 ∈ {seq, all, one} —— 与 UI 选同一模式（“测试路径=用户路径”），T-4 验收用
+            "repeat" -> when (a0?.lowercase()) {
+                "seq", "sequential" -> playerVm.setRepeatMode(SettingsRepository.RepeatMode.SEQUENTIAL)
+                "all", "loop_all" -> playerVm.setRepeatMode(SettingsRepository.RepeatMode.LOOP_ALL)
+                "one", "loop_one" -> playerVm.setRepeatMode(SettingsRepository.RepeatMode.LOOP_ONE)
+                else -> Log.w("TestCmd", "repeat: a0 需为 seq/all/one，收到 $a0")
+            }
+            // cyclerepeat: 同循环按钮点击（顺序→循环歌单→单曲循环→顺序）
+            "cyclerepeat" -> playerVm.cycleRepeatMode()
             // toggleSep: a0 = true/false（分离开关；验证“关→再开恢复”）
             "togglesep" -> {
                 val on = a0?.toBooleanStrictOrNull() ?: true
