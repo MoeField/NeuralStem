@@ -20,6 +20,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.MoreExecutors
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -31,6 +32,7 @@ import java.io.File
 import org.json.JSONArray
 import org.json.JSONObject
 import kotlin.math.abs
+import pub.miku.neuralstem.playlist.PlaylistStore
 import pub.miku.neuralstem.settings.SettingsRepository
 
 /**
@@ -139,6 +141,24 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     private var lastShownMs: Long = -1L
     @Volatile
     private var pendingSeekMs: Long? = null
+
+    // ============================ ★T-5：进度记忆（歌单“回到上次位置继续播”）============================
+    /** 当前队列所属歌单 id（null = 非歌单来源，如单曲导入 → 不记进度）。playQueue 设置。 */
+    @Volatile
+    private var currentListId: String? = null
+    /** 上次落库的时间戳（单调时钟）+ 曲目 uri，用于**节流写盘**。 */
+    @Volatile
+    private var lastSavedAtMs: Long = 0L
+    @Volatile
+    private var lastSavedUri: String? = null
+
+    /** ★T-5：待恢复的续播位置（ms）。因 `prepare()` 后立刻 seek 会被丢弃（尚非 READY），
+     *  改为在 `STATE_READY` 时消费（见 `onPlaybackStateChanged`）。 */
+    @Volatile
+    private var pendingResumeMs: Long = 0L
+
+    /** 进度记忆落库器（直接写文件——与 [PlaylistStore.recordProgress] 注释一致：播放器直调）。 */
+    private val playlistStore by lazy { PlaylistStore(getApplication()) }
 
     /** 波形提取器(Task 2);scope 用 VM 的,切歌自动取消上次 */
     private val waveformExtractor = WaveformExtractor(viewModelScope).apply {
@@ -310,6 +330,18 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                     isReady = playbackState == Player.STATE_READY,
                     durationMs = p.duration.coerceAtLeast(0L),
                 )
+                // ★T-5：READY 后消费待恢复的续播位置（此处 seek 才有效；prepare 后立即 seek 会被丢弃）。
+                if (playbackState == Player.STATE_READY) {
+                    val resume = pendingResumeMs
+                    if (resume > 0L) {
+                        pendingResumeMs = 0L
+                        p.seekTo(resume)
+                        pendingSeekMs = resume
+                        lastShownMs = resume
+                        _progress.value = _progress.value.copy(positionMs = resume)
+                        Log.i(TAG, "T-5: resume seek → ${resume}ms")
+                    }
+                }
                 // ★R-a：曲目自然播完 → 自动下一首（顺序到尾停/循环绕回；见 playNext）。
                 if (playbackState == Player.STATE_ENDED) {
                     Log.i(TAG, "STATE_ENDED → autoAdvanceOnEnded")
@@ -454,6 +486,9 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                         }
                     }
                     _progress.value = Progress(pos, dur)
+                    // ★T-5：进度记忆——**节流落库**（每 ≥PROGRESS_SAVE_INTERVAL_MS 或曲目变化）。
+                    //   仅在队列来自歌单（currentListId!=null）且有当前曲时记。
+                    recordProgressThrottled(pos)
                     if (dur > 0 && _state.value.durationMs != dur) {
                         _state.value = _state.value.copy(durationMs = dur)
                     }
@@ -492,25 +527,34 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** F0.1 导入音频:SAF Uri 直接喂给 session 的 player(Media3 内置 Handler 支持 content://) */
-    fun loadAndPlay(uri: Uri, displayName: String) {
-        Log.i(TAG, "loadAndPlay: $displayName ($uri)")
+    /** F0.1 导入音频:SAF Uri 直接喂给 session 的 player(Media3 内置 Handler 支持 content://)
+     * @param startPositionMs ★T-5：载入后起始位置（>0 则 seek）；用于“续播”。 */
+    fun loadAndPlay(uri: Uri, displayName: String, startPositionMs: Long = 0L) {
+        Log.i(TAG, "loadAndPlay: $displayName ($uri) start=$startPositionMs")
         val p = mediaController
         if (p == null) {
             // 连接未就绪:暂存,连接后重放(见 pendingLoad 注释)
             Log.i(TAG, "loadAndPlay queued (controller connecting): $displayName")
-            pendingLoad = { p2 -> doLoad(p2, uri, displayName) }
+            pendingLoad = { p2 -> doLoad(p2, uri, displayName, startPositionMs = startPositionMs) }
             _state.value = _state.value.copy(fileName = displayName)
             return
         }
-        doLoad(p, uri, displayName)
+        doLoad(p, uri, displayName, startPositionMs = startPositionMs)
     }
 
     /**
      * 真正的载入逻辑(连接就绪后调用)。
      * @param resetStems true（默认）= 这是一次“**换新曲**” → 旧分离结果作废（清 lastStems）。
      *   false = “**回原曲**”（分离开关闭）→ **保留** lastStems，便于开关再开恢复。
+     * @param startPositionMs ★T-5：prepare() 后 seek 到此位置（>0）；避免在 prepare 前 seek 被钳到 0。
      */
-    private fun doLoad(p: Player, uri: Uri, displayName: String, resetStems: Boolean = true) {
+    private fun doLoad(
+        p: Player,
+        uri: Uri,
+        displayName: String,
+        resetStems: Boolean = true,
+        startPositionMs: Long = 0L,
+    ) {
         // ★I1（状态机不变量）：换曲前若处于多轨 → 先退多轨（关跟随轨）。
         //   否则跟随轨 ExoPlayer 不会被停 → 新曲（主轨）+ 旧 stems（跟随轨）**两首同时响**。
         session.beforeSetQueue()
@@ -527,6 +571,13 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             .build()
         p.setMediaItem(item)   // 触发 onMediaItemTransition → 波形提取
         p.prepare()
+        // ★T-5：续播位置**不**在此处 seek（`prepare()` 后尚未 READY，seek 会被丢弃，实测从 0 起）→
+        //   记录待恢复位置，待 `STATE_READY` 时消费（见 onPlaybackStateChanged）。
+        pendingResumeMs = if (startPositionMs > 0L) startPositionMs else 0L
+        if (startPositionMs > 0L) {
+            // 立刻把 UI 进度预置到续播位置（避免 READY 前显示 0）。
+            _progress.value = _progress.value.copy(positionMs = startPositionMs)
+        }
         // ★Step3：应用当前播放模式（循环按钮）
         p.repeatMode = _state.value.repeatMode.toPlayerRepeatMode()
         p.play()
@@ -550,13 +601,47 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * 把整个歌单作为**播放队列**载入，并从 [startIndex] 开始播。
      * ★单一真源：队列存状态机 [session]；本方法只负责“把队列当前曲 load 出来”。
+     * @param listId 队列所属歌单（用于 ★T-5 进度记忆）；null = 非歌单来源（不记进度）。
+     * @param startPositionMs ★T-5：起始播放位置（>0 则续播）；仅当从“上次曲”开始时用。
      */
-    fun playQueue(tracks: List<Pair<Uri, String>>, startIndex: Int = 0) {
+    fun playQueue(
+        tracks: List<Pair<Uri, String>>,
+        startIndex: Int = 0,
+        listId: String? = null,
+        startPositionMs: Long = 0L,
+    ) {
+        currentListId = listId
+        lastSavedUri = null
+        lastSavedAtMs = 0L
         val q = tracks.map { QueueTrack(it.first.toString(), it.second) }
         session.setQueue(q, startIndex)
         val cur = (session.queue as? QueueState.Active)?.current ?: return
-        Log.i(TAG, "playQueue: ${q.size} 首, start=$startIndex → ${cur.title}")
-        loadAndPlay(Uri.parse(cur.uri), cur.title)
+        Log.i(TAG, "playQueue: ${q.size} 首, start=$startIndex → ${cur.title} resume=$startPositionMs")
+        loadAndPlay(Uri.parse(cur.uri), cur.title, startPositionMs = startPositionMs)
+    }
+
+    /**
+     * ★T-5：进度记忆——节流落库。
+     *
+     * 节流原因：[PlaylistStore.recordProgress] 会 `load()`+`save()` 整份 JSON；
+     * 而进度轮询是 100ms/次，若每次都写会疯狂写盘。故：
+     * - **曲目变化**（换曲）→ 立即落库（不丢边界）；
+     * - 否则每 ≥[PROGRESS_SAVE_INTERVAL_MS] 才写一次。
+     * 仅队列来自歌单（[currentListId] != null）且有当前曲时记。
+     * 写文件在 IO 线程（避免主线程磁盘 IO）。
+     */
+    private fun recordProgressThrottled(posMs: Long) {
+        val listId = currentListId ?: return
+        val uri = _state.value.currentUri ?: return
+        val now = SystemClock.elapsedRealtime()
+        val uriChanged = uri != lastSavedUri
+        if (!uriChanged && now - lastSavedAtMs < PROGRESS_SAVE_INTERVAL_MS) return
+        lastSavedAtMs = now
+        lastSavedUri = uri
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { playlistStore.recordProgress(listId, uri, posMs) }
+                .onFailure { Log.w(TAG, "recordProgress failed", it) }
+        }
     }
 
     /** 下一首（手动/自动共用）。按 repeatMode 决定尾部行为。返回是否切了歌。 */
@@ -1054,6 +1139,9 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
 
         /** ★R4：进度轮询间隔（ms）。 */
         private const val PROGRESS_POLL_MS = 100L
+
+        /** ★T-5：进度记忆落库节流间隔（ms）——避免每次轮询都写盘。 */
+        private const val PROGRESS_SAVE_INTERVAL_MS = 4000L
 
         /** ★R4：seek 锁定容忍（ms）。 */
         private const val SEEK_LOCK_TOLERANCE_MS = 300L
