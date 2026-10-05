@@ -395,6 +395,10 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                 Log.e(TAG, "播放失败: ${error.errorCodeName}", error)
                 if (error.errorCode == PlaybackException.ERROR_CODE_TIMEOUT) {
                     recoverFromAudioSinkTimeout()
+                } else {
+                    // ★T-6（R-e）：非超时的“源不可播”错误（文件丢失/SAF uri 失效/解码不可用等）
+                    //   → 从队列移除该曲 + 清出歌单 + 自动下一首（队列容错）。
+                    handleUnplayableTrack(error)
                 }
             }
         })
@@ -434,6 +438,51 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         p.prepare()
         p.seekTo(resumeMs)
         p.play()
+    }
+
+    /**
+     * ★T-6（R-e）：当前曲**不可播**（文件丢失 / SAF uri 失效 / 解码不可用等）→ 队列容错：
+     * 1. 从状态机队列移除该曲（`session.removeFromQueue`）；
+     * 2. 从歌单持久层移除该失效曲（[PlaylistStore.recordProgress] 同源的直写，避免用另一 VM 的内存缓存）；
+     * 3. 若有下一首 → 自动续播；否则清空播放器。
+     *
+     * 仅当处于**队列播放**（[currentListId] != null 且队列 Active）时生效；
+     * 单曲导入（无歌单）不可播时仅清当前曲（不做“下一首”）。
+     */
+    private fun handleUnplayableTrack(error: PlaybackException) {
+        val failedUri = _state.value.currentUri
+        if (failedUri == null) return
+        Log.w(TAG, "T-6: 当前曲不可播（${error.errorCodeName}），尝试移除+下一首")
+
+        val inQueue = session.queue is QueueState.Active
+        if (!inQueue) {
+            // 非队列：清当前曲即可（无“下一首”可跳）。
+            Log.w(TAG, "T-6: 非队列播放，仅清当前曲")
+            clearCurrent()
+            return
+        }
+
+        // 1) 队列移除该曲
+        session.removeFromQueue(failedUri)
+
+        // 2) 歌单持久层移除失效曲（直写文件）
+        val listId = currentListId
+        if (listId != null) {
+            viewModelScope.launch(Dispatchers.IO) {
+                runCatching { playlistStore.removeTrackFromList(listId, failedUri) }
+                    .onFailure { Log.w(TAG, "T-6: 从歌单移除失效曲失败", it) }
+            }
+        }
+
+        // 3) 续播下一首（若有），否则清空
+        val cur = (session.queue as? QueueState.Active)?.current
+        if (cur != null && cur.uri != failedUri) {
+            Log.w(TAG, "T-6: 跳到下一首 ${cur.title}")
+            loadAndPlay(Uri.parse(cur.uri), cur.title)
+        } else {
+            Log.w(TAG, "T-6: 队列已无有效曲，清空播放器")
+            clearCurrent()
+        }
     }
 
     init {
