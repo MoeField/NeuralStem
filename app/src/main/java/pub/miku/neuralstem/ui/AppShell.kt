@@ -153,10 +153,10 @@ fun AppShell(
             AppDestination.PLAYLIST -> PlaylistScreen(
                 modifier = Modifier.fillMaxSize().padding(padding),
                 vm = playlistVm,
-                // ★R-a：点曲 → **以整个歌单为队列**、从该下标开始播。
+                // ★R-a：点曲 → **以整个歌单为队列**、从该下标开始播（传 listId 供 T-5 进度记忆）。
                 onPlayTrack = { listId, idx ->
                     playlistVm.listById(listId)?.tracks?.let { tracks ->
-                        playerVm.playQueue(tracks.map { Uri.parse(it.uri) to it.title }, idx)
+                        playerVm.playQueue(tracks.map { Uri.parse(it.uri) to it.title }, idx, listId)
                         current = AppDestination.PLAYER
                     }
                 },
@@ -167,9 +167,15 @@ fun AppShell(
                         // ★R4：选中的歌单没曲 → 播放器清空 + 提示导入
                         playerVm.clearCurrent()
                     } else {
-                        val last = playlistVm.listById(listId)?.lastPlayedUri
-                        val idx = last?.let { u -> tracks.indexOfFirst { it.uri == u } }?.takeIf { it >= 0 } ?: 0
-                        playerVm.playQueue(tracks.map { Uri.parse(it.uri) to it.title }, idx)
+                        val list = playlistVm.listById(listId)
+                        val last = list?.lastPlayedUri
+                        val lastIdx = last?.let { u -> tracks.indexOfFirst { it.uri == u } } ?: -1
+                        val idx = if (lastIdx >= 0) lastIdx else 0
+                        // ★T-5：若从“上次曲”开始，则带上上次位置续播（否则从 0）。
+                        val resumeMs = if (lastIdx >= 0) (list?.lastPositionMs ?: 0L) else 0L
+                        playerVm.playQueue(
+                            tracks.map { Uri.parse(it.uri) to it.title }, idx, listId, resumeMs,
+                        )
                         current = AppDestination.PLAYER
                     }
                 },
