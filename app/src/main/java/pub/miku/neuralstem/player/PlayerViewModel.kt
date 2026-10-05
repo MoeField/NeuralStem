@@ -1087,9 +1087,17 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     }
 }
 
-/** ★Step3：设置层的 [SettingsRepository.RepeatMode] → media3 [Player.repeatMode]。 */
+/** ★Step3：设置层的 [SettingsRepository.RepeatMode] → media3 [Player.repeatMode]。
+ *
+ * ★T-4 修复：**LOOP_ALL 也映射 REPEAT_MODE_OFF**。
+ * 原因：player 每次只持 1 首 media item（队列在应用层 SessionState）。若传 `REPEAT_MODE_ALL`，
+ * player 会把“单曲”视为全部而**无限循环** → **永不 `STATE_ENDED`** → 应用层的
+ * `playNext`/`autoAdvanceOnEnded` 的“到尾绕回”**永不触发**（真机实测：LOOP_ALL 卡死在首曲）。
+ * 队列循环应由应用层负责：player 播完发 `STATE_ENDED` → `playNext()` 到尾部
+ * 且 mode==LOOP_ALL 时 `wrapQueueToStart()` 绕回。故 LOOP_ALL 与 SEQUENTIAL 都传 OFF。
+ */
 private fun SettingsRepository.RepeatMode.toPlayerRepeatMode(): Int = when (this) {
     SettingsRepository.RepeatMode.SEQUENTIAL -> Player.REPEAT_MODE_OFF
-    SettingsRepository.RepeatMode.LOOP_ALL -> Player.REPEAT_MODE_ALL
+    SettingsRepository.RepeatMode.LOOP_ALL -> Player.REPEAT_MODE_OFF
     SettingsRepository.RepeatMode.LOOP_ONE -> Player.REPEAT_MODE_ONE
 }
