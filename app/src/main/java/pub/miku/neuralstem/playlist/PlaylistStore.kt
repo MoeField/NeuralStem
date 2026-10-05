@@ -126,6 +126,28 @@ class PlaylistStore(app: Application) {
         if (changed) save(next)
     }
 
+    /**
+     * ★T-6：从某歌单移除一首失效曲（播放器直写，避免依赖 [PlaylistViewModel] 的内存缓存）。
+     * 若被移除的正是进度记录曲（[Playlist.lastPlayedUri]）→ 一并清空进度。
+     * @return 是否发生了变更（供调用方决定是否刷新）。
+     */
+    fun removeTrackFromList(listId: String, trackUri: String): Boolean {
+        val cur = load()
+        var changed = false
+        val next = cur.map { p ->
+            if (p.id == listId && p.tracks.any { it.uri == trackUri }) {
+                changed = true
+                p.copy(
+                    tracks = p.tracks.filterNot { it.uri == trackUri },
+                    lastPlayedUri = if (p.lastPlayedUri == trackUri) null else p.lastPlayedUri,
+                    lastPositionMs = if (p.lastPlayedUri == trackUri) 0L else p.lastPositionMs,
+                )
+            } else p
+        }
+        if (changed) save(next)
+        return changed
+    }
+
     fun save(list: List<Playlist>) {
         runCatching {
             val arr = JSONArray()
