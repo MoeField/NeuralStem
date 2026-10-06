@@ -56,11 +56,10 @@ fun SettingsScreen(
     vm: SettingsViewModel = viewModel(),
 ) {
     val st by vm.state.collectAsState()
-
-    // 首次进入且从未询问过 → 弹窗提示(非强制)
+    // ★G-1b：首次进入且未检测 → **强制**弹窗（无“稍后”；未测完不能用分离）。
     var showPrompt by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) {
-        if (!st.benchmarked && !vm.wasBenchmarkPrompted) showPrompt = true
+    LaunchedEffect(st.benchmarked) {
+        if (!st.benchmarked) showPrompt = true
     }
 
     if (showPrompt) {
@@ -69,10 +68,6 @@ fun SettingsScreen(
                 showPrompt = false
                 vm.markBenchmarkPrompted()
                 vm.runBenchmark(long = false)
-            },
-            onLater = {
-                showPrompt = false
-                vm.markBenchmarkPrompted()
             },
         )
     }
@@ -305,19 +300,19 @@ private fun ModelCard(
     }
 }
 
+/** ★G-1b：**强制**检测弹窗（无“稍后”/不可取消）——未检测不能用分离。 */
 @Composable
-private fun BenchmarkPrompt(onRunNow: () -> Unit, onLater: () -> Unit) {
+private fun BenchmarkPrompt(onRunNow: () -> Unit) {
     AlertDialog(
-        onDismissRequest = onLater,
-        title = { Text("检测设备性能?") },
+        onDismissRequest = { /* 不可取消：必须检测 */ },
+        title = { Text("首次使用需检测设备性能") },
         text = {
             Text(
-                "首次使用需检测本机运行各分离模型的速度，以便只把「实时可用」的模型作为默认。\n" +
-                    "检测很快(数秒)，期间请勿退出。也可以稍后在设置里运行。",
+                "为只把「实时可用」的模型作为默认，首次使用需检测本机运行各分离模型的速度。\n" +
+                    "检测很快(数秒)，期间请勿退出。检测完成前无法使用分离功能。",
             )
         },
         confirmButton = { TextButton(onClick = onRunNow) { Text("现在检测") } },
-        dismissButton = { TextButton(onClick = onLater) { Text("稍后") } },
     )
 }
 
