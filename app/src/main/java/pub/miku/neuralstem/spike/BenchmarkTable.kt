@@ -81,4 +81,48 @@ object BenchmarkTable {
 
     /** 该 CPU 是否有内置记录（= 可免跑）。 */
     fun hasExact(cpu: String): Boolean = ENTRIES.any { normalize(it.cpu) == normalize(cpu) }
+
+    /**
+     * ★G-2b：**天梯区间推断**（仅用于**预选默认值**，**不用于免跑**）。
+     *
+     * 思路（“125% 跑分 → 可跑 100% 基准实时模型”的推广）：
+     * 模型间的 RTF **比例**在同一设备上大致稳定。故：
+     * 1. 用本机**已测的一个锚模型**（如 Spleeter，SHORT 很快）的 RTF 当锚点；
+     * 2. 拿一个**参考内置记录**（含该锚模型）作基准表；
+     * 3. **按锚点比例线性缩放**整张表 → 预估其余模型 RTF。
+     *
+     * @param anchorId 锚模型 id（必须存在于参考表中）
+     * @param anchorRtf 本机实测的锚点 RTF
+     * @return 预估 RTF（modelId → rtf）；无可用参考表/锚点不在表中 → 空（不推断）
+     */
+    fun estimateByAnchor(
+        anchorId: String,
+        anchorRtf: Float,
+    ): Map<String, Float> {
+        if (anchorRtf <= 0f) return emptyMap()
+        // 选一个含锚模型的参考记录（优先 G100，因数据最全）
+        val ref = ENTRIES.firstOrNull { it.rtf.containsKey(anchorId) } ?: return emptyMap()
+        val base = ref.rtf[anchorId] ?: return emptyMap()
+        if (base <= 0f) return emptyMap()
+        val scale = anchorRtf / base
+        return ref.rtf.mapValues { (_, rtf) -> rtf * scale }
+    }
+
+    /**
+     * 按“实时门槛”推荐**默认模型**（RTF ≥ [realtimeThreshold] 者中 RTF 最大 = 最快）。
+     * 用于 G-2b 的“仅预选默认值”。
+     *
+     * @param rtfById 某设备的 RTF 表（可为预估）
+     * @param installedIds 已安装模型（仅在这些里选）
+     * @return 推荐模型 id；若无满足者 → null
+     */
+    fun pickDefault(
+        rtfById: Map<String, Float>,
+        installedIds: Set<String>,
+        realtimeThreshold: Float = 2f,
+    ): String? =
+        rtfById.entries
+            .filter { it.key in installedIds && it.value >= realtimeThreshold }
+            .maxByOrNull { it.value }
+            ?.key
 }

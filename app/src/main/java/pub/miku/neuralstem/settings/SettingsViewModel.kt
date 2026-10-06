@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import pub.miku.neuralstem.spike.BenchmarkTable
 import pub.miku.neuralstem.spike.DeviceBenchmark
 import pub.miku.neuralstem.spike.ModelRegistry
 import pub.miku.neuralstem.spike.ModelSpec
@@ -56,6 +57,8 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         val benchCurrentId: String? = null,
         /** 已安装但未测的模型数（>0 → 可“继续检测”） */
         val installedPending: Int = 0,
+        /** ★G-2b：区间推断出的默认模型 id（仅用于**预选**；null = 无推断） */
+        val estimatedDefaultId: String? = null,
     )
 
     private val bench = DeviceBenchmark(app)
@@ -156,6 +159,17 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
             groups[tier]!!.add(row)
             if (tier == Tier.REALTIME && installed) selectable.add(spec.id)
         }
+        // ★G-2b：无精确命中时，用“锚模型”区间推断 → 仅用于**预选默认**（不用于免跑）。
+        //   锚点 = 已测模型中最快的那个（RTF 最大）。
+        val installedCached = cached.filterKeys { it in installedIds }
+        val anchor = installedCached.maxByOrNull { it.value.rtf }
+        val estimated = if (anchor != null && !BenchmarkTable.hasExact(bench.cpuId())) {
+            BenchmarkTable.estimateByAnchor(anchor.key, anchor.value.rtf)
+        } else {
+            emptyMap()
+        }
+        val estimatedDefaultId = BenchmarkTable.pickDefault(estimated, installedIds)
+
         return UiState(
             grouped = groups,
             benchmarked = cached.isNotEmpty(),
@@ -164,6 +178,7 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
             eqEnabled = settings.eqEnabled,
             // ★G-1c：已安装但未测的数量（>0 → 可“继续检测”）
             installedPending = installedIds.count { it !in cached.keys },
+            estimatedDefaultId = estimatedDefaultId,
         )
     }
 

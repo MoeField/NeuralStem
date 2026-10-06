@@ -36,6 +36,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import pub.miku.neuralstem.player.PlayerViewModel
+import pub.miku.neuralstem.spike.ModelRegistry
 import pub.miku.neuralstem.spike.TierRegistry
 
 /**
@@ -118,6 +119,14 @@ fun SettingsScreen(
         if (!st.benchmarked && !st.benchmarking) {
             Text(
                 "尚未检测。未检测的模型默认归入「很慢」档。",
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        // ★G-2b：区间推断出的默认模型（仅“预选”提示，非免跑）；未命中精确表时显。
+        st.estimatedDefaultId?.let { id ->
+            val name = ModelRegistry.byId(id)?.displayName ?: id
+            Text(
+                "本机未收录，按比例预估推荐默认：$name（预估，非实测）",
                 style = MaterialTheme.typography.bodySmall,
             )
         }
