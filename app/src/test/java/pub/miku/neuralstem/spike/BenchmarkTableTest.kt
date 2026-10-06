@@ -50,4 +50,31 @@ class BenchmarkTableTest {
             }
         }
     }
+
+    // ---------------- G-2b：天梯区间推断 ----------------
+
+    @Test
+    fun `区间推断：锚点比例缩放基准表`() {
+        // G100 基准: spleeter=8.54; 假设本机锚点 spleeter=17.08（≈2×）→ UVR 也应 ≈2×
+        val est = BenchmarkTable.estimateByAnchor("spleeter-2stems-fp16", 17.08f)
+        assertEquals(2f, est["spleeter-2stems-fp16"]!! / 8.54f, 0.05f)
+        assertEquals(2.06f, est["uvr-9482"]!!, 0.1f)   // 1.03 * 2
+        assertEquals(0.68f, est["uvr-Inst_HQ_3"]!!, 0.1f)  // 0.34 * 2
+    }
+
+    @Test
+    fun `区间推断：锚点非法或不在表则返回空`() {
+        assertTrue(BenchmarkTable.estimateByAnchor("spleeter-2stems-fp16", 0f).isEmpty())
+        assertTrue(BenchmarkTable.estimateByAnchor("不存在的模型", 5f).isEmpty())
+    }
+
+    @Test
+    fun `pickDefault：选已装且达实时门槛里最快的`() {
+        val rtf = mapOf("a" to 5f, "b" to 3f, "c" to 1f)
+        assertEquals("a", BenchmarkTable.pickDefault(rtf, installedIds = setOf("a", "b", "c")))
+        // 只装了慢的 → null
+        assertEquals(null, BenchmarkTable.pickDefault(rtf, installedIds = setOf("c")))
+        // 只装了 b（未装 a）→ 选 b（3f ≥ 2f 门槛）
+        assertEquals("b", BenchmarkTable.pickDefault(rtf, setOf("b", "c")))
+    }
 }
