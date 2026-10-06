@@ -68,7 +68,9 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     private val realtimeThreshold = 2f
 
     init {
-        // 若已有缓存，直接展示
+        // ★G-2a：若 CPU 精确命中内置表且本机无缓存 → 免跑直接填（Q3：仅精确命中）。
+        bench.seedFromBuiltinIfExact()
+        // 若已有缓存（实测或免跑），直接展示
         refresh()
     }
 
