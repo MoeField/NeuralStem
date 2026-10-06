@@ -85,6 +85,10 @@ fun SeparationScreen(
     // ★3a-2：busy 单一来源（不再拼接 spikeState + repoState）。
     val busy = separationTask is SeparationTask.Preparing ||
         separationTask is SeparationTask.Running
+    // ★G-1b：首启**强制**检测完成才能用分离——未检测(无缓存)则门控。
+    //   直读（不 remember）：确保 benchmark 完成/缓存变化后重新进入即时反映。
+    val benchRtfAll = DeviceBenchmark(app).cached()
+    val benchmarked = benchRtfAll.isNotEmpty()
 
     // ---- 完成 → 自动切多轨（★I3：**一次性消费**，天然只响应"Running→Done 转换"，----
     //      不响应进入时的遗留态；不再用 prevSpike/prevRepo 手搓 → 重建也不会误触发）----
@@ -180,11 +184,18 @@ fun SeparationScreen(
 
         // ---- ★D-3：按轨数 2 行；每行 = 档位按钮（点即跑）；按钮显示当前选中模型 ----
         //   ★D-4：按 benchmark 结果在按钮标“⚡ 实时档”（选模型 RTF ≥ 门槛）。
+        //   ★G-1b：未检测（无 benchmark 缓存）→ 门控：按钮禁用 + 提示先检测。
         Text("分离", style = MaterialTheme.typography.titleMedium)
         val settingsRepo = remember { SettingsRepository(app) }
         // benchmark 缓存（本机实测/内置免跑）→ 判断各档选中模型是否实时档。
-        val benchRtf: Map<String, Float> = remember(busy) {
-            DeviceBenchmark(app).cached().mapValues { it.value.rtf }
+        val benchRtf: Map<String, Float> = benchRtfAll.mapValues { it.value.rtf }
+        // ★G-1b：未检测 → 门控提示（档位按钮保持可见但禁用，引导去检测）。
+        if (!benchmarked) {
+            Text(
+                "⚠ 首次使用需先检测设备性能（设置页 → “现在检测”），才能选用分离档位。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
         }
         TierRegistry.ALL.groupBy { it.stem }.forEach { (stem, rows) ->
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -206,7 +217,7 @@ fun SeparationScreen(
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Button(
                                 onClick = { startTier(tc) },
-                                enabled = hasSong && !busy,
+                                enabled = hasSong && !busy && benchmarked,
                             ) { Text(if (realtime) "⚡ ${tc.tier.label}" else tc.tier.label) }
                             Text(
                                 opt.displayName +
