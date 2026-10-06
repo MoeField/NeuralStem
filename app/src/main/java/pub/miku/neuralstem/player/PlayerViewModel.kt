@@ -110,6 +110,27 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     private val _state = MutableStateFlow(PlayerState())
     val state: StateFlow<PlayerState> = _state.asStateFlow()
 
+    // ============================ ★3b：派生字段化（状态机收敛收尾）============================
+    /**
+     * ★3b：把**状态机派生量**注入 [PlayerState]（唯一注入点；“能派生就不存储”）。
+     *
+     * `session` 是唯一真源；本方法保证 `isMultiTrack/eqAvailable/eqEnabled` 这三个字段
+     * **永远与状态机一致**（取代此前散落 ~8 处的手动 copy——任一漏写即 UI 与实际分叉）。
+     *
+     * 范围（A 方案，保守）：仅此三者（状态机已是精确真源）；
+     * `separationOn` 因与 `stemsAvailable`/`lastStems` 语义交织**暂不派生**（防回归）。
+     */
+    private fun withDerived(s: PlayerState): PlayerState = s.copy(
+        isMultiTrack = session.isMultiTrack,
+        eqAvailable = session.eqAvailable,
+        eqEnabled = session.eqEnabled,
+    )
+
+    /** [withDerived] 的就地版：把派生镜像同步进 [_state]（在状态机转移点后调用）。 */
+    private fun pushDerived() {
+        _state.value = withDerived(_state.value)
+    }
+
     /**
      * ★R4：**高频进度独立流**（避免每 100ms 整体换 PlayerState → 整页重组/闪）。
      * 只有进度条/转盘订阅它。
@@ -638,10 +659,14 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         if (resetStems) {
             lastStems = null
         }
-        _state.value = _state.value.copy(
-            fileName = displayName, hasMedia = true, playWhenReady = true,
-            separationOn = false, currentUri = uri.toString(),
-            stemsAvailable = if (resetStems) false else _state.value.stemsAvailable,
+        // ★3b：换曲必然单轨（beforeSetQueue 已把状态机转回 Single）——立即派生，
+        //   不等 Service 的快照回来（否则 UI 的 isMultiTrack 短暂停留旧值）。
+        _state.value = withDerived(
+            _state.value.copy(
+                fileName = displayName, hasMedia = true, playWhenReady = true,
+                separationOn = false, currentUri = uri.toString(),
+                stemsAvailable = if (resetStems) false else _state.value.stemsAvailable,
+            ),
         )
     }
 
@@ -810,10 +835,12 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             else SessionMode.Single,
         )
         // 多轨时 isReady 以 UI 意义上“轨已载入”为准；- 时长等待播放器 READY 后由 controller 监听补
-        _state.value = _state.value.copy(
-            isMultiTrack = inMt,
-            tracks = tracks,
-            isReady = _state.value.isReady || inMt,
+        // ★3b：`isMultiTrack` **不在此手动 copy** —— 由 [withDerived] 从状态机派生（单一真源）。
+        _state.value = withDerived(
+            _state.value.copy(
+                tracks = tracks,
+                isReady = _state.value.isReady || inMt,
+            ),
         )
         Log.i(TAG, "tracks snapshot: ${tracks.size} 轨 (inMultiTrack=$inMt)")
     }
@@ -827,11 +854,12 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             val lv = o.optJSONArray("levels")?.let { a -> ShortArray(a.length()) { a.optInt(it).toShort() } } ?: ShortArray(0)
             // ★I2：把 EQ 状态同步进状态机 → eqAvailable/eqEnabled 由状态机派生（单一真源）。
             session.syncEq(o.optBoolean("available", false), o.optBoolean("enabled", false))
-            _state.value = _state.value.copy(
-                eqAvailable = session.eqAvailable,
-                eqEnabled = session.eqEnabled,
-                eqFreqsHz = freqs,
-                eqLevelsMb = lv,
+            // ★3b：`eqAvailable/eqEnabled` **不在此手动 copy** —— 由 [withDerived] 派生。
+            _state.value = withDerived(
+                _state.value.copy(
+                    eqFreqsHz = freqs,
+                    eqLevelsMb = lv,
+                ),
             )
         }.onFailure { Log.w(TAG, "eq snapshot parse failed", it) }
     }
@@ -971,11 +999,15 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     fun exitMultiTrack() {
         sendMtCommand(MultiTrackSession.CMD_EXIT)
         isMultiTrackLoaded = false
-        _state.value = _state.value.copy(
-            isMultiTrack = false,
-            tracks = emptyList(),
-            separationOn = false,
-            durationMs = mediaController?.duration?.coerceAtLeast(0L) ?: 0L,
+        // ★3b：状态机同步回单轨（无副作用）——`isMultiTrack` 由 [withDerived] 派生，
+        //   不再手动 copy（原写法：状态机仍停在 MultiTrack，仅 UI 布尔变了 → 双源分叉）。
+        session.syncMode(SessionMode.Single)
+        _state.value = withDerived(
+            _state.value.copy(
+                tracks = emptyList(),
+                separationOn = false,
+                durationMs = mediaController?.duration?.coerceAtLeast(0L) ?: 0L,
+            ),
         )
     }
 
@@ -991,25 +1023,29 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             sendMtCommand(MultiTrackSession.CMD_EXIT)
             isMultiTrackLoaded = false
         }
+        // ★3b：状态机同步回单轨（clearCurrent 后必为单轨）。
+        session.syncMode(SessionMode.Single)
         val p = mediaController
         p?.stop()
         p?.clearMediaItems()
         originalUri = null
         originalName = ""
         lastStems = null
-        _state.value = _state.value.copy(
-            fileName = "",
-            hasMedia = false,
-            playWhenReady = false,
-            isPlaying = false,
-            isReady = false,
-            durationMs = 0L,
-            isMultiTrack = false,
-            tracks = emptyList(),
-            separationOn = false,
-            currentUri = null,
-            waveform = null,
-            cover = null,
+        // ★3b：`isMultiTrack` 由 [withDerived] 派生（不再手动 copy）。
+        _state.value = withDerived(
+            _state.value.copy(
+                fileName = "",
+                hasMedia = false,
+                playWhenReady = false,
+                isPlaying = false,
+                isReady = false,
+                durationMs = 0L,
+                tracks = emptyList(),
+                separationOn = false,
+                currentUri = null,
+                waveform = null,
+                cover = null,
+            ),
         )
         _progress.value = Progress(0L, 0L)
         _anchor.value = null
@@ -1127,8 +1163,9 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             Bundle().apply { putBoolean(MultiTrackSession.KEY_EQ_ENABLED, on) },
         )
         // 乐观更新（快照回来后会被校正）；同时同步状态机。
+        // ★3b：`eqEnabled` 由 [withDerived] 从状态机派生（不再手动 copy）。
         session.syncEq(_state.value.eqAvailable, on)
-        _state.value = _state.value.copy(eqEnabled = on)
+        pushDerived()
         Log.i(TAG, "setEqEnabled → Service: $on")
     }
 
