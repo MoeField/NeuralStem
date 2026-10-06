@@ -5,6 +5,7 @@ import android.content.Context
 import android.os.Build
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.File
@@ -82,60 +83,88 @@ class DeviceBenchmark(private val app: Application) {
     /**
      * 跑 benchmark。**只测已安装(模型文件存在)的模型** —— 没装的跳过。
      *
+     * ★G-1a：
+     * - **进度回调** [onProgress]：每测完/开始一个模型回调（done/total/modelId）。
+     * - **可取消**：协程取消后 **不再开始下一个模型**（单个模型的推理是阻塞的，
+     *   不可中断；取消在当前模型结束时生效）。已测结果**已落盘**，不丢。
+     * - **可续半态**：[resume] = true 时，先读已有缓存作为初值，**跳过已测**的模型
+     *   （已测 + 未测混合 → 只补未测的）。LONG 模式重测以提精度。
+     *
      * 注意:必须在**后台线程**调用(会阻塞数秒)。
      *
      * @param mode SHORT(1 块)/ LONG(3 块取中位)
      * @param models 要测的模型(默认全部)
+     * @param resume true = 从缓存续测（跳过已测）；false = 重测全部
+     * @param onProgress (done, total, modelId) —— 可空
+     * @return 全部结果（含续测时的旧值 + 本次新测）
      */
     suspend fun run(
         mode: Mode = Mode.SHORT,
         models: List<ModelSpec> = ModelRegistry.ALL,
+        resume: Boolean = false,
+        onProgress: ((done: Int, total: Int, modelId: String) -> Unit)? = null,
     ): Map<String, ModelBenchmark> = withContext(Dispatchers.Default) {
         val rounds = if (mode == Mode.LONG) 3 else 1
+        // ★G-1a 可续半态：续测时以已有缓存为初值，跳过已测（LONG 除外——重测提精度）。
         val out = LinkedHashMap<String, ModelBenchmark>()
-        for (spec in models) {
-            val paths = resolvePaths(spec) ?: run {
-                Log.i(TAG, "skip ${spec.id}: not installed")
-                continue
-            }
-            val chunkFrames = chunkFramesFor(spec)
-            val chunkSeconds = chunkFrames.toFloat() / SR
-            val block = syntheticStereo(chunkFrames)
+        if (resume && mode != Mode.LONG) out.putAll(cached())
 
-            // 建引擎(不计入测量) + 预热一次(排除首次分配开销)
-            val engine = runCatching {
-                SherpaSourceSeparation.create(
-                    paths.first, paths.second, numThreads = SeparationRepository.NUM_THREADS,
-                    mode = spec.engine,
-                )
-            }.getOrElse {
-                Log.w(TAG, "skip ${spec.id}: engine create failed", it); null
-            } ?: continue
+        // 只对“需要测”的模型计数（已测的跳过 → 进度分母不含它）。
+        val pending = models.filter { !out.containsKey(it.id) }
+        val total = pending.size
 
-            val times = ArrayList<Long>(rounds)
-            try {
-                // 预热(丢弃):首次 forward 有 lazy 分配/页错误,不代表稳态
-                runCatching { engine.separate(block, 2, SR) }
-                repeat(rounds) {
-                    val t0 = System.nanoTime()
-                    engine.separate(block, 2, SR)
-                    times += (System.nanoTime() - t0) / 1_000_000
-                }
-            } finally {
-                engine.release()
-            }
-
-            val ms = times.sorted()[times.size / 2]     // 中位数
-            val rtf = chunkSeconds / (ms / 1000f)
-            out[spec.id] = ModelBenchmark(spec.id, rtf, ms)
-            Log.i(
-                TAG,
-                "bench ${spec.id}: chunk=${"%.1f".format(chunkSeconds)}s " +
-                    "ms=$ms rtf=${"%.2f".format(rtf)} (rounds=$rounds times=$times)",
-            )
-        }
-        save(out)
+        // ★G-1a：编排（进度/取消/逐模型落盘）抽到 [runBenchmarkPlan]（纯逻辑，可单测）。
+        runBenchmarkPlan(
+            pending = pending,
+            total = total,
+            isActive = { coroutineContext.isActive },
+            measure = { spec -> measureOne(spec, rounds) },
+            onResult = { spec, b ->
+                out[spec.id] = b
+                save(out)   // 每模型落盘：中断/取消不丢已测
+            },
+            onProgress = onProgress,
+        )
         out
+    }
+
+    /** 测一个模型（原生；rounds 轮取中位）——未装/建引擎失败返回 null。 */
+    private fun measureOne(spec: ModelSpec, rounds: Int): ModelBenchmark? {
+        val paths = resolvePaths(spec) ?: run {
+            Log.i(TAG, "skip ${spec.id}: not installed")
+            return null
+        }
+        val chunkFrames = chunkFramesFor(spec)
+        val chunkSeconds = chunkFrames.toFloat() / SR
+        val block = syntheticStereo(chunkFrames)
+
+        // 建引擎(不计入测量) + 预热一次(排除首次分配开销)
+        val engine = runCatching {
+            SherpaSourceSeparation.create(
+                paths.first, paths.second, numThreads = SeparationRepository.NUM_THREADS,
+                mode = spec.engine,
+            )
+        }.getOrElse {
+            Log.w(TAG, "skip ${spec.id}: engine create failed", it); null
+        } ?: return null
+
+        val times = ArrayList<Long>(rounds)
+        try {
+            // 预热(丢弃):首次 forward 有 lazy 分配/页错误,不代表稳态
+            runCatching { engine.separate(block, 2, SR) }
+            repeat(rounds) {
+                val t0 = System.nanoTime()
+                engine.separate(block, 2, SR)
+                times += (System.nanoTime() - t0) / 1_000_000
+            }
+        } finally {
+            engine.release()
+        }
+
+        val ms = times.sorted()[times.size / 2]     // 中位数
+        val rtf = chunkSeconds / (ms / 1000f)
+        Log.i(TAG, "bench ${spec.id}: chunk=${"%.1f".format(chunkSeconds)}s ms=$ms rtf=${"%.2f".format(rtf)} (rounds=$rounds times=$times)")
+        return ModelBenchmark(spec.id, rtf, ms)
     }
 
     // ---------------- 内部 ----------------
@@ -195,5 +224,43 @@ class DeviceBenchmark(private val app: Application) {
         private const val TAG = "DevBench"
         private const val PREFS = "device_benchmark"
         private const val SR = 44_100
+
+        /**
+         * ★G-1a：benchmark **编排**（纯逻辑，无 Android/原生依赖 → 可 JVM 单测）。
+         *
+         * 语义：
+         * - 逐个 [pending] 调用 [measure]；前一个测完才开下一个。
+         * - **取消**：每个模型开始前查 [isActive]；false 则**不再开始下一个**
+         *   （当前模型结束才生效——单次推理是阻塞的、不可中断）。已测结果已落盘，不丢。
+         * - **跳过**：[measure] 返回 null（未装/引擎建失败）→ 不产结果，但仍计入进度。
+         * - **半态**：每测到一个就调 [onResult]（宿主用于逐模型落盘）。
+         *
+         * @param total 进度分母（= 待测数，含将跳过的）
+         * @param onProgress (done, total, modelId)，done 从 1 递增
+         * @return 已测结果（spec.id → benchmark）
+         */
+        internal suspend fun runBenchmarkPlan(
+            pending: List<ModelSpec>,
+            total: Int,
+            isActive: () -> Boolean,
+            measure: suspend (ModelSpec) -> ModelBenchmark?,
+            onResult: (ModelSpec, ModelBenchmark) -> Unit = { _, _ -> },
+            onProgress: ((done: Int, total: Int, modelId: String) -> Unit)? = null,
+        ): Map<String, ModelBenchmark> {
+            val out = LinkedHashMap<String, ModelBenchmark>()
+            var done = 0
+            for (spec in pending) {
+                // ★取消点：模型边界处检查是否已取消（已测结果已落盘，不丢）。
+                if (!isActive()) break
+                val b = measure(spec)
+                if (b != null) {
+                    out[spec.id] = b
+                    onResult(spec, b)
+                }
+                done++
+                onProgress?.invoke(done, total, spec.id)
+            }
+            return out
+        }
     }
 }
