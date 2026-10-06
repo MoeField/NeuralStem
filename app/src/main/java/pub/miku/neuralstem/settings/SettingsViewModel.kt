@@ -54,6 +54,8 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         val benchDone: Int = 0,
         /** 当前正在测的模型 id（无则 null） */
         val benchCurrentId: String? = null,
+        /** 已安装但未测的模型数（>0 → 可“继续检测”） */
+        val installedPending: Int = 0,
     )
 
     private val bench = DeviceBenchmark(app)
@@ -158,6 +160,8 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
             defaultEngineId = settings.defaultEngineId,
             selectableIds = selectable,
             eqEnabled = settings.eqEnabled,
+            // ★G-1c：已安装但未测的数量（>0 → 可“继续检测”）
+            installedPending = installedIds.count { it !in cached.keys },
         )
     }
 

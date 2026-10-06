@@ -96,6 +96,25 @@ fun SettingsScreen(
                 enabled = !st.benchmarking,
             ) { Text("长测试(更准)") }
         }
+        // ★G-1c：半态 UI —— 进行中显进度；有未测的已装模型 → “继续检测”（resume）。
+        if (st.benchmarking && st.benchTotal > 0) {
+            Text(
+                "已测 ${st.benchDone}/${st.benchTotal}" +
+                    (st.benchCurrentId?.let { " · 当前: $it" } ?: ""),
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        if (!st.benchmarking && st.installedPending > 0) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "还有 ${st.installedPending} 个已装模型未测。",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                TextButton(onClick = { vm.runBenchmark(long = false, resume = true) }) {
+                    Text("继续检测")
+                }
+            }
+        }
         if (!st.benchmarked && !st.benchmarking) {
             Text(
                 "尚未检测。未检测的模型默认归入「很慢」档。",
