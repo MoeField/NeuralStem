@@ -39,6 +39,9 @@ import pub.miku.neuralstem.player.SeparationTask
 import pub.miku.neuralstem.settings.SettingsRepository
 import java.io.File
 
+/** ★D-4：分离页档位按钮的“实时档”门槛（纯推理 RTF）。与 SettingsViewModel 保持一致。 */
+private const val REALTIME_RTF = 2f
+
 /**
  * 分离页（**Step 10 重构**）：**直接作用于当前播放曲**（不再手动导入）。
  *
@@ -176,8 +179,13 @@ fun SeparationScreen(
         }
 
         // ---- ★D-3：按轨数 2 行；每行 = 档位按钮（点即跑）；按钮显示当前选中模型 ----
+        //   ★D-4：按 benchmark 结果在按钮标“⚡ 实时档”（选模型 RTF ≥ 门槛）。
         Text("分离", style = MaterialTheme.typography.titleMedium)
         val settingsRepo = remember { SettingsRepository(app) }
+        // benchmark 缓存（本机实测/内置免跑）→ 判断各档选中模型是否实时档。
+        val benchRtf: Map<String, Float> = remember(busy) {
+            DeviceBenchmark(app).cached().mapValues { it.value.rtf }
+        }
         TierRegistry.ALL.groupBy { it.stem }.forEach { (stem, rows) ->
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
@@ -192,15 +200,20 @@ fun SeparationScreen(
                 ) {
                     rows.forEach { tc ->
                         val opt = settingsRepo.tierOption(tc.stem, tc.tier) ?: tc.default()
+                        // ★D-4：选中模型的实测 RTF（未测/非 sherpa 模型 → null → 不标）。
+                        val rtf = benchRtf[opt.id]
+                        val realtime = rtf != null && rtf >= REALTIME_RTF
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Button(
                                 onClick = { startTier(tc) },
                                 enabled = hasSong && !busy,
-                            ) { Text(tc.tier.label) }
+                            ) { Text(if (realtime) "⚡ ${tc.tier.label}" else tc.tier.label) }
                             Text(
-                                opt.displayName,
+                                opt.displayName +
+                                    (rtf?.let { " · %.2f×".format(it) } ?: ""),
                                 style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                color = if (realtime) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                     }
