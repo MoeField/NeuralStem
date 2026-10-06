@@ -80,6 +80,28 @@ class DeviceBenchmark(private val app: Application) {
             .edit().remove(cacheKey()).apply()
     }
 
+    /** 本机 CPU 标识（`Build.SOC_MODEL` API31+ 否则 `Build.HARDWARE`）。 */
+    fun cpuId(): String =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) Build.SOC_MODEL else Build.HARDWARE
+
+    /**
+     * ★G-2a：**精确命中内置表 → 免跑**（Q3：仅精确命中）。
+     *
+     * 仅当**本机缓存为空**且当前 CPU 在 [BenchmarkTable] 有**精确命中**时：
+     * 把内置 RTF 写入缓存 → 返回 true（调用方可跳过实测）。
+     * 已有机型特定缓存时**不覆盖**（本机实测优先）。
+     *
+     * @return true = 已用内置表填好缓存（可免跑）
+     */
+    fun seedFromBuiltinIfExact(): Boolean {
+        if (cached().isNotEmpty()) return false   // 本机已有实测 → 不覆盖
+        val builtin = BenchmarkTable.lookup(cpuId())
+        if (builtin.isEmpty()) return false        // 非精确命中 → 交上层（推断/实测）
+        save(builtin)
+        Log.i(TAG, "seeded ${builtin.size} from builtin table (cpu=${cpuId()})")
+        return true
+    }
+
     /**
      * 跑 benchmark。**只测已安装(模型文件存在)的模型** —— 没装的跳过。
      *
@@ -211,14 +233,8 @@ class DeviceBenchmark(private val app: Application) {
     }
 
     /** 缓存键：设备型号 + SoC + ROM 版本 —— 换设备/刷机后自动失效。 */
-    private fun cacheKey(): String {
-        val soc = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            Build.SOC_MODEL
-        } else {
-            Build.HARDWARE
-        }
-        return "bench_${Build.MODEL}_${soc}_${Build.ID}".replace(' ', '_')
-    }
+    private fun cacheKey(): String =
+        "bench_${Build.MODEL}_${cpuId()}_${Build.ID}".replace(' ', '_')
 
     companion object {
         private const val TAG = "DevBench"
