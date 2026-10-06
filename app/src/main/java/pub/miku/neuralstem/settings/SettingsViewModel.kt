@@ -47,6 +47,13 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         /** "实时可用"档里可选作默认的 id 集合 */
         val selectableIds: Set<String> = emptySet(),
         val eqEnabled: Boolean = false,
+        // ★G-1a：benchmark 进度/半态
+        /** 进行中的进度（待测总数；0 = 未知/未在跑） */
+        val benchTotal: Int = 0,
+        /** 已完成数（含跳过） */
+        val benchDone: Int = 0,
+        /** 当前正在测的模型 id（无则 null） */
+        val benchCurrentId: String? = null,
     )
 
     private val bench = DeviceBenchmark(app)
@@ -68,14 +75,25 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         _state.value = buildState()
     }
 
-    /** 跑 benchmark(短/长)，完成后刷新。 */
-    fun runBenchmark(long: Boolean = false) {
+    /**
+     * 跑 benchmark(短/长)，完成后刷新。
+     * @param long true = LONG(3 轮)；false = SHORT(1 轮)
+     * @param resume ★G-1a：true = 从缓存续测（跳过已测）。
+     */
+    fun runBenchmark(long: Boolean = false, resume: Boolean = false) {
         if (_state.value.benchmarking) return
-        _state.value = _state.value.copy(benchmarking = true)
+        _state.value = _state.value.copy(
+            benchmarking = true, benchTotal = 0, benchDone = 0, benchCurrentId = null,
+        )
         viewModelScope.launch {
             try {
                 val mode = if (long) DeviceBenchmark.Mode.LONG else DeviceBenchmark.Mode.SHORT
-                val r = bench.run(mode)
+                val r = bench.run(mode, resume = resume) { done, total, id ->
+                    // ★G-1a：进度回写（MutableStateFlow 线程安全，可在 Default 线程直接写）。
+                    _state.value = _state.value.copy(
+                        benchTotal = total, benchDone = done, benchCurrentId = id,
+                    )
+                }
                 Log.i(TAG, "benchmark done: ${r.mapValues { "%.2f".format(it.value.rtf) }}")
             } catch (t: Throwable) {
                 Log.e(TAG, "benchmark failed", t)

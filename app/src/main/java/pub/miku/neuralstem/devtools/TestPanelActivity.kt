@@ -172,7 +172,12 @@ class TestPanelActivity : ComponentActivity() {
         Thread {
             try {
                 val mode = if (long) DeviceBenchmark.Mode.LONG else DeviceBenchmark.Mode.SHORT
-                val r = runBlocking { DeviceBenchmark(application).run(mode) }
+                // ★G-1a：带进度回调（验证半态/进度）+ resume（续测）
+                val r = runBlocking {
+                    DeviceBenchmark(application).run(mode, resume = true) { done, total, id ->
+                        TestLog.log("Bench", "进度 $done/$total ← $id")
+                    }
+                }
                 r.forEach { (id, b) -> TestLog.log("Bench", "$id rtf=%.2f ms=${b.ms}".format(b.rtf)) }
                 TestLog.log("Panel", "=== bench DONE in ${SystemClock.elapsedRealtime() - t0}ms ===")
             } catch (t: Throwable) {
