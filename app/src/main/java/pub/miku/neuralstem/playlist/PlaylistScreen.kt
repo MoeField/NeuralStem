@@ -31,9 +31,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.launch
+import pub.miku.neuralstem.R
 
 /**
  * 阶段 UI / U5：**歌单页**。
@@ -98,7 +100,7 @@ fun PlaylistScreen(
         modifier = modifier.fillMaxSize().padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Text("歌单", style = MaterialTheme.typography.titleLarge)
+        Text(stringResource(R.string.pl_title), style = MaterialTheme.typography.titleLarge)
 
         Row(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -107,7 +109,7 @@ fun PlaylistScreen(
             OutlinedTextField(
                 value = newName,
                 onValueChange = { newName = it },
-                label = { Text("新列表名") },
+                label = { Text(stringResource(R.string.pl_new_name)) },
                 singleLine = true,
                 modifier = Modifier.weight(1f),
             )
@@ -117,15 +119,15 @@ fun PlaylistScreen(
                         vm.createList(newName.trim()); newName = ""
                     }
                 },
-            ) { Text("新建") }
+            ) { Text(stringResource(R.string.pl_create)) }
         }
 
-        Button(onClick = { pickFolder.launch(null) }) { Text("选择文件夹导入") }
+        Button(onClick = { pickFolder.launch(null) }) { Text(stringResource(R.string.pl_import_folder)) }
 
         HorizontalDivider()
 
         if (lists.isEmpty()) {
-            Text("暂无歌单。新建一个，或选文件夹导入。", style = MaterialTheme.typography.bodyMedium)
+            Text(stringResource(R.string.pl_empty), style = MaterialTheme.typography.bodyMedium)
         }
 
         LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -146,25 +148,26 @@ fun PlaylistScreen(
                                 val isSelected = p.id == selectedListId
                                 Text(
                                     (if (isSelected) "♪ " else "") + p.name +
-                                        if (p.isDefault) "（默认）" else "",
+                                        if (p.isDefault) stringResource(R.string.pl_default_suffix) else "",
                                     style = MaterialTheme.typography.titleSmall,
                                     color = if (isSelected) MaterialTheme.colorScheme.primary
                                     else MaterialTheme.colorScheme.onSurface,
                                 )
                                 Text(
-                                    "${p.tracks.size} 首" + when {
-                                        p.type == PlaylistStore.ListType.FOLDER -> " · 文件夹"
-                                        else -> " · 文件"
-                                    },
+                                    stringResource(
+                                        if (p.type == PlaylistStore.ListType.FOLDER) R.string.pl_summary_folder
+                                        else R.string.pl_summary_file,
+                                        p.tracks.size,
+                                    ),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
                             if (p.isDefault) {
                                 // 默认歌单：不可删；提供“清空”（清空后若正在播它 → 停播，但**保留选中**）
-                                TextButton(onClick = { vm.clearList(p.id); onPlaylistCleared(p.id) }) { Text("清空") }
+                                TextButton(onClick = { vm.clearList(p.id); onPlaylistCleared(p.id) }) { Text(stringResource(R.string.pl_clear)) }
                             } else {
-                                TextButton(onClick = { vm.deleteList(p.id); onPlaylistRemoved(p.id) }) { Text("删列表") }
+                                TextButton(onClick = { vm.deleteList(p.id); onPlaylistRemoved(p.id) }) { Text(stringResource(R.string.pl_delete)) }
                             }
                             // ★ 展开/收起：独立箭头按钮
                             TextButton(onClick = {
@@ -207,14 +210,14 @@ fun PlaylistScreen(
                                             vm.removeTrack(p.id, t.uri)
                                             onTrackRemoved(p.id, t.uri)
                                         }) {
-                                            Text("移除")
+                                            Text(stringResource(R.string.pl_remove))
                                         }
                                     }
                                 }
                             }
                             if (p.folderUri != null) {
                                 TextButton(onClick = { scope.launch { vm.rescanFolder(p.id) } }) {
-                                    Text("刷新文件夹")
+                                    Text(stringResource(R.string.pl_rescan))
                                 }
                             }
                         }

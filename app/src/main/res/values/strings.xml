@@ -71,4 +71,18 @@
     <string name="track_muted">已静音</string>
     <string name="track_solo">独奏</string>
     <string name="track_unsolo">取消独奏</string>
+
+    <!-- 歌单页 -->
+    <string name="pl_title">歌单</string>
+    <string name="pl_new_name">新列表名</string>
+    <string name="pl_create">新建</string>
+    <string name="pl_import_folder">选择文件夹导入</string>
+    <string name="pl_empty">暂无歌单。新建一个，或选文件夹导入。</string>
+    <string name="pl_default_suffix">（默认）</string>
+    <string name="pl_summary_file">%1$d 首 · 文件</string>
+    <string name="pl_summary_folder">%1$d 首 · 文件夹</string>
+    <string name="pl_clear">清空</string>
+    <string name="pl_delete">删列表</string>
+    <string name="pl_remove">移除</string>
+    <string name="pl_rescan">刷新文件夹</string>
 </resources>

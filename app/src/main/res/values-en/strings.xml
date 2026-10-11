@@ -71,4 +71,18 @@
     <string name="track_muted">Muted</string>
     <string name="track_solo">Solo</string>
     <string name="track_unsolo">Un-solo</string>
+
+    <!-- Playlists page -->
+    <string name="pl_title">Playlists</string>
+    <string name="pl_new_name">New list name</string>
+    <string name="pl_create">Create</string>
+    <string name="pl_import_folder">Import folder</string>
+    <string name="pl_empty">No playlists yet. Create one or import a folder.</string>
+    <string name="pl_default_suffix"> (default)</string>
+    <string name="pl_summary_file">%1$d track(s) · File</string>
+    <string name="pl_summary_folder">%1$d track(s) · Folder</string>
+    <string name="pl_clear">Clear</string>
+    <string name="pl_delete">Delete</string>
+    <string name="pl_remove">Remove</string>
+    <string name="pl_rescan">Rescan folder</string>
 </resources>
