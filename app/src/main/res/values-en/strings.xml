@@ -53,6 +53,36 @@
     <string name="settings_title">Settings</string>
     <string name="settings_device">Device capability</string>
     <string name="settings_about">About</string>
+    <string name="settings_bench_running">Detecting…</string>
+    <string name="settings_bench_short_run">Re-detect (short)</string>
+    <string name="settings_bench_long">Long test (accurate)</string>
+    <string name="settings_bench_progress">Tested %1$d/%2$d</string>
+    <string name="settings_bench_current"> · now: %1$s</string>
+    <string name="settings_bench_pending">%1$d installed model(s) not tested yet.</string>
+    <string name="settings_bench_continue">Continue</string>
+    <string name="settings_bench_none">Not detected yet. Untested models default to “very slow”.</string>
+    <string name="settings_estimated">Not in built-in table; estimated default by ratio: %1$s (estimated, not measured)</string>
+    <string name="settings_eq_title">Equalizer (EQ)</string>
+    <string name="settings_eq_supported">Hardware supported</string>
+    <string name="settings_eq_not_mounted">Not mounted (active after playback)</string>
+    <string name="settings_deck_turn">Deck seconds per turn</string>
+    <string name="settings_deck_turn_value">Currently %1$d s (at 1.0×; real turn = %2$d ÷ speed)</string>
+    <string name="settings_speed_range">Speed range</string>
+    <string name="settings_speed_range_value">X = %1$.1f  →  speed range [%2$.2fx, %3$.2fx]</string>
+    <string name="settings_speed_range_hint">X sets the speed slider bounds (lower = 1/X). Default 1.4 → [0.71, 1.40].</string>
+    <string name="settings_prompt_title">Benchmark your device first</string>
+    <string name="settings_prompt_body">To pick only “realtime-capable” models as default, the app must benchmark each separation model on this device first.\nIt is quick (seconds); please stay on screen. Separation is disabled until it completes.</string>
+    <string name="settings_prompt_run">Detect now</string>
+    <string name="settings_tier_models">Separation tier models</string>
+    <string name="settings_tier_models_hint">Single-model tiers (Fast / 4 stems) need no choice; only multi-candidate tiers are listed below.</string>
+    <string name="settings_model_not_installed">  ·  Not installed</string>
+    <string name="settings_model_row">%1$dMB · %2$s · measured %3$s</string>
+    <string name="settings_tier_realtime">⚡ Realtime</string>
+    <string name="settings_tier_slow">⏱ Slower</string>
+    <string name="settings_tier_veryslow">🐢 Very slow</string>
+    <string name="settings_tier_realtime_hint">Default engine can only be chosen from this tier.</string>
+    <string name="settings_tier_slow_hint">Slower: long tracks will take a while.</string>
+    <string name="settings_tier_veryslow_hint">Very slow: expect waiting; not recommended as default.</string>
 
     <!-- Mix page (EQ + track mixer) -->
     <string name="mix_title">Mix</string>

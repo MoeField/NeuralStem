@@ -187,7 +187,7 @@ fun SeparationScreen(
         // ---- ★D-3：按轨数 2 行；每行 = 档位按钮（点即跑）；按钮显示当前选中模型 ----
         //   ★D-4：按 benchmark 结果在按钮标“⚡ 实时档”（选模型 RTF ≥ 门槛）。
         //   ★G-1b：未检测（无 benchmark 缓存）→ 门控：按钮禁用 + 提示先检测。
-        Text("分离", style = MaterialTheme.typography.titleMedium)
+        Text(stringResource(R.string.sep_title), style = MaterialTheme.typography.titleMedium)
         val settingsRepo = remember { SettingsRepository(app) }
         // benchmark 缓存（本机实测/内置免跑）→ 判断各档选中模型是否实时档。
         val benchRtf: Map<String, Float> = benchRtfAll.mapValues { it.value.rtf }

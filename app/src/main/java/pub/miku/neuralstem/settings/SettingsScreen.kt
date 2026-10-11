@@ -33,8 +33,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import pub.miku.neuralstem.R
 import pub.miku.neuralstem.player.PlayerViewModel
 import pub.miku.neuralstem.spike.ModelRegistry
 import pub.miku.neuralstem.spike.TierRegistry
@@ -79,41 +81,41 @@ fun SettingsScreen(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text("设备能力", style = MaterialTheme.typography.titleMedium)
+        Text(stringResource(R.string.settings_device), style = MaterialTheme.typography.titleMedium)
         Text(vm.deviceSummary(), style = MaterialTheme.typography.bodyMedium)
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(
                 onClick = { vm.invalidateAndRun(long = false) },
                 enabled = !st.benchmarking,
-            ) { Text(if (st.benchmarking) "检测中…" else "重新检测(短)") }
+            ) { Text(stringResource(if (st.benchmarking) R.string.settings_bench_running else R.string.settings_bench_short_run)) }
             Button(
                 onClick = { vm.invalidateAndRun(long = true) },
                 enabled = !st.benchmarking,
-            ) { Text("长测试(更准)") }
+            ) { Text(stringResource(R.string.settings_bench_long)) }
         }
         // ★G-1c：半态 UI —— 进行中显进度；有未测的已装模型 → “继续检测”（resume）。
         if (st.benchmarking && st.benchTotal > 0) {
             Text(
-                "已测 ${st.benchDone}/${st.benchTotal}" +
-                    (st.benchCurrentId?.let { " · 当前: $it" } ?: ""),
+                stringResource(R.string.settings_bench_progress, st.benchDone, st.benchTotal) +
+                    (st.benchCurrentId?.let { stringResource(R.string.settings_bench_current, it) } ?: ""),
                 style = MaterialTheme.typography.bodySmall,
             )
         }
         if (!st.benchmarking && st.installedPending > 0) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    "还有 ${st.installedPending} 个已装模型未测。",
+                    stringResource(R.string.settings_bench_pending, st.installedPending),
                     style = MaterialTheme.typography.bodySmall,
                 )
                 TextButton(onClick = { vm.runBenchmark(long = false, resume = true) }) {
-                    Text("继续检测")
+                    Text(stringResource(R.string.settings_bench_continue))
                 }
             }
         }
         if (!st.benchmarked && !st.benchmarking) {
             Text(
-                "尚未检测。未检测的模型默认归入「很慢」档。",
+                stringResource(R.string.settings_bench_none),
                 style = MaterialTheme.typography.bodySmall,
             )
         }
@@ -121,7 +123,7 @@ fun SettingsScreen(
         st.estimatedDefaultId?.let { id ->
             val name = ModelRegistry.byId(id)?.displayName ?: id
             Text(
-                "本机未收录，按比例预估推荐默认：$name（预估，非实测）",
+                stringResource(R.string.settings_estimated, name),
                 style = MaterialTheme.typography.bodySmall,
             )
         }
@@ -132,7 +134,7 @@ fun SettingsScreen(
         for (tier in SettingsViewModel.Tier.entries) {
             val rows = st.grouped[tier].orEmpty()
             if (rows.isEmpty()) continue
-            Text(tier.title, style = MaterialTheme.typography.titleMedium)
+            Text(tierTitle(tier), style = MaterialTheme.typography.titleMedium)
             for (row in rows) {
                 ModelCard(
                     row = row,
@@ -142,11 +144,13 @@ fun SettingsScreen(
                 )
             }
             Text(
-                when (tier) {
-                    SettingsViewModel.Tier.REALTIME -> "默认引擎只能从本档选择。"
-                    SettingsViewModel.Tier.SLOW -> "较慢：长篇会等一会儿。"
-                    SettingsViewModel.Tier.VERY_SLOW -> "很慢：需等待，不建议作为默认。"
-                },
+                stringResource(
+                    when (tier) {
+                        SettingsViewModel.Tier.REALTIME -> R.string.settings_tier_realtime_hint
+                        SettingsViewModel.Tier.SLOW -> R.string.settings_tier_slow_hint
+                        SettingsViewModel.Tier.VERY_SLOW -> R.string.settings_tier_veryslow_hint
+                    },
+                ),
                 style = MaterialTheme.typography.bodySmall,
             )
         }
@@ -160,13 +164,12 @@ fun SettingsScreen(
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             Column {
-                Text("均衡器(EQ)", style = MaterialTheme.typography.titleMedium)
+                Text(stringResource(R.string.settings_eq_title), style = MaterialTheme.typography.titleMedium)
                 Text(
-                    if (playerVm.state.collectAsState().value.eqAvailable) {
-                        "硬件支持"
-                    } else {
-                        "未挂载(播放后生效)"
-                    },
+                    stringResource(
+                        if (playerVm.state.collectAsState().value.eqAvailable) R.string.settings_eq_supported
+                        else R.string.settings_eq_not_mounted,
+                    ),
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
@@ -207,9 +210,9 @@ private fun DeckTurnSetting() {
     var sec by remember { mutableIntStateOf(repo.deckSecondsPerTurn) }
 
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text("转盘一圈时长", style = MaterialTheme.typography.titleMedium)
+        Text(stringResource(R.string.settings_deck_turn), style = MaterialTheme.typography.titleMedium)
         Text(
-            "当前 $sec 秒（1.0× 时；实际一圈 = $sec ÷ 速度）",
+            stringResource(R.string.settings_deck_turn_value, sec, sec),
             style = MaterialTheme.typography.bodySmall,
         )
         Slider(
@@ -239,9 +242,9 @@ private fun SpeedRangeSetting() {
     var x by remember { mutableFloatStateOf(repo.speedRangeX) }
 
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text("速度范围", style = MaterialTheme.typography.titleMedium)
+        Text(stringResource(R.string.settings_speed_range), style = MaterialTheme.typography.titleMedium)
         Text(
-            "X = %.1f  →  速度区间 [%.2fx, %.2fx]".format(x, 1f / x, x),
+            stringResource(R.string.settings_speed_range_value, x, 1f / x, x),
             style = MaterialTheme.typography.bodySmall,
         )
         Slider(
@@ -257,12 +260,21 @@ private fun SpeedRangeSetting() {
             modifier = Modifier.fillMaxWidth(),
         )
         Text(
-            "X 同时决定速度滑块的上下限（下限 = 1/X）。默认 1.4 → [0.71, 1.40]。",
+            stringResource(R.string.settings_speed_range_hint),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }
+
+@Composable
+private fun tierTitle(tier: SettingsViewModel.Tier): String = stringResource(
+    when (tier) {
+        SettingsViewModel.Tier.REALTIME -> R.string.settings_tier_realtime
+        SettingsViewModel.Tier.SLOW -> R.string.settings_tier_slow
+        SettingsViewModel.Tier.VERY_SLOW -> R.string.settings_tier_veryslow
+    },
+)
 
 @Composable
 private fun ModelCard(
@@ -287,12 +299,12 @@ private fun ModelCard(
                 Text(
                     buildString {
                         append(row.spec.displayName)
-                        if (!row.installed) append("  ·  未安装")
+                        if (!row.installed) append(stringResource(R.string.settings_model_not_installed))
                     },
                     style = MaterialTheme.typography.bodyLarge,
                 )
                 Text(
-                    "${row.spec.sizeMb}MB · ${row.spec.purpose} · 实测 ${row.rtfText}",
+                    stringResource(R.string.settings_model_row, row.spec.sizeMb, row.spec.purpose.toString(), row.rtfText),
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
@@ -305,14 +317,11 @@ private fun ModelCard(
 private fun BenchmarkPrompt(onRunNow: () -> Unit) {
     AlertDialog(
         onDismissRequest = { /* 不可取消：必须检测 */ },
-        title = { Text("首次使用需检测设备性能") },
+        title = { Text(stringResource(R.string.settings_prompt_title)) },
         text = {
-            Text(
-                "为只把「实时可用」的模型作为默认，首次使用需检测本机运行各分离模型的速度。\n" +
-                    "检测很快(数秒)，期间请勿退出。检测完成前无法使用分离功能。",
-            )
+            Text(stringResource(R.string.settings_prompt_body))
         },
-        confirmButton = { TextButton(onClick = onRunNow) { Text("现在检测") } },
+        confirmButton = { TextButton(onClick = onRunNow) { Text(stringResource(R.string.settings_prompt_run)) } },
     )
 }
 
@@ -331,9 +340,9 @@ private fun TierModelSetting() {
     if (tierRows.isEmpty()) return
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("分离档位模型", style = MaterialTheme.typography.titleMedium)
+        Text(stringResource(R.string.settings_tier_models), style = MaterialTheme.typography.titleMedium)
         Text(
-            "单模型档（快速 / 4轨）无需选择；下面只列出有多候选的档。",
+            stringResource(R.string.settings_tier_models_hint),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
