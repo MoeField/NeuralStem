@@ -15,8 +15,10 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import pub.miku.neuralstem.R
 
 /**
  * 多轨混音面板(Task 4.4,guide F4.2/F4.3)。
@@ -49,8 +51,8 @@ fun TrackMixerPanel(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text("多轨混音", style = MaterialTheme.typography.titleSmall)
-                FilledTonalButton(onClick = onExit) { Text("退出多轨") }
+                Text(stringResource(R.string.track_mixer_title), style = MaterialTheme.typography.titleSmall)
+                FilledTonalButton(onClick = onExit) { Text(stringResource(R.string.track_exit)) }
             }
 
             tracks.forEach { track ->
@@ -80,10 +82,10 @@ fun TrackMixerPanel(
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         // F4.3 静音 / 独奏(两按钮均为切换态,不置灰)
                         FilledTonalButton(onClick = { onToggleMute(track.id) }) {
-                            Text(if (track.muted) "已静音" else "静音")
+                            Text(stringResource(if (track.muted) R.string.track_muted else R.string.track_mute))
                         }
                         FilledTonalButton(onClick = { onToggleSolo(track.id) }) {
-                            Text(if (track.solo) "取消独奏" else "独奏")
+                            Text(stringResource(if (track.solo) R.string.track_unsolo else R.string.track_solo))
                         }
                     }
                 }

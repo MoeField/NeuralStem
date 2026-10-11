@@ -14,8 +14,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import pub.miku.neuralstem.R
 
 /**
  * **混音页**（★方案1：**EQ + 分轨混音** 合并）。
@@ -39,10 +41,10 @@ fun MixScreen(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text("混音", style = MaterialTheme.typography.titleLarge)
+        Text(stringResource(R.string.mix_title), style = MaterialTheme.typography.titleLarge)
 
         // ---- 分轨混音（多轨时；否则提示去分离）----
-        Text("分轨混音", style = MaterialTheme.typography.titleMedium)
+        Text(stringResource(R.string.mix_tracks), style = MaterialTheme.typography.titleMedium)
         if (state.isMultiTrack && state.tracks.isNotEmpty()) {
             TrackMixerPanel(
                 tracks = state.tracks,
@@ -53,7 +55,7 @@ fun MixScreen(
             )
         } else {
             Text(
-                "分轨混音：尚未分离。请先在「分离」页分离当前曲。",
+                stringResource(R.string.mix_tracks_empty),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -62,7 +64,7 @@ fun MixScreen(
         HorizontalDivider()
 
         // ---- 均衡器（EQ）----
-        Text("均衡器 (EQ)", style = MaterialTheme.typography.titleMedium)
+        Text(stringResource(R.string.mix_eq), style = MaterialTheme.typography.titleMedium)
         EqPanel(
             available = state.eqAvailable,
             enabled = state.eqEnabled,
@@ -75,7 +77,7 @@ fun MixScreen(
         )
         if (state.eqAvailable && !state.eqEnabled) {
             Text(
-                "提示：直接拖动任意频段即可开启 EQ（默认微笑曲线：低/高音各 +3dB）。",
+                stringResource(R.string.mix_eq_hint),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

@@ -42,7 +42,16 @@
     <string name="mix_tracks">Track mixer</string>
     <string name="mix_tracks_empty">Track mixer: not separated yet. Separate the current song on the “Separate” page first.</string>
     <string name="mix_eq">Equalizer (EQ)</string>
+    <string name="mix_eq_hint">Tip: drag any band to enable EQ (default smile curve: +3 dB on low/high).</string>
     <string name="eq_enable">Enable EQ</string>
     <string name="eq_reset">Reset EQ</string>
     <string name="eq_not_ready">Not ready: play a song to enable EQ.</string>
+
+    <!-- Track mixer panel -->
+    <string name="track_mixer_title">Multi-track mixer</string>
+    <string name="track_exit">Exit multi-track</string>
+    <string name="track_mute">Mute</string>
+    <string name="track_muted">Muted</string>
+    <string name="track_solo">Solo</string>
+    <string name="track_unsolo">Un-solo</string>
 </resources>

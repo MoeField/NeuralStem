@@ -42,7 +42,16 @@
     <string name="mix_tracks">分轨混音</string>
     <string name="mix_tracks_empty">分轨混音：尚未分离。请先在「分离」页分离当前曲。</string>
     <string name="mix_eq">均衡器 (EQ)</string>
+    <string name="mix_eq_hint">提示：直接拖动任意频段即可开启 EQ（默认微笑曲线：低/高音各 +3dB）。</string>
     <string name="eq_enable">启用 EQ</string>
     <string name="eq_reset">重置 EQ</string>
     <string name="eq_not_ready">尚未就绪：播放一首歌后 EQ 可用。</string>
+
+    <!-- 多轨混音面板 -->
+    <string name="track_mixer_title">多轨混音</string>
+    <string name="track_exit">退出多轨</string>
+    <string name="track_mute">静音</string>
+    <string name="track_muted">已静音</string>
+    <string name="track_solo">独奏</string>
+    <string name="track_unsolo">取消独奏</string>
 </resources>
