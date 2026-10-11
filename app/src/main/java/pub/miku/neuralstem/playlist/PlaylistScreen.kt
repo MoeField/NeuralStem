@@ -100,8 +100,8 @@ fun PlaylistScreen(
         modifier = modifier.fillMaxSize().padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Text(stringResource(R.string.pl_title), style = MaterialTheme.typography.titleLarge)
-
+        // ★⑩：去掉顶部"歌单"大标题（底栏已有"歌单"tab，避免重复）。
+        //   三件（新列表名 / 新建 / 选择文件夹导入）挤一行。
         Row(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -119,10 +119,11 @@ fun PlaylistScreen(
                         vm.createList(newName.trim()); newName = ""
                     }
                 },
-            ) { Text(stringResource(R.string.pl_create)) }
+            ) { Text(stringResource(R.string.pl_create), maxLines = 1) }
+            Button(onClick = { pickFolder.launch(null) }) {
+                Text(stringResource(R.string.pl_import_folder), maxLines = 1)
+            }
         }
-
-        Button(onClick = { pickFolder.launch(null) }) { Text(stringResource(R.string.pl_import_folder)) }
 
         HorizontalDivider()
 

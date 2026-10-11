@@ -100,7 +100,6 @@
     <string name="track_unsolo">Un-solo</string>
 
     <!-- Playlists page -->
-    <string name="pl_title">Playlists</string>
     <string name="pl_new_name">New list name</string>
     <string name="pl_create">Create</string>
     <string name="pl_import_folder">Import folder</string>
