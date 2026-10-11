@@ -20,7 +20,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import pub.miku.neuralstem.R
 
 /**
  * 阶段 UI / U4：**均衡器面板**（成熟设计：多段滑块 + 开关 + 重置）。
@@ -52,7 +54,7 @@ fun EqPanel(
             // ★修复：`available=false` 多数情况是“**尚未播放**（无 audio 会话）”，不是“不支持”。
             //   用中性色（非 error）提示，避免误报“本机不支持”。
             Text(
-                "尚未就绪：播放一首歌后 EQ 可用。",
+                stringResource(R.string.eq_not_ready),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -64,7 +66,7 @@ fun EqPanel(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("启用 EQ", style = MaterialTheme.typography.bodyMedium)
+            Text(stringResource(R.string.eq_enable), style = MaterialTheme.typography.bodyMedium)
             Switch(checked = enabled, onCheckedChange = onEnabledChange)
         }
 
@@ -132,7 +134,7 @@ fun EqPanel(
                 onReset()
             },
             enabled = true,   // ★始终可用
-        ) { Text("重置 EQ") }
+        ) { Text(stringResource(R.string.eq_reset)) }
     }
 }
 

@@ -39,10 +39,12 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.flow.StateFlow
+import pub.miku.neuralstem.R
 import pub.miku.neuralstem.settings.SettingsRepository
 
 /**
@@ -99,7 +101,7 @@ fun PlayerScreen(
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Text(
-            state.fileName.ifEmpty { "尚未导入音频" },
+            state.fileName.ifEmpty { stringResource(R.string.player_no_media) },
             style = MaterialTheme.typography.titleMedium,
             maxLines = 1,
             textAlign = TextAlign.Center,
@@ -110,15 +112,15 @@ fun PlayerScreen(
             if (importEnabled) {
                 Button(onClick = {
                     pickAudio.launch(arrayOf("audio/*", "application/ogg", "application/x-flac"))
-                }) { Text("导入音频") }
+                }) { Text(stringResource(R.string.player_import)) }
             }
 
             Button(
                 onClick = vm::togglePlayPause,
                 enabled = state.hasMedia,
-            ) { Text(if (state.playWhenReady) "暂停" else "播放") }
+            ) { Text(stringResource(if (state.playWhenReady) R.string.player_pause else R.string.player_play)) }
 
-            Button(onClick = onOpenSpike) { Text("Spike 分离") }
+            Button(onClick = onOpenSpike) { Text(stringResource(R.string.player_spike)) }
         }
 
         if (state.hasMedia) {
@@ -199,7 +201,7 @@ private fun DeckArea(
                 logScale = true,
             )
             Text(
-                "重置",
+                stringResource(R.string.player_reset),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.primary,
                 modifier = Modifier
@@ -262,7 +264,7 @@ private fun ControlsArea(
             Button(onClick = { vm.seekTo((vm.progress.positionMs - 10_000).coerceAtLeast(0)) }) {
                 Text("⏪", style = MaterialTheme.typography.titleMedium)
             }
-            Button(onClick = vm::togglePlayPause) { Text(if (state.playWhenReady) "暂停" else "播放") }
+            Button(onClick = vm::togglePlayPause) { Text(stringResource(if (state.playWhenReady) R.string.player_pause else R.string.player_play)) }
             Button(onClick = { vm.seekTo(vm.progress.positionMs + 10_000) }) {
                 Text("⏩", style = MaterialTheme.typography.titleMedium)
             }
@@ -294,7 +296,7 @@ private fun ControlsArea(
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             Text(
-                if (state.separationOn) "分离开关：多轨" else "分离开关：原曲",
+                stringResource(if (state.separationOn) R.string.player_sep_on else R.string.player_sep_off),
                 style = MaterialTheme.typography.bodyMedium,
             )
             Switch(
@@ -303,7 +305,7 @@ private fun ControlsArea(
             )
         }
         Text(
-            "去「分离」页处理 →",
+            stringResource(R.string.player_go_separate),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.primary,
             modifier = Modifier
