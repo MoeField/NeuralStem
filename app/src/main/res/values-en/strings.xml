@@ -31,6 +31,23 @@
     <string name="sep_cancel">Cancel</string>
     <string name="sep_clear_cache">Clear cache</string>
     <string name="sep_export">Export to Music/separate/</string>
+    <string name="sep_switch_title">Separation switch</string>
+    <string name="sep_state_multi">Current: multi-track</string>
+    <string name="sep_state_orig">Current: original</string>
+    <string name="sep_gate_hint">⚠ Benchmark your device first (Settings → “Detect now”) before choosing a separation tier.</string>
+    <string name="sep_stem_two">2 stems (vocals+accompaniment)</string>
+    <string name="sep_stem_four">4 stems (vocals/drums/bass/other)</string>
+    <string name="sep_preparing">Preparing…</string>
+    <string name="sep_running_pct">Separating %1$d%%</string>
+    <string name="sep_done_cache">✅ Cache hit (no re-inference)</string>
+    <string name="sep_done">✅ Separation done</string>
+    <string name="sep_done4_cache">✅ 4-stem cache hit</string>
+    <string name="sep_done4">✅ 4-stem done</string>
+    <string name="sep_failed">❌ %1$s</string>
+    <string name="sep_cancelled">Separation cancelled</string>
+    <string name="sep_cache_cleared">Cleared %1$d cache item(s)</string>
+    <string name="sep_cache_busy">Separation in progress, cannot clear</string>
+    <string name="sep_uri_unreadable">Cannot read current track (URI not accessible)</string>
 
     <!-- Settings -->
     <string name="settings_title">Settings</string>

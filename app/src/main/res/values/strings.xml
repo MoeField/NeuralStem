@@ -31,6 +31,23 @@
     <string name="sep_cancel">取消分离</string>
     <string name="sep_clear_cache">清理缓存</string>
     <string name="sep_export">导出到 Music/separate/</string>
+    <string name="sep_switch_title">分离开关</string>
+    <string name="sep_state_multi">当前：多轨</string>
+    <string name="sep_state_orig">当前：原曲</string>
+    <string name="sep_gate_hint">⚠ 首次使用需先检测设备性能（设置页 → “现在检测”），才能选用分离档位。</string>
+    <string name="sep_stem_two">2 轨（人声+伴奏）</string>
+    <string name="sep_stem_four">4 轨（人声/鼓/贝斯/其他）</string>
+    <string name="sep_preparing">准备中…</string>
+    <string name="sep_running_pct">分离中 %1$d%%</string>
+    <string name="sep_done_cache">✅ 命中缓存（未重新推理）</string>
+    <string name="sep_done">✅ 分离完成</string>
+    <string name="sep_done4_cache">✅ 4-stem 命中缓存</string>
+    <string name="sep_done4">✅ 4-stem 完成</string>
+    <string name="sep_failed">❌ %1$s</string>
+    <string name="sep_cancelled">分离已取消</string>
+    <string name="sep_cache_cleared">已清理 %1$d 项缓存</string>
+    <string name="sep_cache_busy">分离进行中，无法清理</string>
+    <string name="sep_uri_unreadable">无法读取当前曲目（Uri 不可访问）</string>
 
     <!-- 设置 -->
     <string name="settings_title">设置</string>

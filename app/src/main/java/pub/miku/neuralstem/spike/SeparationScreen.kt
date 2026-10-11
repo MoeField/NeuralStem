@@ -31,9 +31,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.launch
+import pub.miku.neuralstem.R
 import pub.miku.neuralstem.export.StemExporter
 import pub.miku.neuralstem.player.SeparationTask
 import pub.miku.neuralstem.settings.SettingsRepository
@@ -117,7 +119,7 @@ fun SeparationScreen(
         scope.launch {
             val src = CurrentTrackBridge.toFile(app, uri)
             if (src == null) {
-                cacheMsg = "无法读取当前曲目（Uri 不可访问）"
+                cacheMsg = app.getString(R.string.sep_uri_unreadable)
                 return@launch
             }
             val repo = SettingsRepository(app)
@@ -131,12 +133,12 @@ fun SeparationScreen(
         modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text("分离", style = MaterialTheme.typography.titleLarge)
+        Text(stringResource(R.string.sep_title), style = MaterialTheme.typography.titleLarge)
 
         // ---- 当前曲目 ----
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
-                "当前曲目",
+                stringResource(R.string.sep_current),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -154,7 +156,7 @@ fun SeparationScreen(
                 )
             } else {
                 Text(
-                    "先在播放器导入并播放一首歌",
+                    stringResource(R.string.sep_no_song),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.error,
                 )
@@ -168,9 +170,9 @@ fun SeparationScreen(
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text("分离开关", style = MaterialTheme.typography.titleSmall)
+                Text(stringResource(R.string.sep_switch_title), style = MaterialTheme.typography.titleSmall)
                 Text(
-                    if (separationOn) "当前：多轨" else "当前：原曲",
+                    stringResource(if (separationOn) R.string.sep_state_multi else R.string.sep_state_orig),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -192,7 +194,7 @@ fun SeparationScreen(
         // ★G-1b：未检测 → 门控提示（档位按钮保持可见但禁用，引导去检测）。
         if (!benchmarked) {
             Text(
-                "⚠ 首次使用需先检测设备性能（设置页 → “现在检测”），才能选用分离档位。",
+                stringResource(R.string.sep_gate_hint),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.error,
             )
@@ -200,7 +202,7 @@ fun SeparationScreen(
         TierRegistry.ALL.groupBy { it.stem }.forEach { (stem, rows) ->
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
-                    (if (stem == StemCount.TWO) "2 轨（人声+伴奏）" else "4 轨（人声/鼓/贝斯/其他）"),
+                    stringResource(if (stem == StemCount.TWO) R.string.sep_stem_two else R.string.sep_stem_four),
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -234,37 +236,37 @@ fun SeparationScreen(
 
         // ---- 进度 / 结果（★3a-2：**单一真源** separationTask；不再并列读 spikeState + repoState）----
         when (val t = separationTask) {
-            is SeparationTask.Preparing -> Text("准备中…")
+            is SeparationTask.Preparing -> Text(stringResource(R.string.sep_preparing))
             is SeparationTask.Running -> {
                 LinearProgressIndicator(
                     progress = { t.percent / 100f },
                     modifier = Modifier.fillMaxWidth(),
                 )
-                Text("分离中 ${t.percent}%")
+                Text(stringResource(R.string.sep_running_pct, t.percent))
             }
             is SeparationTask.Done2 -> Text(
-                if (t.fromCache) "✅ 命中缓存（未重新推理）" else "✅ 分离完成",
+                stringResource(if (t.fromCache) R.string.sep_done_cache else R.string.sep_done),
                 color = MaterialTheme.colorScheme.primary,
             )
             is SeparationTask.Done4 -> {
                 Text(
-                    if (t.fromCache) "✅ 4-stem 命中缓存" else "✅ 4-stem 完成",
+                    stringResource(if (t.fromCache) R.string.sep_done4_cache else R.string.sep_done4),
                     color = MaterialTheme.colorScheme.primary,
                 )
                 // ★U7：导出到 Music/separate/<歌名>/（WAV，不含 EQ/音量）。
                 Button(onClick = {
                     exportMsg = StemExporter.export(app, fileName.ifBlank { "song" }, t.stemFiles)
-                }) { Text("导出到 Music/separate/") }
+                }) { Text(stringResource(R.string.sep_export)) }
                 exportMsg?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
             }
             is SeparationTask.Failed ->
-                Text("❌ ${t.message}", color = MaterialTheme.colorScheme.error)
+                Text(stringResource(R.string.sep_failed, t.message), color = MaterialTheme.colorScheme.error)
             SeparationTask.Cancelled ->
-                Text("分离已取消", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(stringResource(R.string.sep_cancelled), color = MaterialTheme.colorScheme.onSurfaceVariant)
             SeparationTask.Idle -> Unit
         }
         if (busy) {
-            Button(onClick = { vm.cancelSeparation() }) { Text("取消分离") }
+            Button(onClick = { vm.cancelSeparation() }) { Text(stringResource(R.string.sep_cancel)) }
         }
 
         HorizontalDivider()
@@ -274,8 +276,9 @@ fun SeparationScreen(
         ) {
             Button(onClick = {
                 val n = vm.clearCache()
-                cacheMsg = if (n < 0) "分离进行中,无法清理" else "已清理 $n 项缓存"
-            }) { Text("清理缓存") }
+                cacheMsg = if (n < 0) app.getString(R.string.sep_cache_busy)
+                else app.getString(R.string.sep_cache_cleared, n)
+            }) { Text(stringResource(R.string.sep_clear_cache)) }
             cacheMsg?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
         }
     }
