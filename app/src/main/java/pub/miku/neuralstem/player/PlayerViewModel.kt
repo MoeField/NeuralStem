@@ -294,6 +294,9 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             val replay = pendingLoad
             pendingLoad = {}
             replay(c)
+            // ★⑧：冷启动续播——若仍无当前曲（Service 被冷杀后重建）→ 从落盘歌单进度恢复。
+            //   置于 replay 之后：若本次确实有待载入请求，已由 replay 处理，此处因“已有曲”跳过。
+            restoreLastSessionIfIdle()
             // M3/P2:重放连接前收到的多轨命令
             flushMtCommands(c)
         }, MoreExecutors.directExecutor())
@@ -324,6 +327,37 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         )
         Log.i(TAG, "P3: restoreFromSession → fileName=$title, uri=$uri")
     }
+
+    /**
+     * ★⑧：**冷启动续播**——若 Service 被彻底杀掉后重建（player 无当前曲），
+     * 则从持久化的歌单进度（[PlaylistStore] 的 `lastPlayedUri/lastPositionMs`）回填并续播。
+     *
+     * 与 [restoreFromSession] 的分工：
+     * - [restoreFromSession]：**Service 存活**、VM 重建 → 从 `currentMediaItem` 回填（本次不适用）。
+     * - 本方法：**Service 被冷杀** → `currentMediaItem == null` → 从**落盘歌单**回填并续播。
+     *
+     * 仅当**尚无当前曲**时动作（不干扰已有播放态）；无 lastPlayed 记录则 no-op。
+     */
+    private fun restoreLastSessionIfIdle() {
+        val c = mediaController ?: return
+        if (c.currentMediaItem != null) return   // 已有曲（含 P3 回填）→ 不干预
+        val lists = runCatching { playlistStore.load() }.getOrDefault(emptyList())
+        val target = pickRestoreTarget(lists, playlistStore.defaultListId) ?: run {
+            Log.i(TAG, "⑧: 无 lastPlayed 记录，冷启动保持空态")
+            return
+        }
+        Log.i(TAG, "⑧: 冷启动续播 → ${target.title} @ ${target.positionMs}ms (list=${target.listId}, idx=${target.index})")
+        playQueue(target.tracks, target.index, target.listId, target.positionMs)
+    }
+
+    /** 恢复目标（冷启动续播用）。 */
+    internal data class RestoreTarget(
+        val listId: String,
+        val index: Int,
+        val positionMs: Long,
+        val title: String,
+        val tracks: List<Pair<Uri, String>>,
+    )
 
     /** 把所有 UI 监听挂到 session 的 player 上(波形、播放态、错误)。 */
     private fun attachPlayerListeners(p: Player) {
@@ -1219,6 +1253,39 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
 
     companion object {
         private const val TAG = "PlayerVm"
+
+        /**
+         * ★⑧：**纯逻辑**——从歌单列表选冷启动续播目标（无副作用 → 可 JVM 单测）。
+         *
+         * 规则：
+         * 1. 优先**默认歌单**（冷启动时选中态 = 默认歌单）；
+         * 2. 默认歌单无 lastPlayed → 扫**其它**歌单，取第一个有 lastPlayed 的；
+         * 3. `lastPlayedUri` 在曲目里能定位 → 用它作 index；找不到 → 0；
+         * 4. 无任何 lastPlayed / 歌单空 → null。
+         *
+         * @param lists 全部歌单（[PlaylistStore.Playlist]）
+         * @param defaultListId 默认歌单 id
+         */
+        internal fun pickRestoreTarget(
+            lists: List<PlaylistStore.Playlist>,
+            defaultListId: String,
+        ): RestoreTarget? {
+            if (lists.isEmpty()) return null
+            val ordered = lists.sortedByDescending { it.id == defaultListId }   // 默认歌单优先
+            val pick = ordered.firstOrNull { !it.lastPlayedUri.isNullOrBlank() && it.tracks.isNotEmpty() }
+                ?: return null
+            val idx = pick.lastPlayedUri
+                ?.let { u -> pick.tracks.indexOfFirst { it.uri == u } }
+                ?.takeIf { it >= 0 } ?: 0
+            val pos = pick.lastPositionMs.coerceAtLeast(0L)
+            return RestoreTarget(
+                listId = pick.id,
+                index = idx,
+                positionMs = pos,
+                title = pick.tracks[idx].title,
+                tracks = pick.tracks.map { Uri.parse(it.uri) to it.title },
+            )
+        }
 
         /** ★防抖窗口（ms）：变速变调只保留最后一次下发（见 [applyPlaybackParameters]）。 */
         private const val PARAM_DEBOUNCE_MS = 150L
