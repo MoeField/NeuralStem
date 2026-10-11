@@ -62,9 +62,6 @@
     <string name="settings_bench_continue">Continue</string>
     <string name="settings_bench_none">Not detected yet. Untested models default to “very slow”.</string>
     <string name="settings_estimated">Not in built-in table; estimated default by ratio: %1$s (estimated, not measured)</string>
-    <string name="settings_eq_title">Equalizer (EQ)</string>
-    <string name="settings_eq_supported">Hardware supported</string>
-    <string name="settings_eq_not_mounted">Not mounted (active after playback)</string>
     <string name="settings_deck_turn">Deck seconds per turn</string>
     <string name="settings_deck_turn_value">Currently %1$d s (at 1.0×; real turn = %2$d ÷ speed)</string>
     <string name="settings_speed_range">Speed range</string>

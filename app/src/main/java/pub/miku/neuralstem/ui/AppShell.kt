@@ -1,5 +1,6 @@
 package pub.miku.neuralstem.ui
 
+import android.content.res.Configuration
 import android.net.Uri
 import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Arrangement
@@ -22,6 +23,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -78,10 +80,16 @@ fun AppShell(
     val selectedList = playlistLists.firstOrNull { it.id == selectedListId }
     val importEnabled = selectedList?.type == PlaylistStore.ListType.FILE
 
+    // ★⑨④：横屏时隐藏 App 顶部标题栏（太占地方）；竖屏保留。
+    val isLandscape =
+        LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
-            TopAppBar(title = { Text(stringResource(R.string.app_name)) })
+            if (!isLandscape) {
+                TopAppBar(title = { Text(stringResource(R.string.app_name)) })
+            }
         },
         bottomBar = {
             NavigationBar {
@@ -146,7 +154,6 @@ fun AppShell(
 
             AppDestination.SETTINGS -> SettingsScreen(
                 modifier = Modifier.fillMaxSize().padding(padding),
-                playerVm = playerVm,
             )
 
             // Step 4（范围B）：歌单页（列表管理 + 持久化）
