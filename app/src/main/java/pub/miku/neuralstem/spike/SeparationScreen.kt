@@ -133,7 +133,7 @@ fun SeparationScreen(
         modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text(stringResource(R.string.sep_title), style = MaterialTheme.typography.titleLarge)
+        // ★⑨③：去掉顶部页面大标题"分离"（页上方已有 App 标题栏 + 底栏 tab；留档位区小节标题）。
 
         // ---- 当前曲目 ----
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -216,19 +216,12 @@ fun SeparationScreen(
                         // ★D-4：选中模型的实测 RTF（未测/非 sherpa 模型 → null → 不标）。
                         val rtf = benchRtf[opt.id]
                         val realtime = rtf != null && rtf >= REALTIME_RTF
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Button(
-                                onClick = { startTier(tc) },
-                                enabled = hasSong && !busy && benchmarked,
-                            ) { Text(if (realtime) "⚡ ${tc.tier.label}" else tc.tier.label) }
-                            Text(
-                                opt.displayName +
-                                    (rtf?.let { " · %.2f×".format(it) } ?: ""),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = if (realtime) MaterialTheme.colorScheme.primary
-                                else MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
+                        // ★⑨②：每档只一个按钮（档名 + ⚡ 实时标记）；不再在下方显模型名小字
+                        //   （3 档不再换行；具体模型名在设置页看）。
+                        Button(
+                            onClick = { startTier(tc) },
+                            enabled = hasSong && !busy && benchmarked,
+                        ) { Text(if (realtime) "⚡ ${tc.tier.label}" else tc.tier.label) }
                     }
                 }
             }

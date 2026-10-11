@@ -62,9 +62,6 @@
     <string name="settings_bench_continue">继续检测</string>
     <string name="settings_bench_none">尚未检测。未检测的模型默认归入「很慢」档。</string>
     <string name="settings_estimated">本机未收录，按比例预估推荐默认：%1$s（预估，非实测）</string>
-    <string name="settings_eq_title">均衡器(EQ)</string>
-    <string name="settings_eq_supported">硬件支持</string>
-    <string name="settings_eq_not_mounted">未挂载(播放后生效)</string>
     <string name="settings_deck_turn">转盘一圈时长</string>
     <string name="settings_deck_turn_value">当前 %1$d 秒（1.0× 时；实际一圈 = %2$d ÷ 速度）</string>
     <string name="settings_speed_range">速度范围</string>

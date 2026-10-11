@@ -18,7 +18,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -37,7 +36,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import pub.miku.neuralstem.R
-import pub.miku.neuralstem.player.PlayerViewModel
 import pub.miku.neuralstem.spike.ModelRegistry
 import pub.miku.neuralstem.spike.TierRegistry
 
@@ -48,13 +46,13 @@ import pub.miku.neuralstem.spike.TierRegistry
  * - 设备能力摘要 + [重新检测(短)] / [长测试]
  * - 模型按 RTF 分三档展示（⚡ 实时 / ⏱ 较慢 / 🐢 很慢），显示体积/用途/预计耗时
  * - 默认引擎选择（**仅"实时可用"档**可选）
- * - EQ 开关（转发给 [PlayerViewModel]）
- * - 首启 benchmark 弹窗（非强制，见 [BenchmarkPrompt]）
+ * - 首启 benchmark 弹窗（强制，见 [BenchmarkPrompt]）
+ *
+ * 注：★⑨ EQ 开关已从本页移除（EQ 仅由「混音」页提供）。
  */
 @Composable
 fun SettingsScreen(
     modifier: Modifier = Modifier,
-    playerVm: PlayerViewModel,
     vm: SettingsViewModel = viewModel(),
 ) {
     val st by vm.state.collectAsState()
@@ -155,33 +153,7 @@ fun SettingsScreen(
             )
         }
 
-        HorizontalDivider()
-
-        // EQ 开关
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Column {
-                Text(stringResource(R.string.settings_eq_title), style = MaterialTheme.typography.titleMedium)
-                Text(
-                    stringResource(
-                        if (playerVm.state.collectAsState().value.eqAvailable) R.string.settings_eq_supported
-                        else R.string.settings_eq_not_mounted,
-                    ),
-                    style = MaterialTheme.typography.bodySmall,
-                )
-            }
-            Switch(
-                checked = st.eqEnabled,
-                onCheckedChange = {
-                    vm.setEqEnabled(it)
-                    playerVm.setEqEnabled(it)
-                },
-            )
-        }
-
+        // （★⑨：设置页 EQ 开关已移除 —— EQ 仅在「混音」页提供，避免双源开关。）
         HorizontalDivider()
 
         // Step5：转盘一圈时长
