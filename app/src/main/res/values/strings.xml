@@ -100,7 +100,6 @@
     <string name="track_unsolo">取消独奏</string>
 
     <!-- 歌单页 -->
-    <string name="pl_title">歌单</string>
     <string name="pl_new_name">新列表名</string>
     <string name="pl_create">新建</string>
     <string name="pl_import_folder">选择文件夹导入</string>

@@ -125,16 +125,35 @@ fun PlayerScreen(
 
         if (state.hasMedia) {
             if (isLandscape) {
-                // ★F5.2：横屏 —— 转盘（左）‖ 控制（右）
+                // ★⑧F5.2/⑩：横屏 —— **三栏**：左(音高+速度竖条) ‖ 中(大圆盘) ‖ 右(控制/分离开关)。
+                //   左栏固定窄宽（不随比例缩放，否则竖条放不下）；中/右各 weight 1f。
                 Row(
                     modifier = Modifier.fillMaxWidth().weight(1f),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    DeckArea(
-                        modifier = Modifier.weight(1.2f).fillMaxHeight(),
-                        state = state, vm = vm, secPerTurn = secPerTurn,
-                        speedRange = speedRange, haptic = haptic, progressFlow = progressFlow,
+                    PitchSpeedColumn(
+                        modifier = Modifier.width(72.dp).fillMaxHeight(),
+                        state = state, vm = vm, speedRange = speedRange, haptic = haptic,
+                    )
+                    DeckView(
+                        modifier = Modifier.weight(1f).fillMaxHeight(),
+                        waveformProvider = { state.waveform },
+                        cover = state.cover,
+                        songName = state.fileName,
+                        progressFlow = progressFlow,
+                        anchorFlow = vm.anchorFlow,
+                        speed = state.speed,
+                        isPlaying = state.isPlaying,
+                        secPerTurn = secPerTurn,
+                        onTogglePlayPause = vm::togglePlayPause,
+                        onPrev = { vm.playPrev() },
+                        onNext = { vm.playNext() },
+                        onSeekFraction = { f ->
+                            val d = progressFlow.value.durationMs
+                            val dur = if (d > 0) d else state.durationMs
+                            if (dur > 0) vm.seekTo((f * dur).toLong())
+                        },
                     )
                     ControlsArea(
                         modifier = Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()),
@@ -157,6 +176,67 @@ fun PlayerScreen(
             }
         }
         // ★方案1：「分轨混音」已移到**混音页**（转盘/速度条因此恢复大尺寸）。
+    }
+}
+
+/**
+ * ★⑩：横屏左栏 —— **音高条 + 速度条左右并排**（固定窄宽）+ “重置”。
+ *
+ * 为何横屏把音高从旋钮换成**竖条**：竖向空间充裕、横向紧张，竖条更能利用高度且占地小。
+ * 复用现有 [VerticalSlider]（支持 label / snapTargets / logScale）。
+ */
+@Composable
+private fun PitchSpeedColumn(
+    modifier: Modifier,
+    state: PlayerViewModel.PlayerState,
+    vm: PlayerViewModel,
+    speedRange: ClosedFloatingPointRange<Float>,
+    haptic: HapticFeedback,
+) {
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        // 两根竖条并排：音高（半音）| 速度（对数，1.0× 居中）
+        Row(
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            VerticalSlider(
+                modifier = Modifier.weight(1f).fillMaxHeight(),
+                value = state.pitchSemitones,
+                onValueChange = vm::setPitchSemitones,
+                valueRange = -12f..12f,
+                label = { "%+.0f".format(it) },
+                snapTargets = listOf(0f),
+                snapTolerance = 0.5f,
+            )
+            VerticalSlider(
+                modifier = Modifier.weight(1f).fillMaxHeight(),
+                value = state.speed,
+                onValueChange = { v ->
+                    if (v == 1f && state.speed != 1f) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    vm.setSpeed(v)
+                },
+                valueRange = speedRange,
+                label = { "%.2fx".format(it) },
+                snapTargets = listOf(1f),
+                snapTolerance = 0.06f,
+                logScale = true,
+            )
+        }
+        Text(
+            stringResource(R.string.player_reset),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { vm.resetSpeedPitch() }
+                .padding(vertical = 2.dp),
+            textAlign = TextAlign.Center,
+        )
     }
 }
 
