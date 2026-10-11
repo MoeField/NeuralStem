@@ -53,6 +53,36 @@
     <string name="settings_title">设置</string>
     <string name="settings_device">设备能力</string>
     <string name="settings_about">关于</string>
+    <string name="settings_bench_running">检测中…</string>
+    <string name="settings_bench_short_run">重新检测(短)</string>
+    <string name="settings_bench_long">长测试(更准)</string>
+    <string name="settings_bench_progress">已测 %1$d/%2$d</string>
+    <string name="settings_bench_current"> · 当前: %1$s</string>
+    <string name="settings_bench_pending">还有 %1$d 个已装模型未测。</string>
+    <string name="settings_bench_continue">继续检测</string>
+    <string name="settings_bench_none">尚未检测。未检测的模型默认归入「很慢」档。</string>
+    <string name="settings_estimated">本机未收录，按比例预估推荐默认：%1$s（预估，非实测）</string>
+    <string name="settings_eq_title">均衡器(EQ)</string>
+    <string name="settings_eq_supported">硬件支持</string>
+    <string name="settings_eq_not_mounted">未挂载(播放后生效)</string>
+    <string name="settings_deck_turn">转盘一圈时长</string>
+    <string name="settings_deck_turn_value">当前 %1$d 秒（1.0× 时；实际一圈 = %2$d ÷ 速度）</string>
+    <string name="settings_speed_range">速度范围</string>
+    <string name="settings_speed_range_value">X = %1$.1f  →  速度区间 [%2$.2fx, %3$.2fx]</string>
+    <string name="settings_speed_range_hint">X 同时决定速度滑块的上下限（下限 = 1/X）。默认 1.4 → [0.71, 1.40]。</string>
+    <string name="settings_prompt_title">首次使用需检测设备性能</string>
+    <string name="settings_prompt_body">为只把「实时可用」的模型作为默认，首次使用需检测本机运行各分离模型的速度。\n检测很快(数秒)，期间请勿退出。检测完成前无法使用分离功能。</string>
+    <string name="settings_prompt_run">现在检测</string>
+    <string name="settings_tier_models">分离档位模型</string>
+    <string name="settings_tier_models_hint">单模型档（快速 / 4轨）无需选择；下面只列出有多候选的档。</string>
+    <string name="settings_model_not_installed">  ·  未安装</string>
+    <string name="settings_model_row">%1$dMB · %2$s · 实测 %3$s</string>
+    <string name="settings_tier_realtime">⚡ 实时可用</string>
+    <string name="settings_tier_slow">⏱ 较慢</string>
+    <string name="settings_tier_veryslow">🐢 很慢</string>
+    <string name="settings_tier_realtime_hint">默认引擎只能从本档选择。</string>
+    <string name="settings_tier_slow_hint">较慢：长篇会等一会儿。</string>
+    <string name="settings_tier_veryslow_hint">很慢：需等待，不建议作为默认。</string>
 
     <!-- 混音页（EQ + 分轨混音） -->
     <string name="mix_title">混音</string>
