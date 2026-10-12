@@ -49,9 +49,6 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.flow.StateFlow
 import pub.miku.neuralstem.R
 import pub.miku.neuralstem.settings.SettingsRepository
-import pub.miku.neuralstem.spike.StemCount
-import pub.miku.neuralstem.spike.Tier
-import pub.miku.neuralstem.spike.TierRegistry
 
 /**
  * 播放页（**Step 6：R 系列转盘布局**；**F5.2：横屏双栏**）。
@@ -69,18 +66,16 @@ fun PlayerScreen(
     importEnabled: Boolean = true,
     // ★R2：导入成功后通知宿主（→ 追加进当前选中歌单）。
     onImported: (Uri, String) -> Unit = { _, _ -> },
-    // ★⑭a：无分离结果时，分离开关开启 → 宿主导航到「分离」页并触发该档（StemCount, Tier）。
-    onRequestTier: (StemCount, Tier) -> Unit = { _, _ -> },
 ) {
     val state by vm.state.collectAsState()
     // ★F5.4：触感反馈（分离完成在分离页；这里用于 1.0× 吸附）。
     val haptic = LocalHapticFeedback.current
-    // ★⑭a：无分离结果时点开关 → 弹“选分离档位”对话框。
-    var showTierDialog by remember { mutableStateOf(false) }
-    // ★⑭a：分离开关切换——开且无结果 → 弹档位；否则直接切。
+    // ★⑮-1：无分离结果时点开关 → 弹**简提示**（不再选档位）；确定后跳「分离」页。
+    var showNoSepDialog by remember { mutableStateOf(false) }
+    // ★⑭a/⑮-1：分离开关切换——开且无结果 → 弹提示；否则直接切。
     val onSeparationToggle: (Boolean) -> Unit = { on ->
         val ok = vm.toggleSeparation(on)
-        if (on && !ok) showTierDialog = true
+        if (on && !ok) showNoSepDialog = true
     }
     // ★ 进度流传引用即可（子组件内部 collect）。
     val progressFlow = vm.progressFlow
@@ -197,54 +192,23 @@ fun PlayerScreen(
         // ★方案1：「分轨混音」已移到**混音页**（转盘/速度条因此恢复大尺寸）。
     }
 
-    // ★⑭a：无分离结果时选档位 → 导航到「分离」页并触发该档。
-    if (showTierDialog) {
-        TierPickerDialog(
-            onDismiss = { showTierDialog = false },
-            onPick = { stem, tier ->
-                showTierDialog = false
-                onRequestTier(stem, tier)
+    // ★⑮-1：无分离结果时的**简提示**——确定即跳「分离」页（档位在那里选）。
+    if (showNoSepDialog) {
+        AlertDialog(
+            onDismissRequest = { showNoSepDialog = false },
+            title = { Text(stringResource(R.string.sep_none_title)) },
+            text = { Text(stringResource(R.string.sep_none_body)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    showNoSepDialog = false
+                    onOpenSpike()   // 跳「分离」页（选档位/跑分离在那里）
+                }) { Text(stringResource(R.string.sep_none_go)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showNoSepDialog = false }) { Text(stringResource(R.string.sep_cancel)) }
             },
         )
     }
-}
-
-/**
- * ★⑭a：无分离结果时的**档位选择**对话框（2 轨 3 档 / 4 轨 2 档）。
- * 选一档 → [onPick]（宿主导航到「分离」页并触发该档）。
- */
-@Composable
-private fun TierPickerDialog(
-    onDismiss: () -> Unit,
-    onPick: (StemCount, Tier) -> Unit,
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.sep_pick_tier_title)) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    stringResource(R.string.sep_pick_tier_hint),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                TierRegistry.ALL.groupBy { it.stem }.forEach { (stem, rows) ->
-                    Text(
-                        stringResource(if (stem == StemCount.TWO) R.string.sep_stem_two else R.string.sep_stem_four),
-                        style = MaterialTheme.typography.labelMedium,
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        rows.forEach { tc ->
-                            Button(onClick = { onPick(stem, tc.tier) }) {
-                                Text(tc.tier.label, maxLines = 1)
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.sep_cancel)) } },
-    )
 }
 
 /**
