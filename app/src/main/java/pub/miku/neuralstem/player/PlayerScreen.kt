@@ -100,12 +100,16 @@ fun PlayerScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Text(
-            state.fileName.ifEmpty { stringResource(R.string.player_no_media) },
-            style = MaterialTheme.typography.titleMedium,
-            maxLines = 1,
-            textAlign = TextAlign.Center,
-        )
+        // ★⑫：横屏**有曲**时曲名移入右栏顶（此处不显，避免在栏上方独占整宽）；
+        //   竖屏 / 空态（无曲）仍在此显。
+        if (!isLandscape || !state.hasMedia) {
+            Text(
+                state.fileName.ifEmpty { stringResource(R.string.player_no_media) },
+                style = MaterialTheme.typography.titleMedium,
+                maxLines = 1,
+                textAlign = TextAlign.Center,
+            )
+        }
 
         // ★⑪：删除了顶部行的「播放/暂停」（与下方控制行重复）与「Spike 分离」（与底栏 tab 重复）。
         //   保留的「导入音频」不再独占行：竖屏→入右侧转盘块顶；横屏→入右栏（控制区）顶。
@@ -150,6 +154,8 @@ fun PlayerScreen(
                         state = state, vm = vm, progressFlow = progressFlow,
                         onOpenSpike = onOpenSpike,
                         onImport = if (importEnabled) onImport else null,
+                        // ★⑫：横屏曲名入右栏顶。
+                        songName = state.fileName,
                     )
                 }
             } else {
@@ -330,17 +336,24 @@ private fun ControlsArea(
     vm: PlayerViewModel,
     progressFlow: StateFlow<PlayerViewModel.Progress>,
     onOpenSpike: () -> Unit,
-    // ★⑪：横屏时把「导入音频」放本区顶部（否 null 则不显）。
+    // ★⑪：横屏时把「导入音频」放本区（否 null 则不显）。
     onImport: (() -> Unit)? = null,
+    // ★⑫：横屏时曲名放本区顶部（非空才显）。
+    songName: String? = null,
 ) {
     Column(
         modifier = modifier,
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        // ★⑪：横屏——导入音频置右栏顶。
-        onImport?.let {
-            Button(onClick = it) { Text(stringResource(R.string.player_import), maxLines = 1) }
+        // ★⑫：横屏——曲名置右栏顶。
+        songName?.let {
+            Text(
+                it,
+                style = MaterialTheme.typography.titleMedium,
+                maxLines = 1,
+                textAlign = TextAlign.Center,
+            )
         }
         ProgressBar(
             progressFlow = progressFlow,
@@ -382,15 +395,19 @@ private fun ControlsArea(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
-        // ---- 分离开关（原曲 ↔ 多轨）+ 指引 ----
+        // ---- ★⑫：导入音频 + 分离开关（原曲 ↔ 多轨）**同一行** ----
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            onImport?.let {
+                Button(onClick = it) { Text(stringResource(R.string.player_import), maxLines = 1) }
+            }
             Text(
                 stringResource(if (state.separationOn) R.string.player_sep_on else R.string.player_sep_off),
                 style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.weight(1f),
             )
             Switch(
                 checked = state.separationOn,
