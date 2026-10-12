@@ -75,6 +75,9 @@ fun SeparationScreen(
     onToggleSeparation: (Boolean) -> Unit = {},
     onPlayStems: (SpikeViewModel.State.Done) -> Unit = {},
     onPlayStems4: (List<File>) -> Unit = {},
+    // ★⑭a：一次性“自动跑该档”请求（来自播放页分离开关选档）；消费后回调清空。
+    autoRunTier: Pair<StemCount, Tier>? = null,
+    onAutoRunConsumed: () -> Unit = {},
 ) {
     val ctx = LocalContext.current
     val app = ctx.applicationContext as Application
@@ -130,6 +133,13 @@ fun SeparationScreen(
             Log.i("SepScreen", "startTier: ${tc.stem}/${tc.tier} → ${opt.id} (${opt.displayName})")
             vm.startOption(src, opt)
         }
+    }
+
+    // ★⑭a：播放页选档跳来 → 自动跑该档（一次），并清空请求。
+    LaunchedEffect(autoRunTier) {
+        val req = autoRunTier ?: return@LaunchedEffect
+        onAutoRunConsumed()
+        TierRegistry.find(req.first, req.second)?.let { startTier(it) }
     }
 
     // ★⑬：横屏左右分栏（右栏=档位；左栏=其余）；竖屏保持单列。
