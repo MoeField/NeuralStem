@@ -107,20 +107,10 @@ fun PlayerScreen(
             textAlign = TextAlign.Center,
         )
 
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            // ★R2：文件夹歌单不导入（importEnabled=false 时隐藏）
-            if (importEnabled) {
-                Button(onClick = {
-                    pickAudio.launch(arrayOf("audio/*", "application/ogg", "application/x-flac"))
-                }) { Text(stringResource(R.string.player_import)) }
-            }
-
-            Button(
-                onClick = vm::togglePlayPause,
-                enabled = state.hasMedia,
-            ) { Text(stringResource(if (state.playWhenReady) R.string.player_pause else R.string.player_play)) }
-
-            Button(onClick = onOpenSpike) { Text(stringResource(R.string.player_spike)) }
+        // ★⑪：删除了顶部行的「播放/暂停」（与下方控制行重复）与「Spike 分离」（与底栏 tab 重复）。
+        //   保留的「导入音频」不再独占行：竖屏→入右侧转盘块顶；横屏→入右栏（控制区）顶。
+        val onImport: () -> Unit = {
+            pickAudio.launch(arrayOf("audio/*", "application/ogg", "application/x-flac"))
         }
 
         if (state.hasMedia) {
@@ -159,6 +149,7 @@ fun PlayerScreen(
                         modifier = Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()),
                         state = state, vm = vm, progressFlow = progressFlow,
                         onOpenSpike = onOpenSpike,
+                        onImport = if (importEnabled) onImport else null,
                     )
                 }
             } else {
@@ -167,6 +158,8 @@ fun PlayerScreen(
                     modifier = Modifier.fillMaxWidth().weight(1f),
                     state = state, vm = vm, secPerTurn = secPerTurn,
                     speedRange = speedRange, haptic = haptic, progressFlow = progressFlow,
+                    // ★⑪：竖屏导入音频入右侧转盘块顶（不否独占一行）。
+                    onImport = if (importEnabled) onImport else null,
                 )
                 ControlsArea(
                     modifier = Modifier.fillMaxWidth(),
@@ -240,7 +233,8 @@ private fun PitchSpeedColumn(
     }
 }
 
-/** 转盘区：左栏（音调旋钮 + 竖向速度条 + 重置）+ 黑胶转盘。 */
+/** 转盘区：左栏（音调旋钮 + 竖向速度条 + 重置）+ 黑胶转盘。
+ *  ★⑪：竖屏时右块顶部可放「导入音频」（不否独占一行）。 */
 @Composable
 private fun DeckArea(
     modifier: Modifier,
@@ -250,6 +244,8 @@ private fun DeckArea(
     speedRange: ClosedFloatingPointRange<Float>,
     haptic: HapticFeedback,
     progressFlow: StateFlow<PlayerViewModel.Progress>,
+    // ★⑪：竖屏导入音频（否 null 则不显）
+    onImport: (() -> Unit)? = null,
 ) {
     Row(
         modifier = modifier,
@@ -292,26 +288,37 @@ private fun DeckArea(
             )
         }
 
-        DeckView(
+        // ★⑪：右块 = [导入音频]（竖屏）+ 转盘（导入键不独占整行）。
+        Column(
             modifier = Modifier.weight(1f).fillMaxHeight(),
-            waveformProvider = { state.waveform },
-            cover = state.cover,
-            songName = state.fileName,
-            progressFlow = progressFlow,
-            anchorFlow = vm.anchorFlow,
-            speed = state.speed,
-            isPlaying = state.isPlaying,
-            secPerTurn = secPerTurn,
-            onTogglePlayPause = vm::togglePlayPause,
-            // ★R-a：横向滑动唱片 → 上/下一首（队列）
-            onPrev = { vm.playPrev() },
-            onNext = { vm.playNext() },
-            onSeekFraction = { f ->
-                val d = progressFlow.value.durationMs
-                val dur = if (d > 0) d else state.durationMs
-                if (dur > 0) vm.seekTo((f * dur).toLong())
-            },
-        )
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            onImport?.let {
+                Button(onClick = it) {
+                    Text(stringResource(R.string.player_import), maxLines = 1)
+                }
+            }
+            DeckView(
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                waveformProvider = { state.waveform },
+                cover = state.cover,
+                songName = state.fileName,
+                progressFlow = progressFlow,
+                anchorFlow = vm.anchorFlow,
+                speed = state.speed,
+                isPlaying = state.isPlaying,
+                secPerTurn = secPerTurn,
+                onTogglePlayPause = vm::togglePlayPause,
+                // ★R-a：横向滑动唱片 → 上/下一首（队列）
+                onPrev = { vm.playPrev() },
+                onNext = { vm.playNext() },
+                onSeekFraction = { f ->
+                    val d = progressFlow.value.durationMs
+                    val dur = if (d > 0) d else state.durationMs
+                    if (dur > 0) vm.seekTo((f * dur).toLong())
+                },
+            )
+        }
     }
 }
 
@@ -323,12 +330,18 @@ private fun ControlsArea(
     vm: PlayerViewModel,
     progressFlow: StateFlow<PlayerViewModel.Progress>,
     onOpenSpike: () -> Unit,
+    // ★⑪：横屏时把「导入音频」放本区顶部（否 null 则不显）。
+    onImport: (() -> Unit)? = null,
 ) {
     Column(
         modifier = modifier,
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
+        // ★⑪：横屏——导入音频置右栏顶。
+        onImport?.let {
+            Button(onClick = it) { Text(stringResource(R.string.player_import), maxLines = 1) }
+        }
         ProgressBar(
             progressFlow = progressFlow,
             anchorFlow = vm.anchorFlow,

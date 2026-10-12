@@ -15,7 +15,6 @@
     <string name="player_import">Import audio</string>
     <string name="player_play">Play</string>
     <string name="player_pause">Pause</string>
-    <string name="player_spike">Spike separation</string>
     <string name="player_reset">Reset</string>
     <string name="player_sep_on">Separation: multi-track</string>
     <string name="player_sep_off">Separation: original</string>

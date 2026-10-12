@@ -15,7 +15,6 @@
     <string name="player_import">导入音频</string>
     <string name="player_play">播放</string>
     <string name="player_pause">暂停</string>
-    <string name="player_spike">Spike 分离</string>
     <string name="player_reset">重置</string>
     <string name="player_sep_on">分离开关：多轨</string>
     <string name="player_sep_off">分离开关：原曲</string>
