@@ -178,6 +178,17 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     @Volatile
     private var pendingResumeMs: Long = 0L
 
+    // ============================ ★⑭b：分离“目标曲”追踪（防切歌后错配）============================
+    /** 发起分离时的曲目 uri。完成时与当前曲对比：不等则不切多轨（防“播旧曲 stem、显新曲”）。 */
+    @Volatile
+    private var separationTargetUri: String? = null
+
+    /** ★⑭b：记录“本次分离针对的曲”（由宿主在发起分离时调用）。 */
+    fun markSeparationTarget(uri: String?) { separationTargetUri = uri }
+
+    /** ★⑭b：本次分离是否仍针对“当前曲”（否则不应强行切多轨）。 */
+    fun separationMatchesCurrent(): Boolean = separationTargetUri == _state.value.currentUri
+
     /** 进度记忆落库器（直接写文件——与 [PlaylistStore.recordProgress] 注释一致：播放器直调）。 */
     private val playlistStore by lazy { PlaylistStore(getApplication()) }
 

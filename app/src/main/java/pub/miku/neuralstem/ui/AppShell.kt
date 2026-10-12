@@ -21,12 +21,14 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.launch
 import pub.miku.neuralstem.R
 import pub.miku.neuralstem.player.MixScreen
 import pub.miku.neuralstem.player.PlayerScreen
@@ -74,6 +76,8 @@ fun AppShell(
     var current by remember { mutableStateOf(initial) }
     // ★⑭a：播放页点分离开关（无结果）→ 选档后导航到「分离」页并触发该档（一次性）。
     var pendingTier by remember { mutableStateOf<Pair<StemCount, Tier>?>(null) }
+    // ★⑭b：用于“分离完成但已切歌”→ snackbar 提示。
+    val scope = rememberCoroutineScope()
     // 歌单 VM（供歌单页显示 + 点曲时解析 uri）
     val playlistVm: PlaylistViewModel = viewModel()
     // 播放器状态（供分离页传“当前曲”）
@@ -138,29 +142,42 @@ fun AppShell(
                 // ★⑭a：一次性“自动跑该档”请求（来自播放页选档）。
                 autoRunTier = pendingTier,
                 onAutoRunConsumed = { pendingTier = null },
+                // ★⑭b：发起分离时记录“目标曲”，完成时校验。
+                onSeparationStarted = { playerVm.markSeparationTarget(it) },
                 onPlayStems = { done ->
-                    playerVm.loadMultiTrack(
-                        listOf(
-                            Triple("vocals", "人声", done.vocalsFile),
-                            Triple("accompaniment", "伴奏", done.accompanimentFile),
-                        ),
-                    )
-                    playerVm.markStemsAvailable()
-                    // ★显式 play（幂等）: 后台分离期间原曲在播, 不能用 togglePlayPause（会暂停）。
-                    playerVm.play()
-                    current = AppDestination.PLAYER
+                    // ★⑭b：若分离期间已切歌 → **不切多轨**，仅提示（防“播旧曲 stem、显新曲”错配）。
+                    if (!playerVm.separationMatchesCurrent()) {
+                        val t = playerVm.state.value.fileName
+                        scope.launch { snackbarHostState.showSnackbar("分离完成（$t），但你已切歌，未切换多轨") }
+                    } else {
+                        playerVm.loadMultiTrack(
+                            listOf(
+                                Triple("vocals", "人声", done.vocalsFile),
+                                Triple("accompaniment", "伴奏", done.accompanimentFile),
+                            ),
+                        )
+                        playerVm.markStemsAvailable()
+                        // ★显式 play（幂等）: 后台分离期间原曲在播, 不能用 togglePlayPause（会暂停）。
+                        playerVm.play()
+                        current = AppDestination.PLAYER
+                    }
                 },
                 onPlayStems4 = { files ->
-                    // M4/S3：4-stem → 四轨播放（顺序 = vocals/drums/bass/other）
-                    val labels = listOf("人声", "鼓", "贝斯", "其他")
-                    playerVm.loadMultiTrack(
-                        files.mapIndexed { i, f ->
-                            Triple(Spleeter4Dsp.STEM_KINDS[i], labels.getOrElse(i) { "轨$i" }, f)
-                        },
-                    )
-                    playerVm.markStemsAvailable()
-                    playerVm.play()
-                    current = AppDestination.PLAYER
+                    if (!playerVm.separationMatchesCurrent()) {
+                        val t = playerVm.state.value.fileName
+                        scope.launch { snackbarHostState.showSnackbar("分离完成（$t），但你已切歌，未切换多轨") }
+                    } else {
+                        // M4/S3：4-stem → 四轨播放（顺序 = vocals/drums/bass/other）
+                        val labels = listOf("人声", "鼓", "贝斯", "其他")
+                        playerVm.loadMultiTrack(
+                            files.mapIndexed { i, f ->
+                                Triple(Spleeter4Dsp.STEM_KINDS[i], labels.getOrElse(i) { "轨$i" }, f)
+                            },
+                        )
+                        playerVm.markStemsAvailable()
+                        playerVm.play()
+                        current = AppDestination.PLAYER
+                    }
                 },
             )
 

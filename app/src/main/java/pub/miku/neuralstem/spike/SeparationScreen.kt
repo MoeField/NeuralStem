@@ -78,6 +78,8 @@ fun SeparationScreen(
     // ★⑭a：一次性“自动跑该档”请求（来自播放页分离开关选档）；消费后回调清空。
     autoRunTier: Pair<StemCount, Tier>? = null,
     onAutoRunConsumed: () -> Unit = {},
+    // ★⑭b：发起分离时通知宿主“本次针对哪首曲”（uri），供完成时校验。
+    onSeparationStarted: (String?) -> Unit = {},
 ) {
     val ctx = LocalContext.current
     val app = ctx.applicationContext as Application
@@ -122,6 +124,8 @@ fun SeparationScreen(
     /** ★D-3：点「档位」→ 用设置里该档选的模型启动分离。 */
     fun startTier(tc: TierChoices) {
         val uri = currentUri ?: return
+        // ★⑭b：记录本次分离针对的曲（供完成时校验是否已切歌）。
+        onSeparationStarted(uri)
         scope.launch {
             val src = CurrentTrackBridge.toFile(app, uri)
             if (src == null) {
