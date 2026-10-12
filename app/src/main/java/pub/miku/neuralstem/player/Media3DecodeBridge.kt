@@ -83,6 +83,8 @@ object Media3DecodeBridge {
                 var sampleRate = 44100
                 var guard = 0
 
+                // ★⑮-3：`guard` 是**防死循环**上限，**不是**“解码完成”。
+                //   若靠 guard 熔断退出 = 未收到 EOS = **未真正解完**，绝不能当完整（否则写半截缓存）。
                 while (!outputDone && guard++ < 200_000) {
                     // 喂输入
                     if (!inputDone) {
@@ -130,7 +132,11 @@ object Media3DecodeBridge {
                         }
                     }
                 }
-                return true
+                // ★⑮-3：**返回 `outputDone`**（而非无条件 true）。
+                //   背景：旧代码这里 `return true`，导致“guard 熔断（未到 EOF）”也被当成完整
+                //   → WaveformExtractor 写入**半截波形缓存**（实证：3.0s 坏缓存）。
+                //   现语义：仅当真收到 `BUFFER_FLAG_END_OF_STREAM`（outputDone=true）才算完整。
+                return outputDone
             } finally {
                 codec.stop()
                 codec.release()
