@@ -1,12 +1,14 @@
 package pub.miku.neuralstem.spike
 
 import android.app.Application
+import android.content.res.Configuration
 import android.util.Log
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -29,6 +31,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
@@ -129,10 +132,59 @@ fun SeparationScreen(
         }
     }
 
-    Column(
-        modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
+    // ★⑬：横屏左右分栏（右栏=档位；左栏=其余）；竖屏保持单列。
+    val isLandscape =
+        LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val settingsRepo = remember { SettingsRepository(app) }
+    // benchmark 缓存（本机实测/内置免跑）→ 判断各档选中模型是否实时档。
+    val benchRtf: Map<String, Float> = benchRtfAll.mapValues { it.value.rtf }
+
+    // ★⑬：当前可导出的 4-stem 结果（无则导出按钮禁用置灰、常在位）。
+    val done4Result = (separationTask as? SeparationTask.Done4)
+
+    // ★⑬：档位区（横屏在右栏 / 竖屏在中间）—— 抽成 lambda 复用。
+    val tierSection: @Composable () -> Unit = {
+        //   ★D-3：按轨数 2 行；每行 = 档位按钮（点即跑）。
+        //   ★D-4：按 benchmark 结果在按钮标“⚡ 实时档”。
+        //   ★G-1b：未检测（无 benchmark 缓存）→ 门控：按钮禁用 + 提示先检测。
+        Text(stringResource(R.string.sep_title), style = MaterialTheme.typography.titleMedium)
+        if (!benchmarked) {
+            Text(
+                stringResource(R.string.sep_gate_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+        TierRegistry.ALL.groupBy { it.stem }.forEach { (stem, rows) ->
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    stringResource(if (stem == StemCount.TWO) R.string.sep_stem_two else R.string.sep_stem_four),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    rows.forEach { tc ->
+                        val opt = settingsRepo.tierOption(tc.stem, tc.tier) ?: tc.default()
+                        // ★D-4：选中模型的实测 RTF（未测/非 sherpa 模型 → null → 不标）。
+                        val rtf = benchRtf[opt.id]
+                        val realtime = rtf != null && rtf >= REALTIME_RTF
+                        // ★⑨②：每档只一个按钮（档名 + ⚡ 实时标记）。
+                        Button(
+                            onClick = { startTier(tc) },
+                            enabled = hasSong && !busy && benchmarked,
+                        ) { Text(if (realtime) "⚡ ${tc.tier.label}" else tc.tier.label) }
+                    }
+                }
+            }
+        }
+    }
+
+    // ★⑬：主体内容（不含档位）—— 横屏放左栏 / 竖屏整列。
+    val body: @Composable () -> Unit = {
         // ★⑨③：去掉顶部页面大标题"分离"（页上方已有 App 标题栏 + 底栏 tab；留档位区小节标题）。
 
         // ---- 当前曲目 ----
@@ -184,48 +236,9 @@ fun SeparationScreen(
             )
         }
 
-        // ---- ★D-3：按轨数 2 行；每行 = 档位按钮（点即跑）；按钮显示当前选中模型 ----
-        //   ★D-4：按 benchmark 结果在按钮标“⚡ 实时档”（选模型 RTF ≥ 门槛）。
-        //   ★G-1b：未检测（无 benchmark 缓存）→ 门控：按钮禁用 + 提示先检测。
-        Text(stringResource(R.string.sep_title), style = MaterialTheme.typography.titleMedium)
-        val settingsRepo = remember { SettingsRepository(app) }
-        // benchmark 缓存（本机实测/内置免跑）→ 判断各档选中模型是否实时档。
-        val benchRtf: Map<String, Float> = benchRtfAll.mapValues { it.value.rtf }
-        // ★G-1b：未检测 → 门控提示（档位按钮保持可见但禁用，引导去检测）。
-        if (!benchmarked) {
-            Text(
-                stringResource(R.string.sep_gate_hint),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
-            )
-        }
-        TierRegistry.ALL.groupBy { it.stem }.forEach { (stem, rows) ->
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(
-                    stringResource(if (stem == StemCount.TWO) R.string.sep_stem_two else R.string.sep_stem_four),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                FlowRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    rows.forEach { tc ->
-                        val opt = settingsRepo.tierOption(tc.stem, tc.tier) ?: tc.default()
-                        // ★D-4：选中模型的实测 RTF（未测/非 sherpa 模型 → null → 不标）。
-                        val rtf = benchRtf[opt.id]
-                        val realtime = rtf != null && rtf >= REALTIME_RTF
-                        // ★⑨②：每档只一个按钮（档名 + ⚡ 实时标记）；不再在下方显模型名小字
-                        //   （3 档不再换行；具体模型名在设置页看）。
-                        Button(
-                            onClick = { startTier(tc) },
-                            enabled = hasSong && !busy && benchmarked,
-                        ) { Text(if (realtime) "⚡ ${tc.tier.label}" else tc.tier.label) }
-                    }
-                }
-            }
-        }
+        // ---- 档位区（先抽为 tierSection，便于横屏放右栏）----
+        // ★⑬：竖屏在此（档位跟分离开关之后）；横屏会挪到右栏。
+        if (!isLandscape) tierSection()
 
         // ---- 进度 / 结果（★3a-2：**单一真源** separationTask；不再并列读 spikeState + repoState）----
         when (val t = separationTask) {
@@ -246,11 +259,6 @@ fun SeparationScreen(
                     stringResource(if (t.fromCache) R.string.sep_done4_cache else R.string.sep_done4),
                     color = MaterialTheme.colorScheme.primary,
                 )
-                // ★U7：导出到 Music/separate/<歌名>/（WAV，不含 EQ/音量）。
-                Button(onClick = {
-                    exportMsg = StemExporter.export(app, fileName.ifBlank { "song" }, t.stemFiles)
-                }) { Text(stringResource(R.string.sep_export)) }
-                exportMsg?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
             }
             is SeparationTask.Failed ->
                 Text(stringResource(R.string.sep_failed, t.message), color = MaterialTheme.colorScheme.error)
@@ -267,6 +275,15 @@ fun SeparationScreen(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            // ★⑬：导出——常在位；仅有 4-stem 结果时可用（否则禁用置灰）。
+            Button(
+                onClick = {
+                    done4Result?.let {
+                        exportMsg = StemExporter.export(app, fileName.ifBlank { "song" }, it.stemFiles)
+                    }
+                },
+                enabled = done4Result != null,
+            ) { Text(stringResource(R.string.sep_export)) }
             Button(onClick = {
                 val n = vm.clearCache()
                 cacheMsg = if (n < 0) app.getString(R.string.sep_cache_busy)
@@ -274,5 +291,28 @@ fun SeparationScreen(
             }) { Text(stringResource(R.string.sep_clear_cache)) }
             cacheMsg?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
         }
+        exportMsg?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+    }
+
+    // ★⑬：横屏 = 左右两栏（左=body；右=档位）；竖屏 = 单列（body 内含档位）。
+    if (isLandscape) {
+        Row(
+            modifier = modifier.fillMaxSize().padding(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Column(
+                modifier = Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) { body() }
+            Column(
+                modifier = Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) { tierSection() }
+        }
+    } else {
+        Column(
+            modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) { body() }
     }
 }

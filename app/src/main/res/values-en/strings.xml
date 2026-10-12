@@ -93,10 +93,6 @@
     <!-- Track mixer panel -->
     <string name="track_mixer_title">Multi-track mixer</string>
     <string name="track_exit">Exit multi-track</string>
-    <string name="track_mute">Mute</string>
-    <string name="track_muted">Muted</string>
-    <string name="track_solo">Solo</string>
-    <string name="track_unsolo">Un-solo</string>
 
     <!-- Playlists page -->
     <string name="pl_new_name">New list name</string>
