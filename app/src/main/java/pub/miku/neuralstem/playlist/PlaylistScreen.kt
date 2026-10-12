@@ -1,6 +1,7 @@
 package pub.miku.neuralstem.playlist
 
 import android.content.Intent
+import android.content.res.Configuration
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -30,6 +31,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -96,32 +98,52 @@ fun PlaylistScreen(
         }
     }
 
+    // ★⑪：横屏一行（否则下方没空间选歌单）；竖屏两行（命名单独一行，不挤）。
+    val isLandscape =
+        LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+
     Column(
         modifier = modifier.fillMaxSize().padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         // ★⑩：去掉顶部"歌单"大标题（底栏已有"歌单"tab，避免重复）。
-        //   三件（新列表名 / 新建 / 选择文件夹导入）挤一行。
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
+        val nameField: @Composable (Modifier) -> Unit = { m ->
             OutlinedTextField(
                 value = newName,
                 onValueChange = { newName = it },
                 label = { Text(stringResource(R.string.pl_new_name)) },
                 singleLine = true,
-                modifier = Modifier.weight(1f),
+                modifier = m,
             )
-            Button(
-                onClick = {
-                    if (newName.isNotBlank()) {
-                        vm.createList(newName.trim()); newName = ""
-                    }
-                },
-            ) { Text(stringResource(R.string.pl_create), maxLines = 1) }
+        }
+        val createBtn: @Composable () -> Unit = {
+            Button(onClick = {
+                if (newName.isNotBlank()) {
+                    vm.createList(newName.trim()); newName = ""
+                }
+            }) { Text(stringResource(R.string.pl_create), maxLines = 1) }
+        }
+        val importBtn: @Composable () -> Unit = {
             Button(onClick = { pickFolder.launch(null) }) {
                 Text(stringResource(R.string.pl_import_folder), maxLines = 1)
+            }
+        }
+        if (isLandscape) {
+            // 横屏：三件挤一行
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                nameField(Modifier.weight(1f))
+                createBtn()
+                importBtn()
+            }
+        } else {
+            // 竖屏：命名单独一行；两个按钮一行
+            nameField(Modifier.fillMaxWidth())
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                createBtn()
+                importBtn()
             }
         }
 
