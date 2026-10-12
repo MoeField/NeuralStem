@@ -1,7 +1,10 @@
 package pub.miku.neuralstem.player
 
+import android.content.res.Configuration
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -14,6 +17,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -26,6 +30,8 @@ import pub.miku.neuralstem.R
  * - 播放页在多轨时被「分轨混音 + 分离开关」挤压 → **转盘/速度条被压到 ~54px**（真机实测）。
  * - EQ 与「分轨混音」都是**混音/后处理**，同类合并最自然；播放页只留一行紧凑「分离开关」。
  * - 导航：`歌单 · 播放器 · 分离 · 混音 · 设置`。
+ *
+ * ★⑬：**横屏左右分栏**（左=分轨混音 ‖ 右=EQ，均横条），避免上下滑动。
  */
 @Composable
 fun MixScreen(
@@ -33,17 +39,11 @@ fun MixScreen(
     vm: PlayerViewModel = viewModel(),
 ) {
     val state by vm.state.collectAsState()
+    val isLandscape =
+        LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Text(stringResource(R.string.mix_title), style = MaterialTheme.typography.titleLarge)
-
-        // ---- 分轨混音（多轨时；否则提示去分离）----
+    // ---- 分轨混音区 ----
+    val tracksSection: @Composable () -> Unit = {
         Text(stringResource(R.string.mix_tracks), style = MaterialTheme.typography.titleMedium)
         if (state.isMultiTrack && state.tracks.isNotEmpty()) {
             TrackMixerPanel(
@@ -60,10 +60,10 @@ fun MixScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+    }
 
-        HorizontalDivider()
-
-        // ---- 均衡器（EQ）----
+    // ---- EQ 区 ----
+    val eqSection: @Composable () -> Unit = {
         Text(stringResource(R.string.mix_eq), style = MaterialTheme.typography.titleMedium)
         EqPanel(
             available = state.eqAvailable,
@@ -83,4 +83,32 @@ fun MixScreen(
             )
         }
     }
+
+    if (isLandscape) {
+        // ★⑬：横屏左右分栏：左=分轨混音 ‖ 右=EQ。
+        Row(
+            modifier = modifier.fillMaxSize().padding(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Column(
+                modifier = Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) { tracksSection() }
+            Column(
+                modifier = Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) { eqSection() }
+        }
+    } else {
+        Column(
+            modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(stringResource(R.string.mix_title), style = MaterialTheme.typography.titleLarge)
+            tracksSection()
+            HorizontalDivider()
+            eqSection()
+        }
+    }
 }
+

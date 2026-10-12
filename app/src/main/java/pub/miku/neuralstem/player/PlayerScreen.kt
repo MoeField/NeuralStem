@@ -156,6 +156,8 @@ fun PlayerScreen(
                         onImport = if (importEnabled) onImport else null,
                         // ★⑫：横屏曲名入右栏顶。
                         songName = state.fileName,
+                        // ★⑬：横屏不显“去分离页处理”。
+                        showGoSeparate = false,
                     )
                 }
             } else {
@@ -340,6 +342,8 @@ private fun ControlsArea(
     onImport: (() -> Unit)? = null,
     // ★⑫：横屏时曲名放本区顶部（非空才显）。
     songName: String? = null,
+    // ★⑬：是否显“去「分离」页处理 →”链接（横屏不显；竖屏显）。
+    showGoSeparate: Boolean = true,
 ) {
     Column(
         modifier = modifier,
@@ -414,15 +418,18 @@ private fun ControlsArea(
                 onCheckedChange = { vm.toggleSeparation(it) },
             )
         }
-        Text(
-            stringResource(R.string.player_go_separate),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { onOpenSpike() }
-                .padding(vertical = 4.dp),
-        )
+        // ★⑬：横屏不显“去「分离」页处理 →”（底栏已有“分离”tab）；竖屏保留。
+        if (showGoSeparate) {
+            Text(
+                stringResource(R.string.player_go_separate),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onOpenSpike() }
+                    .padding(vertical = 4.dp),
+            )
+        }
     }
 }
 

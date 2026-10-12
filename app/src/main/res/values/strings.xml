@@ -93,10 +93,6 @@
     <!-- 多轨混音面板 -->
     <string name="track_mixer_title">多轨混音</string>
     <string name="track_exit">退出多轨</string>
-    <string name="track_mute">静音</string>
-    <string name="track_muted">已静音</string>
-    <string name="track_solo">独奏</string>
-    <string name="track_unsolo">取消独奏</string>
 
     <!-- 歌单页 -->
     <string name="pl_new_name">新列表名</string>

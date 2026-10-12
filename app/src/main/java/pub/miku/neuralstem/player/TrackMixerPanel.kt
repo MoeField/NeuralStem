@@ -12,6 +12,7 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -79,13 +80,19 @@ fun TrackMixerPanel(
                             style = MaterialTheme.typography.labelMedium,
                         )
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        // F4.3 静音 / 独奏(两按钮均为切换态,不置灰)
-                        FilledTonalButton(onClick = { onToggleMute(track.id) }) {
-                            Text(stringResource(if (track.muted) R.string.track_muted else R.string.track_mute))
+                    // ★⑬：静音 / 独奏 → 两个**窄图标**（横向并排），省横向空间。
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        TextButton(onClick = { onToggleMute(track.id) }) {
+                            Text(
+                                if (track.muted) "🔇" else "🔈",
+                                style = MaterialTheme.typography.titleMedium,
+                            )
                         }
-                        FilledTonalButton(onClick = { onToggleSolo(track.id) }) {
-                            Text(stringResource(if (track.solo) R.string.track_unsolo else R.string.track_solo))
+                        TextButton(onClick = { onToggleSolo(track.id) }) {
+                            Text(
+                                if (track.solo) "🎧" else "🎶",
+                                style = MaterialTheme.typography.titleMedium,
+                            )
                         }
                     }
                 }
