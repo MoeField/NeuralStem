@@ -7,6 +7,7 @@ import android.util.Log
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.File
+import kotlin.math.abs
 
 /**
  * 波形包络**文件缓存**（R-h / W-1，从 checkpoint 线移植）。
@@ -30,6 +31,8 @@ object WaveformCache {
     private const val TAG = "WaveformCache"
     private const val MAGIC = 0x4E535756   // "NSWV"
     private const val VERSION = 1
+    /** ★⑭c：头部字节数（magic4+ver4+sr4+frames8+n4 = 24）。用于文件大小自洽校验。 */
+    private const val HEADER_BYTES = 24L
 
     private fun dir(context: Context): File =
         File(context.filesDir, "waveform-cache").apply { if (!exists()) mkdirs() }
@@ -73,6 +76,10 @@ object WaveformCache {
                 val frames = ins.readLong()
                 val n = ins.readInt()
                 require(n in 1..10_000_000)
+                // ★⑭c：文件大小自洽校验（24B 头 + n×8B）；不一致 = 损坏/半截 → 视为 miss。
+                require(f.length() == HEADER_BYTES + n.toLong() * 8L) {
+                    "corrupt cache: size=${f.length()} expected=${HEADER_BYTES + n * 8}"
+                }
                 val min = FloatArray(n) { ins.readFloat() }
                 val max = FloatArray(n) { ins.readFloat() }
                 WaveformData(min, max, sr, frames)
@@ -82,6 +89,12 @@ object WaveformCache {
 
     fun save(context: Context, uri: Uri, wf: WaveformData) {
         val f = cacheFile(context, uri) ?: return
+        // ★⑭c：写入前自洽校验——pointCount 应与 (totalFrames / (sr/50)) 相符（±1），
+        //   否则视为“半截”包络，**拒绝写入**（防坏缓存污染）。
+        if (!isSelfConsistent(wf)) {
+            Log.w(TAG, "refuse saving inconsistent waveform: pts=${wf.pointCount} frames=${wf.totalFrames} sr=${wf.sampleRate}")
+            return
+        }
         runCatching {
             DataOutputStream(f.outputStream().buffered()).use { out ->
                 out.writeInt(MAGIC)
@@ -94,5 +107,31 @@ object WaveformCache {
             }
             Log.i(TAG, "saved ${wf.pointCount} pts → ${f.name}")
         }.onFailure { Log.w(TAG, "save failed", it) }
+    }
+
+    /** ★⑭c：包络自洽（点数 ≈ 时长×50）。容忍 ±1.5 个点（取整误差）。 */
+    internal fun isSelfConsistent(wf: WaveformData): Boolean {
+        if (wf.sampleRate <= 0 || wf.totalFrames <= 0 || wf.pointCount <= 0) return false
+        val expect = wf.totalFrames.toDouble() * 50.0 / wf.sampleRate
+        return abs(expect - wf.pointCount) <= 1.5
+    }
+
+    /** ★⑭c：清除损坏/半截的旧缓存（文件大小与头部不自洽者）。启动时调一次。 */
+    fun cleanCorrupt(context: Context) {
+        val d = dir(context)
+        d.listFiles()?.forEach { f ->
+            runCatching {
+                DataInputStream(f.inputStream().buffered()).use { ins ->
+                    if (ins.readInt() != MAGIC || ins.readInt() != VERSION) {
+                        f.delete(); return@runCatching
+                    }
+                    ins.readInt(); ins.readLong(); val n = ins.readInt()
+                    if (n <= 0 || f.length() != HEADER_BYTES + n.toLong() * 8L) {
+                        Log.w(TAG, "cleanCorrupt: ${f.name} (n=$n size=${f.length()})")
+                        f.delete()
+                    }
+                }
+            }.onFailure { runCatching { f.delete() } }
+        }
     }
 }

@@ -18,6 +18,7 @@ import androidx.media3.common.Player
 import kotlinx.coroutines.delay
 import pub.miku.neuralstem.devtools.TestCommandBus
 import pub.miku.neuralstem.player.PlayerViewModel
+import pub.miku.neuralstem.player.WaveformCache
 import pub.miku.neuralstem.settings.SettingsRepository
 import pub.miku.neuralstem.spike.DeviceBenchmark
 import pub.miku.neuralstem.ui.AppShell
@@ -49,6 +50,8 @@ class MainActivity : ComponentActivity() {
         // ★G-2a/G-1b：应用启动即尝试“精确命中内置表 → 免跑填 benchmark 缓存”。
         //   这样即使不打开设置页，已知 CPU 也不会被 G-1b 门控拦住（免跑即视为“已检测”）。
         runCatching { DeviceBenchmark(application).seedFromBuiltinIfExact() }
+        // ★⑭c：启动清理损坏/半截的波形缓存（防“外圈波形只占一段”）。
+        runCatching { WaveformCache.cleanCorrupt(application) }
 
         setContent {
             NeuralStemTheme {
