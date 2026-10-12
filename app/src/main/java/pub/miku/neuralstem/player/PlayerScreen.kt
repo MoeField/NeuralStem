@@ -21,15 +21,18 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -46,6 +49,9 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.flow.StateFlow
 import pub.miku.neuralstem.R
 import pub.miku.neuralstem.settings.SettingsRepository
+import pub.miku.neuralstem.spike.StemCount
+import pub.miku.neuralstem.spike.Tier
+import pub.miku.neuralstem.spike.TierRegistry
 
 /**
  * 播放页（**Step 6：R 系列转盘布局**；**F5.2：横屏双栏**）。
@@ -63,10 +69,19 @@ fun PlayerScreen(
     importEnabled: Boolean = true,
     // ★R2：导入成功后通知宿主（→ 追加进当前选中歌单）。
     onImported: (Uri, String) -> Unit = { _, _ -> },
+    // ★⑭a：无分离结果时，分离开关开启 → 宿主导航到「分离」页并触发该档（StemCount, Tier）。
+    onRequestTier: (StemCount, Tier) -> Unit = { _, _ -> },
 ) {
     val state by vm.state.collectAsState()
     // ★F5.4：触感反馈（分离完成在分离页；这里用于 1.0× 吸附）。
     val haptic = LocalHapticFeedback.current
+    // ★⑭a：无分离结果时点开关 → 弹“选分离档位”对话框。
+    var showTierDialog by remember { mutableStateOf(false) }
+    // ★⑭a：分离开关切换——开且无结果 → 弹档位；否则直接切。
+    val onSeparationToggle: (Boolean) -> Unit = { on ->
+        val ok = vm.toggleSeparation(on)
+        if (on && !ok) showTierDialog = true
+    }
     // ★ 进度流传引用即可（子组件内部 collect）。
     val progressFlow = vm.progressFlow
     // ★F5.2：横屏判定。
@@ -158,6 +173,8 @@ fun PlayerScreen(
                         songName = state.fileName,
                         // ★⑬：横屏不显“去分离页处理”。
                         showGoSeparate = false,
+                        // ★⑭a：分离开关切换（无结果→弹档位）。
+                        onSeparationToggle = onSeparationToggle,
                     )
                 }
             } else {
@@ -173,11 +190,61 @@ fun PlayerScreen(
                     modifier = Modifier.fillMaxWidth(),
                     state = state, vm = vm, progressFlow = progressFlow,
                     onOpenSpike = onOpenSpike,
+                    onSeparationToggle = onSeparationToggle,
                 )
             }
         }
         // ★方案1：「分轨混音」已移到**混音页**（转盘/速度条因此恢复大尺寸）。
     }
+
+    // ★⑭a：无分离结果时选档位 → 导航到「分离」页并触发该档。
+    if (showTierDialog) {
+        TierPickerDialog(
+            onDismiss = { showTierDialog = false },
+            onPick = { stem, tier ->
+                showTierDialog = false
+                onRequestTier(stem, tier)
+            },
+        )
+    }
+}
+
+/**
+ * ★⑭a：无分离结果时的**档位选择**对话框（2 轨 3 档 / 4 轨 2 档）。
+ * 选一档 → [onPick]（宿主导航到「分离」页并触发该档）。
+ */
+@Composable
+private fun TierPickerDialog(
+    onDismiss: () -> Unit,
+    onPick: (StemCount, Tier) -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.sep_pick_tier_title)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    stringResource(R.string.sep_pick_tier_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                TierRegistry.ALL.groupBy { it.stem }.forEach { (stem, rows) ->
+                    Text(
+                        stringResource(if (stem == StemCount.TWO) R.string.sep_stem_two else R.string.sep_stem_four),
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        rows.forEach { tc ->
+                            Button(onClick = { onPick(stem, tc.tier) }) {
+                                Text(tc.tier.label, maxLines = 1)
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.sep_cancel)) } },
+    )
 }
 
 /**
@@ -344,6 +411,8 @@ private fun ControlsArea(
     songName: String? = null,
     // ★⑬：是否显“去「分离」页处理 →”链接（横屏不显；竖屏显）。
     showGoSeparate: Boolean = true,
+    // ★⑭a：分离开关切换（由 PlayerScreen 处理“无结果→弹档位”）。
+    onSeparationToggle: (Boolean) -> Unit = {},
 ) {
     Column(
         modifier = modifier,
@@ -415,7 +484,7 @@ private fun ControlsArea(
             )
             Switch(
                 checked = state.separationOn,
-                onCheckedChange = { vm.toggleSeparation(it) },
+                onCheckedChange = { onSeparationToggle(it) },
             )
         }
         // ★⑬：横屏不显“去「分离」页处理 →”（底栏已有“分离”tab）；竖屏保留。
