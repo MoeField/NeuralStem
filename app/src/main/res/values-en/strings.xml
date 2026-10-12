@@ -47,8 +47,9 @@
     <string name="sep_cache_cleared">Cleared %1$d cache item(s)</string>
     <string name="sep_cache_busy">Separation in progress, cannot clear</string>
     <string name="sep_uri_unreadable">Cannot read current track (URI not accessible)</string>
-    <string name="sep_pick_tier_title">Choose a separation tier</string>
-    <string name="sep_pick_tier_hint">No separation result yet. Pick a tier to start (model is chosen in Settings).</string>
+    <string name="sep_none_title">No separation result yet</string>
+    <string name="sep_none_body">Choose a tier and separate on the “Separate” page first.</string>
+    <string name="sep_none_go">Go to Separate</string>
 
     <!-- Settings -->
     <string name="settings_title">Settings</string>

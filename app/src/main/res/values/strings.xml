@@ -47,8 +47,9 @@
     <string name="sep_cache_cleared">已清理 %1$d 项缓存</string>
     <string name="sep_cache_busy">分离进行中，无法清理</string>
     <string name="sep_uri_unreadable">无法读取当前曲目（Uri 不可访问）</string>
-    <string name="sep_pick_tier_title">选择分离档位</string>
-    <string name="sep_pick_tier_hint">当前无分离结果，选一档开始分离（具体模型在设置里选）。</string>
+    <string name="sep_none_title">尚无分离结果</string>
+    <string name="sep_none_body">请先在「分离」页选择档位并分离。</string>
+    <string name="sep_none_go">去分离页</string>
 
     <!-- 设置 -->
     <string name="settings_title">设置</string>

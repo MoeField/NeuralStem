@@ -39,8 +39,6 @@ import pub.miku.neuralstem.playlist.PlaylistViewModel
 import pub.miku.neuralstem.settings.SettingsScreen
 import pub.miku.neuralstem.spike.SeparationScreen
 import pub.miku.neuralstem.spike.Spleeter4Dsp
-import pub.miku.neuralstem.spike.StemCount
-import pub.miku.neuralstem.spike.Tier
 
 /**
  * 应用导航壳。
@@ -74,8 +72,6 @@ fun AppShell(
     initial: AppDestination = AppDestination.PLAYER,
 ) {
     var current by remember { mutableStateOf(initial) }
-    // ★⑭a：播放页点分离开关（无结果）→ 选档后导航到「分离」页并触发该档（一次性）。
-    var pendingTier by remember { mutableStateOf<Pair<StemCount, Tier>?>(null) }
     // ★⑭b：用于“分离完成但已切歌”→ snackbar 提示。
     val scope = rememberCoroutineScope()
     // 歌单 VM（供歌单页显示 + 点曲时解析 uri）
@@ -125,11 +121,6 @@ fun AppShell(
                         PlaylistStore.TrackRef(uri.toString(), title),
                     )
                 },
-                // ★⑭a：无分离结果时点分离开关 → 选档后跳「分离」页并触发该档。
-                onRequestTier = { stem, tier ->
-                    pendingTier = stem to tier
-                    current = AppDestination.SEPARATE
-                },
             )
 
             AppDestination.SEPARATE -> SeparationScreen(
@@ -139,9 +130,6 @@ fun AppShell(
                 separationOn = playerState.separationOn,
                 currentUri = playerState.currentUri,
                 onToggleSeparation = { on -> playerVm.toggleSeparation(on) },
-                // ★⑭a：一次性“自动跑该档”请求（来自播放页选档）。
-                autoRunTier = pendingTier,
-                onAutoRunConsumed = { pendingTier = null },
                 // ★⑭b：发起分离时记录“目标曲”，完成时校验。
                 onSeparationStarted = { playerVm.markSeparationTarget(it) },
                 onPlayStems = { done ->
