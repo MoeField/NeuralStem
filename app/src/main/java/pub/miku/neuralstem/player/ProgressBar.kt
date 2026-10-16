@@ -57,6 +57,8 @@ fun ProgressBar(
 
     // ★ 进度在**本组件内** collect（重组范围仅限进度条），不影响整个播放页。
     val progressState = progressFlow.collectAsState()
+    // 播放态从锚点流取（`Progress` 无此字段）；仅用于逐帧失效的守卫。
+    val isPlaying = anchorFlow.collectAsState().value?.isPlaying == true
 
     // ★ 平滑位置：锚点外推 + 缓追（见 SmoothPosition.kt）→ 时间数字不卡不跳。
     //   resetKey = 时长：切歌时重置（避免旧歌状态带入）。
@@ -65,24 +67,23 @@ fun ProgressBar(
         resetKey = progressState.value.durationMs,
     )
 
-    // ★ 每帧失效：使时间数字平滑跟手（不再 10Hz 跳）。
+    // ★ 每帧失效（驱动连续重绘）；**仅在播放/拖动时**才逐帧触发。
+    //   ⚠️ 修（2026-10-17）：原实现无条件 `frameTick++` 且在 **composition 阶段**读，
+    //      → 每帧触发【重组】，静止时也不停 → Compose 永不 idle（仪器化测试超时）。
+    //      照搬 DeckView：读 `frameTick` / `smoothPos` **只在 draw 阶段**（见下方 Canvas），
+    //      并从 composition 移出；`isPlaying` 守卫防静止空转。
     var frameTick by remember { mutableIntStateOf(0) }
-    LaunchedEffect(Unit) {
+    LaunchedEffect(isPlaying) {
         while (true) {
-            withFrameNanos { frameTick++ }
+            withFrameNanos { if (isPlaying) frameTick++ }
         }
     }
-    frameTick  // 读一下 → 每帧重绘
 
-    // ★ 位置用平滑值；拖动中则用手指位置。
+    // ★ 时间数字用的（低频）进度：直接读 10Hz 的 `progressState`（不在 composition 读 `smoothPos`，
+    //   否则每帧重组）。拖动中则用手指位置；播放中的平滑由下方 Canvas 的 draw 阶段负责。
     val durationMs = progressState.value.durationMs
-    val realPositionMs = if (smoothPos.value > 0f) {
-        smoothPos.value.toLong()
-    } else {
-        progressState.value.positionMs
-    }
     val progress = if (dragging) dragProgress
-    else if (durationMs > 0) (realPositionMs.toFloat() / durationMs).coerceIn(0f, 1f) else 0f
+    else if (durationMs > 0) (progressState.value.positionMs.toFloat() / durationMs).coerceIn(0f, 1f) else 0f
     val previewMs = (progress * durationMs).toLong()
 
     Box(modifier = modifier) {
@@ -126,6 +127,18 @@ fun ProgressBar(
                         )
                     },
             ) {
+                // ★ 在 draw 阶段才读逐帧值（不在 composition 阶段）→ 只重绘、不重组。
+                @Suppress("UNUSED_EXPRESSION")
+                frameTick
+                val drawProgress = if (dragging) {
+                    dragProgress
+                } else if (durationMs > 0) {
+                    val pos = if (smoothPos.value > 0f) smoothPos.value.toLong()
+                    else progressState.value.positionMs
+                    (pos.toFloat() / durationMs).coerceIn(0f, 1f)
+                } else {
+                    0f
+                }
                 val cy = size.height / 2f
                 val barH = 6f
                 drawRoundRect(
@@ -137,10 +150,10 @@ fun ProgressBar(
                 drawRoundRect(
                     color = playedColor,
                     topLeft = Offset(0f, cy - barH / 2f),
-                    size = Size(size.width * progress, barH),
+                    size = Size(size.width * drawProgress, barH),
                     cornerRadius = CornerRadius(barH / 2f),
                 )
-                drawCircle(color = playedColor, radius = 10f, center = Offset(size.width * progress, cy))
+                drawCircle(color = playedColor, radius = 10f, center = Offset(size.width * drawProgress, cy))
             }
         }
     }
