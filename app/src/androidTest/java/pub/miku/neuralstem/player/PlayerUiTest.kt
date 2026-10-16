@@ -20,8 +20,9 @@ import pub.miku.neuralstem.MainActivity
  * - Step 1：主页由 [pub.miku.neuralstem.ui.AppShell] 托管（**底部导航栏 5 项**）。
  * - **2026-10-17 修订**：原断言已过时（对应当年 UI），本次对齐**当前实际 UI**：
  *   1. ⑪ 删了播放页顶部「播放/暂停」与「Spike 分离」按钮；
- *   2. 播放页控件（导入/播放）**仅在 `state.hasMedia` 时渲染** → 空态只有 `尚未导入音频`；
- *      导入入口在**「歌单」页**（R2 设计：导入归属选中歌单）；
+ *   2. 播放页控件（导入/播放）**仅在 `state.hasMedia` 时渲染**；
+ *      ★2026-10-17：为空态补了「导入音频」入口（新装用户不再“无路可走”）；
+ *      完整导入入口仍在**「歌单」页**（R2 设计：导入归属选中歌单）；
  *   3. 底栏第 4 项是 `混音`（EQ 与分轨混音合并），不是 `EQ`；
  *   4. 分离页 D-3 重构后**没有「开始分离」按钮**（改为按档位按钮），用 `当前曲目` 作定位锚。
  *
@@ -42,10 +43,10 @@ class PlayerUiTest {
     }
 
     @Test
-    fun 空态时播放页不显示导入与播放按钮() {
-        // ★当前设计：播放页控件包在 `if (state.hasMedia)` 内 → 空态不渲染。
-        //   导入入口在「歌单」页（见用例 底部导航栏含五个导航项 / 歌单页可达）。
-        composeRule.onAllNodesWithText("导入音频").assertCountEquals(0)
+    fun 空态播放页显示导入入口但不显示播放按钮() {
+        // ★2026-10-17：空态新增「导入音频」入口（否则新装用户落在播放页无入口）。
+        composeRule.onNodeWithText("导入音频").assertIsDisplayed()
+        // 无曲时无「播放」按钮（控件在 hasMedia 分支内）。
         composeRule.onAllNodesWithText("播放").assertCountEquals(0)
     }
 

@@ -127,6 +127,15 @@ fun PlayerScreen(
             pickAudio.launch(arrayOf("audio/*", "application/ogg", "application/x-flac"))
         }
 
+        // ★空态导入入口（2026-10-17）：此前控件均在 `if (state.hasMedia)` 内，
+        //   新装首次启动落在播放器页 → 只有“尚未导入音频”而**无任何导入入口**（需自行发现歌单页）。
+        //   此处为“空态”补一个「导入音频」按钮（与有曲时同款，直接弹文件选择器）。
+        if (!state.hasMedia && importEnabled) {
+            Button(onClick = onImport) {
+                Text(stringResource(R.string.player_import), maxLines = 1)
+            }
+        }
+
         if (state.hasMedia) {
             if (isLandscape) {
                 // ★⑧F5.2/⑩：横屏 —— **三栏**：左(音高+速度竖条) ‖ 中(大圆盘) ‖ 右(控制/分离开关)。
