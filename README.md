@@ -73,24 +73,24 @@ adb shell "cat /sdcard/Download/accompaniment.fp16.onnx | run-as $PKG sh -c 'cat
 
 1. 打开应用（主页 = **播放器**）
 2. 点「**导入音频**」选一首歌 → 自动播放
-3. 拖动**波形**跳转；用滑块调**速度 / 音高 / EQ**
-4. 左上角 **☰** 打开侧栏 →「**分离**」
-5. 点「**导入音频**」→「**开始分离**」（首次会提示检测设备性能）
-6. 分离完成 →「**▶ 去多轨播放**」→ 进入多轨混音面板，可调各轨音量 / 静音 / 独奏
+3. 拖动**波形**跳转；用滑块调**速度 / 音高**（EQ 在「混音」页）
+4. 点底部**「分离」** →「**开始分离**」（首次会提示检测设备性能；未检测则按钮禁用）
+5. 分离完成 → 自动切多轨 / 或回播放页拨「分离开关」
+6. 点底部**「混音」** → 调各轨音量 / 静音 / 独奏 + EQ
 
 ---
 
 ## 界面结构
 
-导航壳（Drawer，左上角 ☰ 或侧滑唤起）：
+导航壳（**底部导航栏 5 项**；竖屏有顶栏，横屏隐藏顶栏）：
 
 | 页面 | 内容 |
 |---|---|
-| **播放器** | 导入 / 播放暂停 / 波形拖动 / 变速变调 / EQ / 多轨混音面板 |
-| **分离** | 导入音频 → 本地分离（真实进度 % / 取消 / 清理缓存）→ 去多轨播放 |
-| **设置** | 设备能力 + 模型三档分组（⚡ 实时 / ⏱ 较慢 / 🐢 很慢）+ 默认引擎 + EQ 开关 |
-| **歌单** | 占位（不在需求内） |
-| **关于** | 版本号 / 构建信息 |
+| **歌单** | 文件/文件夹导入 / 排序 / 删除 / 点曲播放（并作为播放队列）|
+| **播放器** | 黑胶转盘 + 波形拖动 / 导入 / 播放暂停 / 变速变调 / 分离开关 |
+| **分离** | 当前曲分离（档位：2 轨快速/均衡/质量 · 4 轨快速/质量）→ 去多轨播放 + 导出 WAV |
+| **混音** | 分轨混音（各轨音量/静音/独奏）+ EQ 面板 |
+| **设置** | 设备能力 + 模型三档分组（⚡ 实时 / ⏱ 较慢 / 🐢 很慢）+ 默认引擎 + 转盘时长 / 变速范围 |
 
 ---
 
@@ -118,23 +118,33 @@ UI 通过 `MediaController` 控制 —— 因此单轨与多轨的后台行为�
 ```
 app/src/main/java/pub/miku/neuralstem/
 ├── MainActivity.kt            入口（托管 AppShell）
-├── ui/AppShell.kt             Drawer 导航壳
+├── ui/AppShell.kt             ★ 底部导航栏 5 项（歌单/播放器/分离/混音/设置）
 ├── ui/theme/                  Material 3 主题
 ├── player/                    播放侧
 │   ├── PlaybackService.kt     ★ MediaSessionService：持单轨 player + 多轨控制器 + EQ
+│   ├── SessionState.kt        ★ 状态机（单一真源，I1–I4 不变量）
 │   ├── PlayerViewModel.kt     经 MediaController 控制 + UI 状态
-│   ├── PlayerScreen.kt        播放器 UI
-│   ├── WaveformExtractor.kt   波形包络提取（全格式）
-│   ├── WaveformView.kt        Compose 波形组件（拖动 seek / 多轨叠加）
+│   ├── PlayerScreen.kt        播放器 UI（含黑胶转盘 DeckView）
+│   ├── DeckView.kt / CoverExtractor.kt   黑胶转盘 + 封面提取
+│   ├── MixScreen.kt           混音页（分轨混音 + EQ）
+│   ├── WaveformExtractor.kt   波形包络提取（流式/节流 emit）
+│   ├── WaveformCache.kt       波形文件缓存（全曲解码 ~20s→命中~秒出）
+│   ├── WaveformView.kt        Compose 波形组件（拖动 seek / 多轨预埋）
 │   ├── MultiTrackController.kt  多 ExoPlayer 同步 + 音量/静音/独奏
 │   ├── MultiTrackSession.kt   UI ↔ Service 的自定义命令协议
 │   ├── AudioEq.kt / EqController.kt  均衡器封装与多轨统一出口
 │   ├── TrackMixerPanel.kt     多轨混音面板
-│   └── Media3DecodeBridge.kt  平台 MediaExtractor+MediaCodec 解码桥
-├── settings/                  设置页（模型分组 / 默认引擎 / EQ）
+│   └── Media3DecodeBridge.kt  平台 MediaExtractor+MediaCodec 解码桥（仍在用，勿删）
+├── playlist/                  歌单（导入/排序/持久化 + 队列语义）
+├── settings/                  设置页（模型分组 / 默认引擎 / 转盘时长 / 变速范围）
+├── export/                    导出 WAV（StemExporter）
+├── devtools/                  调试命令总线 + 测试面板（仅 debug）
 └── spike/                     分离侧
     ├── SeparationRepository.kt  分离宿主（进程级单例 + 缓存 + 取消）
-    ├── StreamingSeparator.kt    分块流式分离 + 交叉淡化拼接
+    ├── StreamingSeparator.kt    分块流式分离 + 交叉淡化拼接（2-stem）
+    ├── Spleeter4Separator.kt / Spleeter4Dsp.kt   4-stem 自建 DSP
+    ├── DemucsSeparator.kt / DemucsStft.kt         htdemucs 4 源
+    ├── TierRegistry.kt / BenchmarkTable.kt        档位注册表 + CPU↔模型对照表
     ├── SeparationScreen.kt      分离页 UI
     ├── FrameSource.kt           统一帧源（wav 流式 / 压缩格式解码 + 重采样）
     ├── ModelSpec.kt             模型注册表（用途 / stem 顺序）
@@ -162,8 +172,8 @@ app/src/ncm/                      可选模块：NCM 格式解析（默认不编
 ## 测试
 
 ```bash
-./gradlew app:testDebugUnitTest          # 单元测试（89 项）
-./gradlew app:connectedDebugAndroidTest  # 仪器化测试（6 项，需设备在线）
+./gradlew app:testDebugUnitTest          # 单元测试（128 项）
+./gradlew app:connectedDebugAndroidTest  # 仪器化测试（7 项，需设备在线）
 ```
 
 **单元测试覆盖**：WAV 流式读写 / 分块流式分离拼接 / 重采样 / 波形包络 /
@@ -204,7 +214,8 @@ app/src/ncm/                      可选模块：NCM 格式解析（默认不编
 ## 已知限制
 
 - **分离质量**：Spleeter 模型有渗漏，非出版级
-- **多轨模式波形**：仍显示单轨波形（未做多轨叠加显示）
+- **多轨模式波形**：转盘外环**已修正为显示原曲波形**（P2，`ensureOriginalWaveformForMultiTrack`）；
+  但**各轨波形叠加显示（F5.1）仍未做**
 - **多声道输入**：> 2 声道只取前 2 声道（不做下混）
 - **分离性能对前台敏感**：后台运行时系统降频约 2×
 - 歌单页为占位；Phase 6 UX 打磨（横屏 / 深色 / 触感等）待做

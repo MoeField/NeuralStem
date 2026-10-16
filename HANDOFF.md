@@ -6,16 +6,20 @@
 
 ---
 
-## ★★ 当前状态（2026-10-05，先看这里）
+## ★★ 当前状态（2026-10-12，先看这里）
 
 > **main = 「状态机线」，就是最新在推的线。本文件其余章节描述的就是它。**
 > （旧版顶部那个“大幅回退、已回退到 9-24”的 Banner 已作废 —— 那是**回退当刻**的状态。）
 
+> ⚠️ **数字口径**：本表 HEAD / 测试数仅为**指路**。**易变数字一律以 `doc/.memory.md`
+> 「高频进度日志」最后一行（最新在上）为准**——那里每完成一小步就追加，本处不保证实时同步。
+
 | 项 | 值 |
 |---|---|
-| 当前分支 / HEAD | `main` = `535694f`（2026-10-05）|
+| 当前分支 / HEAD | `main` = `2f82e79`（⑮，2026-10-12）|
 | 工作区 | 干净（无未提交改动）|
-| 构建 / 单测 | `assembleDebug` ✅ 、单测 **106** ✅（实跑 `testDebugUnitTest` 计数）|
+| 进度 | 代码 ≈ 「⑮ 完成」；133 提交 |
+| 构建 / 单测 | `assembleDebug` ✅ 、单测 **128** ✅ 、仪器化 **7** ✅（源码 `@Test` 静态计数）|
 | 另一分支 | `checkpoint-2026-09-29`（`360db84`）—— **更早的另一条线，仅作参考** |
 
 > ❗ **新对话请先读 artifact「冷启动入口」（单页 + 现状/断点/方法论）**，再回来看本文。
@@ -32,20 +36,24 @@
 | 只存在于 **main**（状态机线） | 只存在于 **checkpoint**（参考线） |
 |---|---|
 | `SessionState.kt` + `SessionStateMachineTest`（状态机） | `SoundTouchAudioProcessor*.kt` + `cpp/soundtouch/` + `soundtouch_jni.cpp` |
-| `values-en/strings.xml`（I18N 框架） | `WaveformCache.kt`（波形缓存 + 渐进加载） |
+| `values-en/strings.xml`（I18N，已扩至 8 界面） | ~~`WaveformCache.kt`~~ ✅ **已移植进 main**（`86953bf`）|
 | `MixScreen`（混音页）、`SettingsRepository`、`TierRegistry`（分离档位）等 | `QualitySeparationSection.kt`、`CollapsibleCard.kt` |
 
-> ⇒ 两个待办**其实 checkpoint 已做过原型**：R2/bug C（SoundTouch 变速音质）、**波形缓存 + 渐进加载（WaveformCache）**。
+> ⇒ 仅剩**一个**待办 checkpoint 有原型：R2/bug C（SoundTouch 变速音质）。
+> **波形缓存 + 渐进加载（`WaveformCache`）已从 checkpoint 移植进 main 并落地**（`86953bf`）。
 > 需要时可直接从 `checkpoint-2026-09-29` 取参考。
 
 ### ★ 新对话冷启动游标（从这里接着干）
 
-- **已完成**：核心需求 P0–P4/N3–N5 ✅；恢复计划 Step 0–10 ✅；批次4 起步 ✅；
-  **播放队列 R-a ✅；歌单 R1–R5 ✅；状态机收敛 3a ✅；DevTools（命令总线 + 测试面板）✅；
-  分离档位 D-1/D-2/D-3 ✅；Demucs 完整歌 OOM 修复 ✅；benchmark（BF00A+Gen3）✅**。
-- **下一步顺序**：① ~~D-3~~ ✅ → ② **R-h 波形缓存 + 渐进加载** ⬅ → ③ T-4 循环×队列验收 →
-  ④ R-d 进度记忆 / T-6 失效曲 → ⑤ T-7 3b 状态机收敛收尾 → ⑥ G-1/G-2 benchmark 门控 + 对照表 →
-  ⑦ 打磨（F5.1/F5.5/I18N）→ 🚪 可发布版本 → 演示视频。
+- **已完成**：核心需求 P0–P4/N3–N5 ✅；恢复计划 Step 0–10 ✅；批次4 ✅；
+  **播放队列 R-a ✅；歌单 R1–R5 ✅；状态机收敛 3a/3b ✅；DevTools ✅；
+  分离档位 D-1~D-4 ✅；Demucs 完整歌 OOM 修复 ✅；benchmark（BF00A+Gen3）✅；
+  R-h 波形缓存 + 渐进加载 ✅（`86953bf`）；T-4 循环×队列 ✅；T-5 进度记忆 ✅；T-6 失效曲 ✅；
+  G-1/G-2 benchmark 门控 + 对照表 ✅；I18N 剩余 7 界面 ✅；冷启动续播 ⑧ ✅；
+  反馈修复 ⑨~⑮ ✅（横屏布局/播放器精简/波形半截根治/分离开关简化）**。
+- **下一步顺序**：① ~~D-3~~ ✅ → ② ~~R-h~~ ✅ → ③ ~~T-4~~ ✅ → ④ ~~R-d/T-5+R-e/T-6~~ ✅ →
+  ⑤ ~~T-7/3b~~ ✅ → ⑥ ~~G-1/G-2~~ ✅ → ⑦ ~~I18N~~ ✅ → ⑧ ~~冷启动续播~~ ✅ → ⑨~⑮ ~~反馈修复/横屏布局~~ ✅ →
+  **⑰ 后续反馈批次（待用户给现象）** ⬅；F5.1 波形叠加 / F5.5 小组件 待定 → 🚪 可发布版本 → 演示视频。
 - **演示视频门控**：**在“可发布版本”完工前完全不考虑做**（用户明确）。
 - **必守纪律**：git **每一步都 commit**；**每完成一小步就追加 `.memory.md` 顶部高频日志 + 更新本游标**。
 
@@ -96,12 +104,11 @@
 > R2 补强了 **bug C：变速变调防抖**（已回退方案 3：AudioTrack 原生；SoundTouch 尝试失败，见 `research_timescale.artifact.md`）。
 > **R6 速度范围设置已完成**（单一项 X∈[1.2,4] 线性 step 0.1，默认 1.4；滑块区间 = [1/X, X]；**播放滑块对数尺度（1.0× 居中）、连续无步进**；设置页横向滑块左右各留 12dp；**无线蓝狐真机已验证**）。
 >
-> 🧭 **导航 IA 重构（批次 1）已完成**（真机验证）：
-> 从 Drawer 改为**底部导航栏 5 项**：`歌单 · 播放器 · 分离 · EQ · 设置`；
-> **EQ 独立成页**（从播放器卡片+设置开关收敛）；「关于」并入设置；播放器页移除「分离」按钮；歌单类型提示补强。
+> 🧭 **导航 IA 重构已完成**（真机验证）：
+> 从 Drawer 改为**底部导航栏 5 项**：`歌单 · 播放器 · 分离 · 混音 · 设置`；
+> （注：后续「方案1」把 EQ 与分轨混音**合并为「混音」页**，`9c90b9e`；「关于」并入设置。）
 >
-> **下一步（用户已定优先级）**：①文档/记忆修正（当前）→ ②同族小修（audit P2/P3）→
-> ③分离流程分析 + EQ 可用性 → ④F5.x + I18N → ⑤R5/波形提速/分离前台化 → 🚪 可发布版本 → 最后演示视频。
+> **下一步**：见本文件顶部「★★ 当前状态」的**冷启动游标**（那里是最新断点）。
 > ⚠️ 设备：BF00A serial `TLF2609A004328`（有线）/ `adb-TLF2609A004328-pQOqTm (2)._adb-tls-connect._tcp`（**无线，优先**）。
 > 📌 `ui_rework_requirements.artifact.md`（R 需求定稿）**不在仓库中**；转盘/歌单语义见 `doc/.memory.md`。
 
@@ -131,7 +138,7 @@
   后台继续播 + 媒体通知 + EQ 共用一套（**v2 架构**：session 永远认真实 `singlePlayer`）
 - **M3.5：关键路径已实测** —— 多轨 EQ 正确性 / 单↔多轨切换 / 多轨 seek+变速同步 / 切歌 EQ 重挂
 
-**当前质量**：单测 **89 项** + 仪器化 **6 项**，全绿（真机）。
+**当前质量**：单测 **128 项** + 仪器化 **7 项**（源码 `@Test` 静态计数）。
 
 剩余：**Phase 6 UX 打磨（F5.x）** —— 等你统一讨论 UI（含 DJ 控制台设想）；
 另有两条低成本待办（README/演示脚本、分离任务前台化，见 §八）。
@@ -155,7 +162,7 @@
 | **`HANDOFF.md`**（本文件） | 现状 + 约定 + 下一步 | 首先 |
 | [`README.md`](README.md) | **使用说明**（构建 / 安装 / 上手 / 技术栈） | 交付 / 上手 |
 | [`doc/.memory.md`](doc/.memory.md) | 过程笔记、**全部实测数据**、决策依据 | 写报告 / 需要数据时 |
-| [`doc/.critical_steps.md`](doc/.critical_steps.md) | **57+ 条踩坑记录**（编号可全文引用） | 改代码出问题时 |
+| [`doc/.critical_steps.md`](doc/.critical_steps.md) | **64 条踩坑记录**（编号可全文引用） | 改代码出问题时 |
 | [`doc/research_separation.md`](doc/research_separation.md) | 分离方案选型调研 | 想换模型时 |
 | [`implementation_plan.artifact.md`](implementation_plan.artifact.md) | 滚动实施计划 | 规划下一步时 |
 
@@ -167,6 +174,10 @@
 2. **自动化一律走「应用内自驱动」**，禁止依赖坐标点击（原因见坑 20/32）
 3. **验收证据一律走非 UI 通道**：`logcat` / `dumpsys` / `run-as ls` + `adb pull` 校验文件
 4. 关键选型变更**必须在文档里留档理由**（guide §八.1 要求）
+5. **【元信息纪律】（2026-10-12 新增，防文档漂移）**：正文里“易变数字”
+   **一律不进头部摘要** —— HEAD / 提交数 / 测试数 等只在 **`doc/.memory.md`「高频日志」末行**维护（唯一真源），
+   其余文档的头部/摘要只写**指路**（“见 memory 高频日志”），不复制具体数字。
+   > 起因：自查发现头部摘要普遍落后代码 1~2 周（HEAD 四处不一致、单测数 89/106/118/128 各说各话）。
 
 ---
 
@@ -229,10 +240,11 @@ app/src/deprecated/              已废弃代码存档(TFLite 路线,不编译)
 ```
 
 **测试**：
-- 单测 **89 项**（`app:testDebugUnitTest` 全绿，实跑计数）：原有 + `MultiTrackAlignmentTest`（V1）
-  + `ModelSpecTest`（M2-A）+ `SpeedRangeTest`（R6，含对数中点不变量）
-- 仪器化 **6 项**（`app:connectedDebugAndroidTest` 全绿）：`ExampleInstrumentedTest`
-  + `PlayerUiTest`（V5/M2-C + IA 重构，含底部导航 5 项）
+- 单测 **128 项**（`app:testDebugUnitTest`）：原有 + `MultiTrackAlignmentTest`（V1）
+  + `ModelSpecTest`（M2-A）+ `SpeedRangeTest`（R6，含对数中点不变量）+ EqController/RestoreTarget/
+  SessionStateMachine/BenchmarkTable/DeviceBenchmarkPlan/TierRegistry/DemucsStft/Spleeter4Dsp 等
+- 仪器化 **7 项**（`app:connectedDebugAndroidTest`）：`ExampleInstrumentedTest`
+  + `PlayerUiTest`（6 项：含底部导航 5 项）
 
 ---
 
@@ -296,7 +308,7 @@ app/src/deprecated/              已废弃代码存档(TFLite 路线,不编译)
 
 ## 七、踩过的最重要的坑（**改代码前请先看这些**）
 
-完整 40 条见 [`doc/.critical_steps.md`](doc/.critical_steps.md)，以下是**最容易再次踩到**的：
+完整 64 条见 [`doc/.critical_steps.md`](doc/.critical_steps.md)，以下是**最容易再次踩到**的：
 
 | # | 坑 | 一句话 |
 |---|---|---|
@@ -310,6 +322,7 @@ app/src/deprecated/              已废弃代码存档(TFLite 路线,不编译)
 | **34** | 监听器在 `load()` 前注册会扑空 | 区分「对象生命周期」与「集合内容生命周期」 |
 | **35** | `player.volume` 两个写入点 | 多规则叠加的状态必须收敛到单一出口 |
 | **37** | ★★**多 ExoPlayer 抢音频焦点** | **只有主轨 `handleAudioFocus=true`**，否则 N 个实例互踩 |
+| **58/64** | ★★ **逐帧状态在 composition 阶段读** | “每帧失效”只能读在 **draw 阶段**；composition 读 → **无限重组**（Compose 永不 idle）|
 | **38** | 互相关延迟估计要「共享信号」 | 静音/低相干窗的 lag 是边界伪影，必须先保证可观测性再谈数值 |
 | **39** | 测试 fixture 不能用反相/周期信号 | 负相关峰值不在真延迟处；用共享成分 + 伪随机信号 |
 | **40** | MediaController 异步连接 | 早期请求会静默丢失，必须 pending 重放（~120ms 窗口） |
