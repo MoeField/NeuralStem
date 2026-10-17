@@ -106,6 +106,8 @@ class SeparationRepository(private val app: Application) {
             Log.i(TAG, "start: cancelling running job (concurrent request wins)")
         }
         job?.cancel()
+        // ★G-4：升前台（分离窗口跑在 dataSync 前台服务里，避免后台被 /background cgroup 降频 ~2×）。
+        SeparationService.start(app)
         job = scope.launch {
             try {
                 _state.value = State.Preparing
@@ -156,6 +158,7 @@ class SeparationRepository(private val app: Application) {
             Log.i(TAG, "start4: cancelling running job (concurrent request wins)")
         }
         job?.cancel()
+        SeparationService.start(app)   // ★G-4 升前台
         job = scope.launch {
             try {
                 _state.value = State.Preparing
@@ -274,6 +277,7 @@ class SeparationRepository(private val app: Application) {
     fun startDemucs(source: File, modelFile: File? = null, threads: Int = DEMUCS_THREADS, useNnapi: Boolean = false) {
         if (job?.isActive == true) Log.i(TAG, "startDemucs: cancelling running job")
         job?.cancel()
+        SeparationService.start(app)   // ★G-4 升前台
         job = scope.launch {
             try {
                 _state.value = State.Preparing

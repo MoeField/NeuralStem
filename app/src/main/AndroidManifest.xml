@@ -5,6 +5,8 @@
     <!-- V2(guide N4):后台播放前台服务权限 -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <!-- ★G-4:分离任务前台服务(dataSync)权限 —— 避免后台被降频 ~2× -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <!-- API 33+ 媒体通知需要运行时授权 -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
@@ -41,6 +43,13 @@
         <!-- V2(guide N4):后台播放前台服务(MediaSessionService)
              MediaSessionService 会在播放时自动升为前台服务并发布媒体通知,
              切后台/锁屏仍继续播放。foregroundServiceType=mediaPlayback 是 API 34+ 强制要求。 -->
+        <!-- ★G-4:分离前台服务（前台窗口仅覆盖“分离进行中”，结束即自停）。
+             播放用的 PlaybackService(mediaPlayback) 独立存在，互不影响。 -->
+        <service
+            android:name=".spike.SeparationService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
         <service
             android:name=".player.PlaybackService"
             android:exported="true"
