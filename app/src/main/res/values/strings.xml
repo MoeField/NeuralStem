@@ -50,6 +50,9 @@
     <string name="sep_none_title">尚无分离结果</string>
     <string name="sep_none_body">请先在「分离」页选择档位并分离。</string>
     <string name="sep_none_go">去分离页</string>
+    <!-- G-4 分离前台服务通知 -->
+    <string name="sep_notif_title">音轨分离</string>
+    <string name="sep_notif_channel">分离任务</string>
 
     <!-- 设置 -->
     <string name="settings_title">设置</string>
