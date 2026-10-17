@@ -83,6 +83,8 @@ fun DeckView(
     // ★ 波形也用 **lambda provider**：流式提取期间每 ~300ms 变一次（新对象），
     //   若作为参数会引起**整块重组**（实测 3-4 次/s）→ 卡。改为 draw 阶段读 → 只重绘。
     waveformProvider: () -> WaveformData?,
+    // ★F5.1：多轨时各 stem 波形（空列表=单轨，不叠加）。同样用 lambda → draw 阶段读。
+    stemWaveformProvider: () -> List<WaveformData?> = { emptyList() },
     cover: ImageBitmap?,
     songName: String,
     // ★ 进度流在**本组件内部 collect**（不靠父层 collect），避免父（PlayerScreen）
@@ -184,7 +186,20 @@ fun DeckView(
             // ---- ① 外环：整曲波形 + 进度分色（不转）----
             //   ★ 角度按**真实全曲时长**（player duration）映射，**只画已解码部分**；
             //     否则流式增量时“前 2s 波形会铺满整圈” → 乱跳。
-            drawOverviewRing(waveform, durationMs, center, rOut0, rOut1, progress, playedColor, unplayedColor)
+            //   ★F5.1：多轨时叠加各 stem 波形（不同颜色）；单轨回退为原曲波形。
+            val stems = stemWaveformProvider()
+            if (stems.any { it != null }) {
+                drawStemOverviewRing(
+                    stems, durationMs, center, rOut0, rOut1, progress, StemColors,
+                )
+                // 外环底圈轮廓（不影响叠加可读性）
+                drawCircle(
+                    color = unplayedColor.copy(alpha = 0.5f),
+                    radius = (rOut0 + rOut1) / 2f, center = center, style = Stroke(1f),
+                )
+            } else {
+                drawOverviewRing(waveform, durationMs, center, rOut0, rOut1, progress, playedColor, unplayedColor)
+            }
 
             // ---- ② 中环：局部波形（不自转；唱臂 2 点 = 当前进度）----
             drawLocalRing(
@@ -277,6 +292,71 @@ private fun DrawScope.drawOverviewRing(
             Offset(center.x + dx * endR, center.y + dy * endR),
             strokeWidth = 2f,
         )
+    }
+}
+
+/** ★F5.1：各 stem 叠加色（human 辨识度优先；半透明 → 重叠处可叠加看出）。 */
+private val StemColors: List<Color> = listOf(
+    Color(0xFF4FC3F7),   // vocals —— 青
+    Color(0xFFFFB74D),   // accompaniment —— 橙
+    Color(0xFF81C784),   // drums —— 绿
+    Color(0xFFBA68C8),   // bass —— 紫
+    Color(0xFFE57373),   // other —— 红
+)
+
+/**
+ * ★F5.1：外环**多轨叠加**——每条 stem 用不同颜色、按不同半径层画同一时间轴包络。
+ *
+ * 几何：第 k 轨占据该半径带内的一小段（带内均分），使“各轨波形”互相可见而不完全覆盖。
+ * 进度分色：未播部分统一降透明度；已播部分更亮（保持“已播/未播”语义）。
+ */
+private fun DrawScope.drawStemOverviewRing(
+    stems: List<WaveformData?>,
+    playerDurationMs: Long,
+    center: Offset,
+    rInner: Float,
+    rOut1: Float,
+    progress: Float,
+    colors: List<Color>,
+) {
+    val list = stems.filterNotNull()
+    if (list.isEmpty()) return
+    val lines = 360
+    val perDeg = 360f / lines
+    val slot = (rOut1 - rInner) / list.size          // 每轨的半径带宽
+    list.forEachIndexed { trackIdx, wf ->
+        if (wf.pointCount == 0) return@forEachIndexed
+        val baseColor = colors[trackIdx % colors.size]
+        val bandInner = rInner + slot * trackIdx
+        val bandOuter = bandInner + slot
+        val decodedMs = wf.durationMs.coerceAtLeast(1L)
+        for (i in 0 until lines) {
+            val frac = i.toFloat() / lines
+            val tMs = (frac * (if (playerDurationMs > 0) playerDurationMs else decodedMs)).toLong()
+            if (tMs > decodedMs) continue
+            val srcIdx = wf.indexForPositionMs(tMs)
+            val j2 = wf.indexForPositionMs(tMs + 500L).coerceAtMost(wf.pointCount)
+            var amp = 0f
+            var k = srcIdx
+            while (k < j2 && k < wf.pointCount) {
+                val a = (wf.max[k] - wf.min[k]) * 0.5f
+                if (a > amp) amp = a
+                k++
+            }
+            amp = amp.coerceIn(0f, 1f)
+            val deg = -90f + i * perDeg
+            val rad = Math.toRadians(deg.toDouble())
+            val dx = cos(rad).toFloat(); val dy = sin(rad).toFloat()
+            val endR = bandInner + (bandOuter - bandInner) * (0.15f + 0.85f * amp)
+            val played = frac <= progress
+            val alpha = if (played) 1f else 0.45f
+            drawLine(
+                baseColor.copy(alpha = alpha),
+                Offset(center.x + dx * bandInner, center.y + dy * bandInner),
+                Offset(center.x + dx * endR, center.y + dy * endR),
+                strokeWidth = 2f,
+            )
+        }
     }
 }
 
