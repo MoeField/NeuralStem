@@ -152,6 +152,7 @@ fun PlayerScreen(
                     DeckView(
                         modifier = Modifier.weight(1f).fillMaxHeight(),
                         waveformProvider = { state.waveform },
+                        stemWaveformProvider = { state.stemWaveforms },
                         cover = state.cover,
                         songName = state.fileName,
                         progressFlow = progressFlow,
@@ -349,6 +350,7 @@ private fun DeckArea(
             DeckView(
                 modifier = Modifier.weight(1f).fillMaxWidth(),
                 waveformProvider = { state.waveform },
+                stemWaveformProvider = { state.stemWaveforms },
                 cover = state.cover,
                 songName = state.fileName,
                 progressFlow = progressFlow,

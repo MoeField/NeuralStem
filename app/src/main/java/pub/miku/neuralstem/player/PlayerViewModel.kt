@@ -70,6 +70,11 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         val hasMedia: Boolean = false,
         /** 波形包络(Task 2);null = 还没提取完 */
         val waveform: WaveformData? = null,
+        /**
+         * ★F5.1：多轨模式下**各轨**波形包络（顺序=混音顺序；未就绪的为 null）。
+         * 单轨时为空列表。用于转盘外环叠加显示各轨波形（不同颜色）。
+         */
+        val stemWaveforms: List<WaveformData?> = emptyList(),
         /** Task 3:速度倍率 0.5–2.0 */
         val speed: Float = 1f,
         /** Task 3:音高,半音 -12..12 */
@@ -201,6 +206,15 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     private val coverExtractor = CoverExtractor(viewModelScope).apply {
         contextProvider = { getApplication<Application>() }
     }
+
+    /**
+     * ★F5.1：各 stem 波形提取（多轨叠加显示用）。
+     *
+     * 按轨各建一个 [WaveformExtractor]（每个只负责自己的文件），汇入 `stemWaveforms`。
+     * stem 是本地 WAV → 走 [AudioSource.WavFile]（直读，不解码容器）并被 [WaveformCache] 缓存。
+     */
+    private var stemExtractors: List<WaveformExtractor> = emptyList()
+    private val _stemWaveforms = MutableStateFlow<List<WaveformData?>>(emptyList())
 
     /**
      * Task 3:变速变调(guide F2.x)。
@@ -955,6 +969,8 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         //   ② ensureOriginalWaveformForMultiTrack()：原曲波形缺失时从 originalUri 补提取。
         isMultiTrackLoaded = true
         ensureOriginalWaveformForMultiTrack()
+        // ★F5.1：为各 stem 提取波形（转盘外环叠加显示）
+        extractStemWaveforms(stems)
         // 多轨状态经 MediaController.Listener.onExtrasChanged 回传（构建时已注册）
         // 进入多轨前暂停单轨（Service 内部也会暂停，双保险）
         mediaController?.pause()
@@ -999,6 +1015,35 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         }
         if (_state.value.cover == null && u != null) {
             coverExtractor.extractAsync(u)
+        }
+    }
+
+    /**
+     * ★F5.1：为多轨的各 stem 提取波形包络（叠加显示用）。
+     * 每个 stem 一个 [WaveformExtractor]（本地 WAV → [AudioSource.WavFile]）；
+     * 任一个就绪都更新 `stemWaveforms`；转盘外环据此画多色叠加。
+     */
+    private fun extractStemWaveforms(stems: List<Triple<String, String, File>>) {
+        stemExtractors = emptyList()
+        _stemWaveforms.value = List(stems.size) { null }
+        _state.value = _state.value.copy(stemWaveforms = _stemWaveforms.value)
+        stemExtractors = stems.mapIndexed { idx, (_, _, file) ->
+            val ex = WaveformExtractor(viewModelScope).apply {
+                contextProvider = { getApplication<Application>() }
+            }
+            // 收集：任一轨就绪即刷新列表（只重绘，不重组——由 DeckView 在 draw 阶段读）
+            viewModelScope.launch {
+                ex.waveform.collect { wf ->
+                    val cur = _stemWaveforms.value.toMutableList()
+                    if (idx < cur.size && cur[idx] !== wf) {
+                        cur[idx] = wf
+                        _stemWaveforms.value = cur
+                        _state.value = _state.value.copy(stemWaveforms = cur)
+                    }
+                }
+            }
+            ex.extractAsync(AudioSource.WavFile(file))
+            ex
         }
     }
 
@@ -1047,9 +1092,12 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         // ★3b：状态机同步回单轨（无副作用）——`isMultiTrack` 由 [withDerived] 派生，
         //   不再手动 copy（原写法：状态机仍停在 MultiTrack，仅 UI 布尔变了 → 双源分叉）。
         session.syncMode(SessionMode.Single)
+        stemExtractors = emptyList()
+        _stemWaveforms.value = emptyList()
         _state.value = withDerived(
             _state.value.copy(
                 tracks = emptyList(),
+                stemWaveforms = emptyList(),
                 separationOn = false,
                 durationMs = mediaController?.duration?.coerceAtLeast(0L) ?: 0L,
             ),
@@ -1076,6 +1124,8 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         originalUri = null
         originalName = ""
         lastStems = null
+        stemExtractors = emptyList()
+        _stemWaveforms.value = emptyList()
         // ★3b：`isMultiTrack` 由 [withDerived] 派生（不再手动 copy）。
         _state.value = withDerived(
             _state.value.copy(
@@ -1086,6 +1136,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                 isReady = false,
                 durationMs = 0L,
                 tracks = emptyList(),
+                stemWaveforms = emptyList(),
                 separationOn = false,
                 currentUri = null,
                 waveform = null,
