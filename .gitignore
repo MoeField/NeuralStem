@@ -13,3 +13,20 @@
 .externalNativeBuild
 .cxx
 local.properties
+
+# ---- 所有子模块的构建产物（app/build、bench/build 等）----
+build/
+**/build/
+
+# ---- 大体积二进制资产：不入库（见 README「模型」一节获取方式）----
+/model_assets/
+*.onnx
+*.tar.bz2
+# 注意：app/libs/sherpa-onnx-*.aar 与 cpp/ort-libs/*.so 是构建必需，保留入库。
+
+# ---- 测试音频（版权 + 体积）----
+/doc/*.mp3
+/doc/*.wav
+/doc/*.flac
+/doc/*.m4a
+/doc/*.ogg
