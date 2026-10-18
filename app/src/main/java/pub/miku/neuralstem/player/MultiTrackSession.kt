@@ -24,6 +24,12 @@ object MultiTrackSession {
     /** 载入多轨。args: [KEY_ITEMS]（JSON 数组，每项 {id,label,uri}）。 */
     const val CMD_LOAD = "nst.loadMultiTrack"
 
+    /**
+     * ★G-3：载入**流式**多轨（边分离边播）。args: [KEY_ITEMS]（JSON，每项 {id,label,host}）。
+     * 每轨 uri 由 Service 拼为 `stem://<host>`；ring buffer 同进程共享（EdgeSeparationSession）。
+     */
+    const val CMD_LOAD_STREAM = "nst.loadStreamMultiTrack"
+
     /** 设某轨音量。args: [KEY_TRACK_ID], [KEY_VOLUME]。 */
     const val CMD_SET_VOLUME = "nst.setTrackVolume"
 
@@ -57,7 +63,7 @@ object MultiTrackSession {
     const val CMD_DEBUG_POS = "nst.debugPos"
 
     val ALL_COMMANDS = listOf(
-        CMD_LOAD, CMD_SET_VOLUME, CMD_TOGGLE_MUTE, CMD_TOGGLE_SOLO, CMD_EXIT,
+        CMD_LOAD, CMD_LOAD_STREAM, CMD_SET_VOLUME, CMD_TOGGLE_MUTE, CMD_TOGGLE_SOLO, CMD_EXIT,
         CMD_SET_EQ_ENABLED, CMD_SET_EQ_BAND, CMD_RESET_EQ, CMD_APPLY_EQ_TEST_CURVE,
         CMD_APPLY_EQ_DEFAULT_CURVE, CMD_DEBUG_POS,
     )

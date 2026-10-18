@@ -6,6 +6,7 @@ import androidx.media3.common.C
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.MediaSource
 
 /**
  * 播放器构建工厂（R2 / bug C）。
@@ -62,13 +63,16 @@ fun buildRenderersFactory(context: Context): DefaultRenderersFactory =
  * 统一的 [ExoPlayer] 构建器：单轨/多轨共用，确保音频渲染配置一致。
  *
  * @param handleAudioFocus 仅主轨应为 true（坑 37：多 ExoPlayer 抢焦点）
+ * @param mediaSourceFactory ★G-3：非 null 时用于**流式轨**（自定义 DataSource，
+ *   把 ring buffer 当 WAV 流读）。null = 默认（文件路径，旧行为）。
  */
 @UnstableApi
 fun buildAudioExoPlayer(
     context: Context,
     handleAudioFocus: Boolean,
-): ExoPlayer =
-    ExoPlayer.Builder(context, buildRenderersFactory(context))
+    mediaSourceFactory: MediaSource.Factory? = null,
+): ExoPlayer {
+    val builder = ExoPlayer.Builder(context, buildRenderersFactory(context))
         .setAudioAttributes(
             AudioAttributes.Builder()
                 .setUsage(C.USAGE_MEDIA)
@@ -76,4 +80,6 @@ fun buildAudioExoPlayer(
                 .build(),
             handleAudioFocus,
         )
-        .build()
+    if (mediaSourceFactory != null) builder.setMediaSourceFactory(mediaSourceFactory)
+    return builder.build()
+}
