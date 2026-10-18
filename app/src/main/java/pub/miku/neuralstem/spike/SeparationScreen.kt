@@ -77,6 +77,8 @@ fun SeparationScreen(
     onPlayStems4: (List<File>) -> Unit = {},
     // ★⑭b：发起分离时通知宿主“本次针对哪首曲”（uri），供完成时校验。
     onSeparationStarted: (String?) -> Unit = {},
+    // ★G-3：当前播放位置(ms)，供“从当前位置起分离”；由宿主注入 lambda（点击时才读）。
+    currentPositionMs: () -> Long = { 0L },
 ) {
     val ctx = LocalContext.current
     val app = ctx.applicationContext as Application
@@ -132,7 +134,16 @@ fun SeparationScreen(
             val repo = SettingsRepository(app)
             val opt = repo.tierOption(tc.stem, tc.tier) ?: tc.default()
             Log.i("SepScreen", "startTier: ${tc.stem}/${tc.tier} → ${opt.id} (${opt.displayName})")
-            vm.startOption(src, opt)
+            // ★G-3：边分离边播（仅 2-stem + 快速档 + 开关开）→ 从当前位置起。
+            val useEdge = repo.edgeSeparationEnabled &&
+                tc.stem == StemCount.TWO && tc.tier == Tier.FAST
+            if (useEdge) {
+                val posMs = currentPositionMs()
+                Log.i("SepScreen", "startTier: EDGE from=${posMs}ms")
+                vm.startEdgeOption(src, posMs)
+            } else {
+                vm.startOption(src, opt)
+            }
         }
     }
 

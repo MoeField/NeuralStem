@@ -72,6 +72,9 @@
     <string name="settings_speed_range">Speed range</string>
     <string name="settings_speed_range_value">X = %1$.1f  →  speed range [%2$.2fx, %3$.2fx]</string>
     <string name="settings_speed_range_hint">X sets the speed slider bounds (lower = 1/X). Default 1.4 → [0.71, 1.40].</string>
+    <!-- G-3 edge separation -->
+    <string name="settings_edge_sep">Separate while playing</string>
+    <string name="settings_edge_sep_hint">When on, choosing the \"2-stem · Fast\" tier starts separation from the CURRENT playback position and auto-switches to the result as soon as the first segment is ready (no need to wait for the whole song). Applies to 2-stem · Fast only.</string>
     <string name="settings_prompt_title">Benchmark your device first</string>
     <string name="settings_prompt_body">To pick only “realtime-capable” models as default, the app must benchmark each separation model on this device first.\nIt is quick (seconds); please stay on screen. Separation is disabled until it completes.</string>
     <string name="settings_prompt_run">Detect now</string>

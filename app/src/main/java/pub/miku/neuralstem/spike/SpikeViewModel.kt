@@ -470,6 +470,19 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * ★G-3：开始“边分离边播”（从 [fromPositionMs] 当前播放位置起，仅 Spleeter 2-stem）。
+     * 与 [startOption] 同构（先驱动状态机），但走 [SeparationRepository.startEdge]。
+     */
+    fun startEdgeOption(source: File, fromPositionMs: Long) {
+        engineOverride = true
+        engineMode = SherpaSourceSeparation.MODE_SPLEETER
+        Log.i(TAG, "startEdgeOption: from=${fromPositionMs}ms")
+        session.onSeparationPreparing()
+        pushSeparationTask()
+        repo.startEdge(source, fromPositionMs)
+    }
+
     /** guide N5:取消分离任务 */
     fun cancelSeparation() {
         repo.cancel()
