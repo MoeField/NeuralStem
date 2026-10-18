@@ -65,6 +65,7 @@ class StreamingSeparatorTest {
         chunkFrames: Int = 20_000,
         overlapFrames: Int = 4096,
         negateAccomp: Boolean = false,
+        chunkSchedule: List<Int>? = null,
     ): Pair<StreamingSeparator.Stats, Triple<FloatArray, FloatArray, FloatArray>> {
         val inputFile = tempFile()
         WavWriter(inputFile, channels, sampleRate).use { it.append(input) }
@@ -85,6 +86,7 @@ class StreamingSeparatorTest {
                         separator = sep,
                         chunkFrames = chunkFrames,
                         overlapFrames = overlapFrames,
+                        chunkSchedule = chunkSchedule,
                     ).run()
                 }
             }
@@ -368,5 +370,97 @@ class StreamingSeparatorTest {
             }
         }
         assertTrue("扫描用例数过少: $cases", cases >= 20)
+    }
+
+    // ---------------- ★G-3：变长递增块 + 0.5s 重叠 ----------------
+
+    @Test
+    fun `变长递增块 拼接与单块结果一致（交叉淡化无误差）`() {
+        val channels = 2
+        val frames = 120_000
+        val input = ramp(frames, channels)
+        val overlap = 4096
+
+        // 参照：整文件当一块。
+        val (refStats, refTriple) = runStreaming(
+            input, channels, chunkFrames = frames, overlapFrames = overlap,
+        )
+        val (_, refVocals, _) = refTriple
+
+        // 变长递增序列：模拟 4s→8s→16s→30s（这里缩小量级）
+        // 注意：非尾块 len 必须 >= 2*overlap(8192)，故首块用 9000（≥8192）。
+        val schedule = listOf(9_000, 16_000, 32_000)
+        val (stats, triple) = runStreaming(
+            input, channels, chunkFrames = 32_000, overlapFrames = overlap,
+            chunkSchedule = schedule,
+        )
+        val (_, vocals, _) = triple
+
+        assertTrue("应为多块，实际 ${stats.chunks}", stats.chunks >= 3)
+        // 变长验证：首块应小于末块（计划确实递增）。
+        assertTrue(
+            "首块输出应小于末块（变长递增），实际 ${stats.chunkOutputLengths}",
+            stats.chunkOutputLengths.first() < stats.chunkOutputLengths.last(),
+        )
+
+        val lost = stats.inputFrames - stats.vocalsFrames
+        assertTrue("末尾丢失 $lost 帧，超过 1 个 hop", lost in 0..1023)
+
+        val n = minOf(stats.vocalsFrames, refStats.vocalsFrames)
+        assertTrue("有效对比长度应为正，实际 $n", n > 0)
+        var maxV = 0f
+        for (i in 0 until n * channels) {
+            maxV = maxOf(maxV, Math.abs(refVocals[i] - vocals[i]))
+        }
+        assertTrue("变长块拼接相对单块差异 $maxV 过大", maxV < 1e-5f)
+    }
+
+    @Test
+    fun `0_5s 重叠 + 小首块（G-3 目标参数）能正确拼接`() {
+        val channels = 2
+        val sr = 44_100
+        val overlap = sr / 2               // 0.5s = 22050 帧
+        val frames = sr * 20               // 20s 音频
+        val input = ramp(frames, channels)
+
+        // 首块 4s、之后 8s、16s（G-3 计划：4→8→16→30 截断到总长）
+        val schedule = listOf(sr * 4, sr * 8, sr * 16)
+        val (refStats, refTriple) = runStreaming(
+            input, channels, chunkFrames = frames, overlapFrames = overlap,
+        )
+        val (_, refVocals, _) = refTriple
+        val (stats, triple) = runStreaming(
+            input, channels, chunkFrames = sr * 16, overlapFrames = overlap,
+            chunkSchedule = schedule,
+        )
+        val (_, vocals, _) = triple
+
+        assertTrue("应为多块，实际 ${stats.chunks}", stats.chunks >= 2)
+        val n = minOf(stats.vocalsFrames, refStats.vocalsFrames)
+        var maxV = 0f
+        for (i in 0 until n * channels) maxV = maxOf(maxV, Math.abs(refVocals[i] - vocals[i]))
+        assertTrue("0.5s 重叠拼接差异 $maxV 过大", maxV < 1e-5f)
+        val lost = stats.inputFrames - stats.vocalsFrames
+        assertTrue("末尾丢失 $lost 帧", lost in 0..1023)
+    }
+
+    @Test
+    fun `首块小于 2 倍 overlap 时变长块拒绝运行`() {
+        val sr = 44_100
+        val input = ramp(sr * 10, 1)
+        val overlap = sr / 2                     // 22050
+        // 首块 2s(88200) 仍 >= 2*overlap(44100) → OK，但若首块更小则拒绝。
+        val badSchedule = listOf(sr / 2, sr * 8) // 首块 0.5s(22050) < 2*22050 → 应拒绝
+        val failed = try {
+            runStreaming(
+                input, 1, chunkFrames = sr * 8, overlapFrames = overlap,
+                chunkSchedule = badSchedule,
+            )
+            false
+        } catch (e: IllegalArgumentException) {
+            assertTrue("错误信息应提到 len/overlap", e.message!!.contains("overlap"))
+            true
+        }
+        assertTrue("首块 < 2*overlap 时应拒绝运行", failed)
     }
 }

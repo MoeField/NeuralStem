@@ -100,9 +100,58 @@ class StreamingSeparator(
     private val chunkFrames: Int = DEFAULT_CHUNK_FRAMES,
     /** 相邻块重叠帧数,必须 > 1024(1 个 hop)且 < chunk/2。默认 4096 ≈ 93ms。 */
     private val overlapFrames: Int = DEFAULT_OVERLAP_FRAMES,
+    /**
+     * ★G-3：变长递增分块序列（帧）。空 = 固定块（旧行为，[chunkFrames] 生效）。
+     * 非空时按序列循环推进（例：`[4s,8s,16s,30s]` 帧数）。
+     */
+    private val chunkSchedule: List<Int>? = null,
     /** 块级进度回调(已完成帧 / 总帧),供 F3.2 进度条使用。 */
     private val onProgress: ((doneFrames: Int, totalFrames: Int) -> Unit)? = null,
 ) {
+
+    /**
+     * ★G-3：一块的分块计划。
+     * @param start 起始绝对帧
+     * @param len 本块读取帧数（变长时逐块不同）
+     * @param hop 本块到下一块的推进量 = [len] - overlap（每块自己的 hop）
+     */
+    private data class ChunkPlan(val start: Int, val len: Int, val hop: Int)
+
+    /**
+     * ★G-3：构造分块计划。
+     * - [chunkSchedule] 为空 → **固定块**（旧行为）：每块 [chunkFrames]、hop 恒定。
+     * - 非空 → **变长递增**：按序列循环推进（`hop_i = len_i - overlap`）。
+     *
+     * 尾块约束：尾块长 ∈ (overlap, len]，且 `start + len >= total` 时收尾。
+     */
+    private fun buildPlan(totalFrames: Int): List<ChunkPlan> {
+        if (totalFrames <= 0) return emptyList()
+        val schedule = chunkSchedule
+        if (schedule.isNullOrEmpty()) {
+            // 固定块（旧路径，行为完全不变）。
+            val hop = chunkFrames - overlapFrames
+            val starts = chunkStarts(totalFrames, chunkFrames, hop)
+            return starts.map { s ->
+                ChunkPlan(s, minOf(chunkFrames, totalFrames - s), hop)
+            }
+        }
+        // 变长递增块。
+        val plan = ArrayList<ChunkPlan>()
+        var start = 0
+        var i = 0
+        while (start < totalFrames) {
+            val len = minOf(schedule[i % schedule.size], totalFrames - start)
+            val hop = len - overlapFrames
+            plan += ChunkPlan(start, len, hop)
+            // 若本块已覆盖到末尾，结束。
+            if (start + len >= totalFrames) break
+            // 防御：hop 必须 > 0（由几何约束保证 len >= 2*overlap）。
+            require(hop > 0) { "变长块 hop <= 0：len=$len overlap=$overlapFrames" }
+            start += hop
+            i++
+        }
+        return plan
+    }
 
     /** 分块统计,用于 E4/E5 记录与决策。 */
     data class Stats(
@@ -127,26 +176,29 @@ class StreamingSeparator(
         val sampleRate = reader.sampleRate
         val totalFrames = reader.totalFrames
 
-        val hop = chunkFrames - overlapFrames
-        val starts = chunkStarts(totalFrames, chunkFrames, hop)
+        // ★G-3：分块计划（支持固定块与**变长递增块**统一表达）。
+        val plan = buildPlan(totalFrames)
         // 只在**真的发生分块**时才校验几何约束。
         // 短音频(`total <= chunk`)只有 1 块、不存在重叠区,此时 overlap 参数
         // 完全不相干 —— 无条件校验会无故拒绝合法的单块场景(测试曾命中此问题)。
-        if (starts.size > 1) requireChunkGeometry()
+        if (plan.size > 1) requireChunkGeometry(plan)
 
         val pending = PendingTail(channels, overlapFrames)
-        val lengths = ArrayList<Int>(starts.size)
+        val lengths = ArrayList<Int>(plan.size)
 
         Log.i(
             TAG,
             "streaming: total=$totalFrames frames ch=$channels sr=$sampleRate " +
-                "chunk=$chunkFrames overlap=$overlapFrames hop=$hop chunks=${starts.size}",
+                "overlap=$overlapFrames chunks=${plan.size} lens=${plan.take(6).map { it.len }}",
         )
 
-        starts.forEachIndexed { idx, start ->
+        plan.forEachIndexed { idx, chunk ->
+            val start = chunk.start
             val isFirst = idx == 0
-            val isLast = idx == starts.lastIndex
-            val want = minOf(chunkFrames, totalFrames - start)
+            val isLast = idx == plan.lastIndex
+            // 本块自己的 hop（变长时每块不同）：head/body/tail 三区均以它为准。
+            val hop = chunk.hop
+            val want = chunk.len
             val block = reader.readFrames(start, want)
             require(block.isNotEmpty()) { "empty read at frame $start" }
 
@@ -245,7 +297,7 @@ class StreamingSeparator(
             inputFrames = totalFrames,
             vocalsFrames = vocalsWriter.framesWritten,
             accompFrames = accompWriter.framesWritten,
-            chunks = starts.size,
+            chunks = plan.size,
             chunkOutputLengths = lengths,
         )
         Log.i(
@@ -306,19 +358,26 @@ class StreamingSeparator(
 
     /**
      * 校验分块几何约束。**仅在真的分块(size > 1)时调用** —— 单块不存在重叠区。
+     * 变长块：**逐块**校验（每块自己的 len/hop）。
      */
-    private fun requireChunkGeometry() {
-        require(chunkFrames > 0) { "chunkFrames must be > 0, got $chunkFrames" }
+    private fun requireChunkGeometry(plan: List<ChunkPlan>) {
         // 约束 A:sherpa 每次调用末尾最多丢 1 个 hop,重叠小于 1 hop 会留空洞。
         require(overlapFrames > MAX_DROPPED_FRAMES_PER_CALL) {
             "overlapFrames($overlapFrames) 必须 > ${MAX_DROPPED_FRAMES_PER_CALL}(1 个 hop)," +
                 "否则块间会留下未被任何块覆盖的空洞"
         }
-        // 约束 B(正确性前提):chunk >= 2*overlap ⇔ overlap <= hop。
-        // 只有如此,"body 区只被本块覆盖"才成立,直写原始样本才正确。
-        require(chunkFrames >= 2 * overlapFrames) {
-            "chunkFrames($chunkFrames) 必须 >= 2 * overlapFrames($overlapFrames) ——" +
-                "否则头/尾区会互相穿插,分块拼接的权重归一化不再成立"
+        // 约束 B(正确性前提):**非尾块** len >= 2*overlap ⇔ overlap <= hop。
+        //   只有如此,"body 区只被本块覆盖"才成立,直写原始样本才正确。
+        //   尾块没有下一块,不参与 body 单覆盖推理（且 total 略超一块时尾块可以很短）→ 不校验。
+        plan.forEachIndexed { i, c ->
+            require(c.len > 0) { "chunk #$i len 必须 > 0，got ${c.len}" }
+            val isLast = i == plan.lastIndex
+            if (!isLast) {
+                require(c.len >= 2 * overlapFrames) {
+                    "chunk #$i len(${c.len}) 必须 >= 2 * overlapFrames($overlapFrames) ——" +
+                        "否则头/尾区会互相穿插,分块拼接的权重归一化不再成立"
+                }
+            }
         }
     }
 
