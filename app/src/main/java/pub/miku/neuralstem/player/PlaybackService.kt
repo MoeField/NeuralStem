@@ -11,6 +11,7 @@ import androidx.media3.common.C
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.session.MediaSession
@@ -71,7 +72,9 @@ class PlaybackService : MediaSessionService() {
         val player = buildAudioExoPlayer(
             this,
             handleAudioFocus = true,
-            mediaSourceFactory = DefaultMediaSourceFactory(StemStreamFactory()),
+            mediaSourceFactory = DefaultMediaSourceFactory(
+                StemStreamFactory(DefaultDataSource.Factory(this)),
+            ),
         )
         singlePlayer = player
 
@@ -341,7 +344,7 @@ class PlaybackService : MediaSessionService() {
                 id = id,
                 label = label,
                 uri = Uri.parse("${StemPcmDataSource.SCHEME}://$host"),
-                dataSourceFactory = StemStreamFactory(),
+                dataSourceFactory = StemStreamFactory(DefaultDataSource.Factory(this@PlaybackService)),
             )
         }
         if (items.isEmpty()) return err("items 为空")
