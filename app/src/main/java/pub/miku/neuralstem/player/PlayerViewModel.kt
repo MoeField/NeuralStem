@@ -168,6 +168,14 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     @Volatile
     private var pendingSeekMs: Long? = null
 
+    /**
+     * ★G-3：边分离边播切轨后要恢复的位置（ms）。
+     * 独立于 [pendingSeekMs]，因为切轨会触发 `onMediaItemTransition`（它会清 pendingSeekMs），
+     * 本字段跨该回调保留，在播放器 READY 时消费（→ seek 到 T）。
+     */
+    @Volatile
+    private var edgeSeekMs: Long? = null
+
     // ============================ ★T-5：进度记忆（歌单“回到上次位置继续播”）============================
     /** 当前队列所属歌单 id（null = 非歌单来源，如单曲导入 → 不记进度）。playQueue 设置。 */
     @Volatile
@@ -410,6 +418,19 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                     isReady = playbackState == Player.STATE_READY,
                     durationMs = p.duration.coerceAtLeast(0L),
                 )
+                // ★G-3：边分离边播切轨后，READY 时 seek 到 carry-over 位置并开始播放。
+                if (playbackState == Player.STATE_READY) {
+                    val edge = edgeSeekMs
+                    if (edge != null) {
+                        edgeSeekMs = null
+                        p.seekTo(edge)
+                        pendingSeekMs = edge
+                        lastShownMs = edge
+                        _progress.value = _progress.value.copy(positionMs = edge)
+                        p.play()
+                        Log.i(TAG, "G-3: edge READY → seek ${edge}ms + play")
+                    }
+                }
                 // ★T-5：READY 后消费待恢复的续播位置（此处 seek 才有效；prepare 后立即 seek 会被丢弃）。
                 if (playbackState == Player.STATE_READY) {
                     val resume = pendingResumeMs
@@ -450,7 +471,8 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                 // ★R3：切歌清理：波形/封面重提取；进度/锚点重置（避免旧状态残留）。
                 lastShownMs = -1L
-                pendingSeekMs = null
+                // ★G-3：边分离边播切轨：不要清 pendingSeekMs（承载 carry-over 位置）。
+                if (edgeSeekMs == null) pendingSeekMs = null
                 _progress.value = Progress(0L, _progress.value.durationMs)
                 _anchor.value = null
                 // ★P2：多轨载入时，Service 会给主轨 setMediaItem(vocals) → 本回调触发。
@@ -1029,12 +1051,17 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         val cur = _state.value
         mediaController?.playbackParameters =
             PlaybackParameters(cur.speed, semitonesToRate(cur.pitchSemitones))
-        // 位置 carry-over：等 controller 就绪后在 READY 消费（与 T-5 一致）。
+        // 位置 carry-over：用 edgeSeekMs（跨 onMediaItemTransition 保留），在 READY 消费。
+        edgeSeekMs = startPositionMs
         pendingSeekMs = startPositionMs
         Log.i(TAG, "loadEdgeMultiTrack → Service: streaming stems, seek→${startPositionMs}ms")
+        // playWhenReady=true：多轨下 onPlayWhenReadyChanged 不更新 UI（由主轨驱动），
+        // 故这里显式置位，避免按钮停在“播放”。
         _state.value = _state.value.copy(
             separationOn = true,
             hasMedia = true,
+            playWhenReady = true,
+            isPlaying = true,
             fileName = _state.value.fileName.ifBlank { "分离结果" },
         )
     }

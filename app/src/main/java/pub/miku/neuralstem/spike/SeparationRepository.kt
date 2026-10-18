@@ -163,8 +163,8 @@ class SeparationRepository(private val app: Application) {
                 try {
                     val startFrame = (fromPositionMs.coerceAtLeast(0) * frameSource.sampleRate / 1000L)
                         .toInt().coerceIn(0, frameSource.totalFrames)
-                    // 2) 初始化会话 buffers
-                    session.begin(startFrame, frameSource.sampleRate, frameSource.channels)
+                    // 2) 初始化会话 buffers（传 totalFrames → 合成 WAV 头能算出正确时长）
+                    session.begin(startFrame, frameSource.sampleRate, frameSource.channels, frameSource.totalFrames)
                     // 3) 定位模型（仅 Spleeter 2-stem）
                     val (vocalsPath, accompPath) = resolveModels(SherpaSourceSeparation.MODE_SPLEETER, uvrModelName)
                     val sep = SherpaSourceSeparation.create(

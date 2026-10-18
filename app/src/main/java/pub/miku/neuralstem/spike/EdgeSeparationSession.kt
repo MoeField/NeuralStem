@@ -62,6 +62,10 @@ class EdgeSeparationSession private constructor() {
     @Volatile var startFrame: Int = 0
         private set
 
+    /** 整段音频总帧数（用于合成 WAV 头的预测长度）；0=未知。 */
+    @Volatile var totalFrames: Int = 0
+        private set
+
     /** 是否首段已就绪。 */
     val firstSegmentReady: Boolean
         get() = _state.value is State.FirstSegmentReady ||
@@ -78,12 +82,14 @@ class EdgeSeparationSession private constructor() {
         startFrame: Int,
         sampleRate: Int,
         channels: Int,
+        totalFrames: Int = 0,
         capacityFrames: Int = StemPcmRingBuffer.DEFAULT_CAPACITY_FRAMES,
     ) {
         abort()
         this.startFrame = startFrame.coerceAtLeast(0)
         this.sampleRate = sampleRate
         this.channels = channels
+        this.totalFrames = totalFrames
         vocalsBuffer = StemPcmRingBuffer(channels, capacityFrames)
         accompBuffer = StemPcmRingBuffer(channels, capacityFrames)
         _state.value = State.Preparing
