@@ -137,6 +137,78 @@ class SeparationRepository(private val app: Application) {
         }
     }
 
+    /**
+     * ★G-3：开始一次**边分离边播**（从 [fromPositionMs] 当前位置起，2-stem Spleeter）。
+     *
+     * 与 [start] 的区别：
+     * - 从当前位置起（不从头），首段就绪快；
+     * - 输出写 [EdgeSeparationSession] 的两个 ring buffer（不写文件/不写缓存）；
+     * - 首段就绪 → `session.markFirstSegmentReady`（上层据此自动切轨）。
+     *
+     * 仅 Spleeter 2-stem（快速档）支持；其他引擎仍走 [start]/[start4]/[startDemucs]。
+     */
+    fun startEdge(
+        source: File,
+        fromPositionMs: Long,
+        uvrModelName: String = "UVR-MDX-NET-Voc_FT.onnx",
+    ) {
+        job?.cancel()
+        SeparationService.start(app)
+        val session = EdgeSeparationSession.get()
+        job = scope.launch {
+            try {
+                _state.value = State.Preparing
+                // 1) 解码/重采样输入
+                val frameSource = SeparationInput.open(app, source)
+                try {
+                    val startFrame = (fromPositionMs.coerceAtLeast(0) * frameSource.sampleRate / 1000L)
+                        .toInt().coerceIn(0, frameSource.totalFrames)
+                    // 2) 初始化会话 buffers
+                    session.begin(startFrame, frameSource.sampleRate, frameSource.channels)
+                    // 3) 定位模型（仅 Spleeter 2-stem）
+                    val (vocalsPath, accompPath) = resolveModels(SherpaSourceSeparation.MODE_SPLEETER, uvrModelName)
+                    val sep = SherpaSourceSeparation.create(
+                        vocalsPath, accompPath,
+                        numThreads = NUM_THREADS,
+                        mode = SherpaSourceSeparation.MODE_SPLEETER,
+                    )
+                    try {
+                        val schedule = SegmentedSeparator.defaultSchedule(frameSource.sampleRate)
+                        SegmentedSeparator(
+                            reader = frameSource,
+                            vocalsBuffer = session.vocalsBuffer!!,
+                            accompBuffer = session.accompBuffer!!,
+                            separator = sep::separate,
+                            startFrame = startFrame,
+                            chunkSchedule = schedule,
+                            onProgress = { done, total ->
+                                val pct = if (total > 0) (done * 100 / total).coerceIn(0, 100) else 0
+                                session.updateProgress(pct)
+                                _state.value = State.Running(done, total, 0L, currentPssMb())
+                            },
+                            onFirstSegmentReady = {
+                                session.markFirstSegmentReady(1)
+                            },
+                        ).run()
+                    } finally {
+                        sep.release()
+                    }
+                    session.complete()
+                } finally {
+                    frameSource.close()
+                }
+            } catch (ce: CancellationException) {
+                session.abort()
+                _state.value = State.Cancelled
+                throw ce
+            } catch (t: Throwable) {
+                Log.e(TAG, "edge separation failed", t)
+                session.fail(t.message ?: "edge separation failed")
+                _state.value = State.Failed("边分离边播失败: ${t.message}", t)
+            }
+        }
+    }
+
     /** guide N5:取消正在跑的分离任务 */
     fun cancel() {
         job?.cancel()

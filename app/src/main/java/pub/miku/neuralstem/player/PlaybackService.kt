@@ -12,6 +12,7 @@ import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import androidx.media3.session.SessionCommand
@@ -66,7 +67,12 @@ class PlaybackService : MediaSessionService() {
     override fun onCreate() {
         super.onCreate()
         // ★R2/bug C：统一构建器 → 开启 AudioTrack 原生变速变调（绕过 Sonic，避免频繁改参卡死）。
-        val player = buildAudioExoPlayer(this, handleAudioFocus = true)
+        // ★G-3：装“按 scheme 分发”的 DataSource → 同一个 player 既能播文件也能播分离流（stem://）。
+        val player = buildAudioExoPlayer(
+            this,
+            handleAudioFocus = true,
+            mediaSourceFactory = DefaultMediaSourceFactory(StemStreamFactory()),
+        )
         singlePlayer = player
 
         // 主轨播放/暂停/seek → 同步给跟随轨（多轨模式下）
@@ -314,6 +320,43 @@ class PlaybackService : MediaSessionService() {
         return ok("loaded")
     }
 
+    /**
+     * ★G-3：载入流式多轨（边分离边播）。
+     * items JSON 每项 `{id,label,host}`；uri 拼为 `stem://<host>`，
+     * 主轨（singlePlayer）已装 [StemStreamFactory] → 自动从 ring buffer 读。
+     */
+    private fun handleLoadStream(args: Bundle): SessionResult {
+        val json = args.getString(MultiTrackSession.KEY_ITEMS) ?: return err("items 缺失")
+        val arr = try {
+            JSONArray(json)
+        } catch (t: Throwable) { return err("items 解析失败") }
+        if (arr.length() == 0) return err("items 为空")
+        val items = ArrayList<MultiTrackController.StreamItem>(arr.length())
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            val id = o.optString("id").ifBlank { "track$i" }
+            val label = o.optString("label").ifBlank { id }
+            val host = o.optString("host").ifBlank { if (id.contains("accomp")) "accompaniment" else "vocals" }
+            items += MultiTrackController.StreamItem(
+                id = id,
+                label = label,
+                uri = Uri.parse("${StemPcmDataSource.SCHEME}://$host"),
+                dataSourceFactory = StemStreamFactory(),
+            )
+        }
+        if (items.isEmpty()) return err("items 为空")
+
+        val primary = singlePlayer ?: return err("singlePlayer 未就绪")
+        val c = ensureMultiTrack()
+        c.loadStream(items, args.getString(MultiTrackSession.KEY_TITLE), externalPrimary = primary)
+        inMultiTrack = true
+        c.play()
+        attachMultiTrackEq(c)
+        pushTracksSnapshot()
+        Log.i(TAG, "loadStream: ${items.size} streaming track(s), singlePlayer 为主轨")
+        return ok("loaded-stream")
+    }
+
     private fun handleSetVolume(args: Bundle): SessionResult {
         val c = multiTrack ?: return err("非多轨")
         val id = args.getString(MultiTrackSession.KEY_TRACK_ID) ?: return err("trackId 缺失")
@@ -394,6 +437,7 @@ class PlaybackService : MediaSessionService() {
             Log.i(TAG, "onCustomCommand: ${customCommand.customAction}")
             val result = when (customCommand.customAction) {
                 MultiTrackSession.CMD_LOAD -> handleLoadMultiTrack(args)
+                MultiTrackSession.CMD_LOAD_STREAM -> handleLoadStream(args)
                 MultiTrackSession.CMD_SET_VOLUME -> handleSetVolume(args)
                 MultiTrackSession.CMD_TOGGLE_MUTE -> handleToggleMute(args)
                 MultiTrackSession.CMD_TOGGLE_SOLO -> handleToggleSolo(args)

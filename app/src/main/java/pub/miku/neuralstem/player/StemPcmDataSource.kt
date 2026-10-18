@@ -6,6 +6,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.TransferListener
+import pub.miku.neuralstem.spike.EdgeSeparationSession
 import pub.miku.neuralstem.spike.StemPcmRingBuffer
 import java.io.IOException
 import kotlin.math.min
@@ -152,5 +153,62 @@ class StemPcmDataSource private constructor(
 
     companion object {
         const val WAV_HEADER_SIZE = 44
+        /** 伪 scheme：`stem://vocals` / `stem://accompaniment`。 */
+        const val SCHEME = "stem"
+
+        /**
+         * ★G-3：路由式 DataSource —— 每次 [open] 实时取会话当前 buffer。
+         * 这是 `PlaybackService.singlePlayer` 全程安装的那个（既播文件也播分离流）。
+         */
+        @UnstableApi
+        fun createRouter(): DataSource = RouterDataSource()
     }
+
+    /**
+     * 路由数据源：依据 DataSpec.uri 的 host（`vocals`/`accompaniment`）从
+     * [EdgeSeparationSession] 取当前 buffer，委派给 [StemPcmDataSource]。
+     * 若尚无会话/无 buffer → 抛 IOException（播放器会重试/报错，上层可回退原曲）。
+     */
+    @UnstableApi
+    private class RouterDataSource : DataSource {
+        private var delegate: StemPcmDataSource? = null
+
+        override fun addTransferListener(transferListener: TransferListener) {}
+
+        override fun open(dataSpec: DataSpec): Long {
+            val session = EdgeSeparationSession.get()
+            val host = dataSpec.uri.host ?: ""
+            val buffer = when (host) {
+                "accompaniment" -> session.accompBuffer
+                else -> session.vocalsBuffer   // 默认 vocals
+            } ?: throw IOException("no active edge separation buffer for host=$host")
+            val d = StemPcmDataSource(buffer, session.sampleRate, session.channels)
+            delegate = d
+            return d.open(dataSpec)
+        }
+
+        override fun read(buffer: ByteArray, offset: Int, length: Int): Int =
+            delegate?.read(buffer, offset, length) ?: C.RESULT_END_OF_INPUT
+
+        override fun getUri(): Uri? = delegate?.uri
+
+        override fun close() {
+            delegate?.close()
+            delegate = null
+        }
+    }
+}
+
+/**
+ * ★G-3：按 uri scheme 分发的 DataSource 工厂。
+ *
+ * `PlaybackService.singlePlayer` 在**构建时**就装它 → 同一个 player 既能播文件（原曲/旧多轨），
+ * 又能播分离流（`stem://…`）；无需运行时更换 MediaSourceFactory（ExoPlayer 实例不支持）。
+ *
+ * 每次 [createDataSource]（即每次 open）都**实时**从 [EdgeSeparationSession] 取当前 buffers，
+ * 所以会话重建（新一轮边分离边播）后无需重建 player。
+ */
+@UnstableApi
+class StemStreamFactory : DataSource.Factory {
+    override fun createDataSource(): DataSource = StemPcmDataSource.createRouter()
 }

@@ -10,7 +10,10 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.source.MediaSource
 import java.io.Closeable
 
 /**
@@ -156,9 +159,62 @@ class MultiTrackController(context: Context) : Closeable {
      *
      * @param primary true = 主轨（参与焦点管理）
      */
-    private fun buildPlayer(primary: Boolean): ExoPlayer =
+    private fun buildPlayer(primary: Boolean, mediaSourceFactory: MediaSource.Factory? = null): ExoPlayer =
         // ★R2/bug C：与单轨同一套构建器（AudioTrack 原生变速变调，绕过 Sonic）
-        buildAudioExoPlayer(appContext, handleAudioFocus = primary)
+        buildAudioExoPlayer(appContext, handleAudioFocus = primary, mediaSourceFactory = mediaSourceFactory)
+
+    /**
+     * ★G-3：载入**流式**多轨（每轨一个自定义 DataSource ⇒ ring buffer 当 WAV 流）。
+     *
+     * 与 [load] 的区别：每轨构建时注入 `mediaSourceFactory`（把 `stem://` uri 映射到
+     * [StemPcmDataSource]），其余（同步/音量/独奏/变速）完全一致。
+     *
+     * @param items (id, label, uri, dataSourceFactory) —— 顺序即混音顺序
+     * @param externalPrimary 主轨复用外部 player（同 [load]）
+     */
+    fun loadStream(
+        items: List<StreamItem>,
+        title: String? = null,
+        externalPrimary: ExoPlayer? = null,
+    ) {
+        releaseAll()
+        items.forEachIndexed { index, item ->
+            val isPrimary = index == 0
+            val ownsPlayer = !(isPrimary && externalPrimary != null)
+            // 主轨复用外部 player 时，需给它换 mediaSourceFactory（否则它仍按文件解析）。
+            val player = if (isPrimary && externalPrimary != null) {
+                // ⚠ ExoPlayer 实例无法更换 MediaSourceFactory（只能 Builder 设）。
+                //   故主轨（singlePlayer）**必须**在构建时就带“按 scheme 分发”的
+                //   ResolvingDataSource（见 PlaybackService）：stem:// → StemPcmDataSource。
+                externalPrimary
+            } else {
+                buildPlayer(primary = isPrimary, mediaSourceFactory = DefaultMediaSourceFactory(item.dataSourceFactory))
+            }
+            val display = if (isPrimary && !title.isNullOrBlank()) title else item.label
+            val mi = MediaItem.Builder()
+                .setUri(item.uri)
+                .setMediaMetadata(
+                    MediaMetadata.Builder().setTitle(display).setArtist("NeuralStem").build(),
+                )
+                .build()
+            player.setMediaItem(mi)
+            listeners.forEach { player.addListener(it) }
+            if (isPrimary && ownsPlayer) attachFocusHandling(player)
+            player.prepare()
+            player.playbackParameters = playbackParameters
+            tracks[item.id] = Track(item.id, item.label, player, item.uri, ownsPlayer)
+        }
+        applySoloMute()
+        Log.i(TAG, "loadStream: ${tracks.size} streaming track(s) (externalPrimary=${externalPrimary != null})")
+    }
+
+    /** ★G-3：流式轨描述。 */
+    class StreamItem(
+        val id: String,
+        val label: String,
+        val uri: Uri,
+        val dataSourceFactory: DataSource.Factory,
+    )
 
     /**
      * 焦点联动(guide N3)：主轨失焦时，暂停**全部**轨；
