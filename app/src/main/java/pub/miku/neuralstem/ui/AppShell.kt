@@ -2,6 +2,7 @@ package pub.miku.neuralstem.ui
 
 import android.content.res.Configuration
 import android.net.Uri
+import android.util.Log
 import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -17,6 +18,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -37,6 +39,7 @@ import pub.miku.neuralstem.playlist.PlaylistScreen
 import pub.miku.neuralstem.playlist.PlaylistStore
 import pub.miku.neuralstem.playlist.PlaylistViewModel
 import pub.miku.neuralstem.settings.SettingsScreen
+import pub.miku.neuralstem.spike.EdgeSeparationSession
 import pub.miku.neuralstem.spike.SeparationScreen
 import pub.miku.neuralstem.spike.Spleeter4Dsp
 
@@ -88,6 +91,26 @@ fun AppShell(
     val isLandscape =
         LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
 
+    // ★G-3：边分离边播——首段就绪 → **自动切**到流式多轨（位置 carry-over）。
+    //   观察进程单例会话状态；仅在首次转到“首段就绪”时触发一次。
+    val edgeSession = remember { EdgeSeparationSession.get() }
+    val edgeState by edgeSession.state.collectAsState()
+    var edgeSwitched by remember { mutableStateOf(false) }
+    LaunchedEffect(edgeState) {
+        val st = edgeState
+        if (st is EdgeSeparationSession.State.Preparing) edgeSwitched = false
+        val ready = st is EdgeSeparationSession.State.FirstSegmentReady ||
+            st is EdgeSeparationSession.State.Running ||
+            st is EdgeSeparationSession.State.Done
+        if (ready && !edgeSwitched) {
+            edgeSwitched = true
+            val sr = edgeSession.sampleRate.coerceAtLeast(1)
+            val posMs = edgeSession.startFrame.toLong() * 1000L / sr
+            Log.i("AppShell", "edge first segment ready → auto switch @${posMs}ms")
+            playerVm.loadEdgeMultiTrack(posMs)
+        }
+    }
+
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
@@ -132,6 +155,8 @@ fun AppShell(
                 onToggleSeparation = { on -> playerVm.toggleSeparation(on) },
                 // ★⑭b：发起分离时记录“目标曲”，完成时校验。
                 onSeparationStarted = { playerVm.markSeparationTarget(it) },
+                // ★G-3：当前播放位置（点击时才读）；供“从当前位置起分离”。
+                currentPositionMs = { playerVm.progress.positionMs },
                 onPlayStems = { done ->
                     // ★⑭b：若分离期间已切歌 → **不切多轨**，仅提示（防“播旧曲 stem、显新曲”错配）。
                     if (!playerVm.separationMatchesCurrent()) {

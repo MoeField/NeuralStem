@@ -1004,6 +1004,42 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
+     * ★G-3：边分离边播——首段就绪后切到**流式多轨**（stem://vocals / stem://accompaniment）。
+     *
+     * - 不写文件/不读文件：Service 用 `StemStreamFactory` 从 ring buffer 读。
+     * - **位置 carry-over**：载入后 seek 到 [startPositionMs]（= 发起分离时的位置）。
+     *
+     * @param startPositionMs 切轨后应继续的位置（ms）
+     */
+    fun loadEdgeMultiTrack(startPositionMs: Long) {
+        isMultiTrackLoaded = true
+        ensureOriginalWaveformForMultiTrack()
+        mediaController?.pause()
+        val items = JSONArray().apply {
+            put(JSONObject().apply { put("id", "vocals"); put("label", "人声"); put("host", "vocals") })
+            put(JSONObject().apply { put("id", "accompaniment"); put("label", "伴奏"); put("host", "accompaniment") })
+        }
+        sendMtCommand(
+            MultiTrackSession.CMD_LOAD_STREAM,
+            Bundle().apply {
+                putString(MultiTrackSession.KEY_ITEMS, items.toString())
+                putString(MultiTrackSession.KEY_TITLE, _state.value.fileName)
+            },
+        )
+        val cur = _state.value
+        mediaController?.playbackParameters =
+            PlaybackParameters(cur.speed, semitonesToRate(cur.pitchSemitones))
+        // 位置 carry-over：等 controller 就绪后在 READY 消费（与 T-5 一致）。
+        pendingSeekMs = startPositionMs
+        Log.i(TAG, "loadEdgeMultiTrack → Service: streaming stems, seek→${startPositionMs}ms")
+        _state.value = _state.value.copy(
+            separationOn = true,
+            hasMedia = true,
+            fileName = _state.value.fileName.ifBlank { "分离结果" },
+        )
+    }
+
+    /**
      * ★P2：多轨状态下保证转盘外环显示**原曲波形/封面**。
      * 原曲波形已存在时不动（避免多余重提取）；否则从 [originalUri] 补提取。
      */

@@ -18,6 +18,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -166,6 +167,11 @@ fun SettingsScreen(
 
         HorizontalDivider()
 
+        // ★G-3：边分离边播（默认关；仅 2 轨·快速档生效）
+        EdgeSeparationSetting()
+
+        HorizontalDivider()
+
         // ★D-2：分离档位选模型（仅“候选 ≥2”的档展示：2轨·均衡 / 2轨·质量）
         TierModelSetting()
     }
@@ -199,6 +205,39 @@ private fun DeckTurnSetting() {
             valueRange = SettingsRepository.DECK_SEC_MIN.toFloat()..SettingsRepository.DECK_SEC_MAX.toFloat(),
             steps = (SettingsRepository.DECK_SEC_MAX - SettingsRepository.DECK_SEC_MIN) / SettingsRepository.DECK_SEC_STEP - 1,
             modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}
+
+/**
+ * ★G-3：边分离边播开关（默认关）。
+ * 开启后，在「分离」页选 **2 轨·快速** 档时，分离从**当前播放位置**开始，
+ * 首段就绪后自动切到分离结果播放（而不必等整首分完）。
+ */
+@Composable
+private fun EdgeSeparationSetting() {
+    val ctx = LocalContext.current
+    val repo = remember { SettingsRepository(ctx.applicationContext as Application) }
+    var enabled by remember { mutableStateOf(repo.edgeSeparationEnabled) }
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(stringResource(R.string.settings_edge_sep), style = MaterialTheme.typography.titleMedium)
+            Switch(
+                checked = enabled,
+                onCheckedChange = {
+                    enabled = it
+                    repo.edgeSeparationEnabled = it
+                },
+            )
+        }
+        Text(
+            stringResource(R.string.settings_edge_sep_hint),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }

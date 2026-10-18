@@ -42,6 +42,18 @@ class SettingsRepository(app: Application) {
             Log.i(TAG, "eqEnabled=$value")
         }
 
+    /**
+     * ★G-3：“边分离边播”开关（**默认关**）。
+     * 开启后：分离从当前播放位置起（不从头），首段就绪自动切到分离结果播放。
+     * 仅 Spleeter 2-stem（快速档）生效。
+     */
+    var edgeSeparationEnabled: Boolean
+        get() = prefs.getBoolean(KEY_EDGE_SEP, false)
+        set(value) {
+            prefs.edit().putBoolean(KEY_EDGE_SEP, value).apply()
+            Log.i(TAG, "edgeSeparationEnabled=$value")
+        }
+
     /** 首启 benchmark 是否已询问过(避免每次启动都弹)。 */
     var benchmarkPrompted: Boolean
         get() = prefs.getBoolean(KEY_BENCH_PROMPTED, false)
@@ -152,6 +164,7 @@ class SettingsRepository(app: Application) {
         private const val KEY_REPEAT_MODE = "repeat_mode"
         private const val KEY_DECK_SEC = "deck_seconds_per_turn"
         private const val KEY_SPEED_X = "speed_range_x"
+        private const val KEY_EDGE_SEP = "edge_separation_enabled"
 
         const val DECK_SEC_DEFAULT = 18
         const val DECK_SEC_MIN = 9

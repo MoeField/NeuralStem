@@ -72,6 +72,9 @@
     <string name="settings_speed_range">速度范围</string>
     <string name="settings_speed_range_value">X = %1$.1f  →  速度区间 [%2$.2fx, %3$.2fx]</string>
     <string name="settings_speed_range_hint">X 同时决定速度滑块的上下限（下限 = 1/X）。默认 1.4 → [0.71, 1.40]。</string>
+    <!-- ★G-3 边分离边播 -->
+    <string name="settings_edge_sep">边分离边播</string>
+    <string name="settings_edge_sep_hint">开启后，选「2 轨·快速」档将从**当前播放位置**开始分离，首段就绪即自动切到分离结果（不必等整首）。仅对 2 轨·快速档生效。</string>
     <string name="settings_prompt_title">首次使用需检测设备性能</string>
     <string name="settings_prompt_body">为只把「实时可用」的模型作为默认，首次使用需检测本机运行各分离模型的速度。\n检测很快(数秒)，期间请勿退出。检测完成前无法使用分离功能。</string>
     <string name="settings_prompt_run">现在检测</string>
