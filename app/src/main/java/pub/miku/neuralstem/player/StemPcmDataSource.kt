@@ -5,6 +5,8 @@ import androidx.media3.common.C
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
+
+import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.datasource.TransferListener
 import pub.miku.neuralstem.spike.EdgeSeparationSession
 import pub.miku.neuralstem.spike.StemPcmRingBuffer
@@ -32,10 +34,12 @@ import kotlin.math.min
  * - 若 seek 到“尚未分离到”的位置，read 会等待（由上层 clamp/提示）。
  */
 @UnstableApi
-class StemPcmDataSource private constructor(
+class StemPcmDataSource internal constructor(
     private val buffer: StemPcmRingBuffer,
     private val sampleRate: Int,
     private val channels: Int,
+    /** ★G-3：整段总帧数（合成 WAV 头用，使 ExoPlayer 能算出正确时长）。0=未知。 */
+    private val totalFramesHint: Int = 0,
 ) : DataSource {
 
     /** 每帧字节数（PCM16 × channels）。 */
@@ -47,10 +51,14 @@ class StemPcmDataSource private constructor(
     private var position: Long = 0
     private var bytesRemaining: Long = C.LENGTH_UNSET.toLong()
 
+    /** 本次 open 的起始字节偏移（用于 header 声明的 data size）。 */
+    private var openStartByte: Long = 0
+
     override fun open(dataSpec: DataSpec): Long {
         val c = buffer.openCursor(0)
         cursor = c
         position = 0
+        openStartByte = dataSpec.position
         opened = true
         // 支持从任意 position 打开（seek）：头部区间 [0,44) 之外映射到帧。
         val startPos = dataSpec.position
@@ -114,6 +122,21 @@ class StemPcmDataSource private constructor(
 
     // ---------------- WAV 头（合成） ----------------
 
+    /**
+     * 声明给 ExoPlayer 的 **data 字节数**。
+     * - 若知道总帧数：`(totalFrames*channels*2) - 起始帧字节` → ExoPlayer 能算对时长；
+     * - 否则回退 `-1`（未知，时长会算错——但不致命）。
+     */
+    private fun dataSizeBytes(): Int {
+        if (totalFramesHint <= 0) return -1
+        val totalBytes = totalFramesHint.toLong() * channels * 2
+        val startByteInData = (openStartByte - WAV_HEADER_SIZE).coerceAtLeast(0)
+        val size = (totalBytes - startByteInData).coerceAtLeast(0L)
+        return if (size > Int.MAX_VALUE) -1 else size.toInt()
+    }
+
+    private val riffSize: Int get() = dataSizeBytes().let { if (it < 0) -1 else it + 36 }
+
     private fun wavHeader(): ByteArray {
         val byteRate = sampleRate * channels * 2
         val blockAlign = channels * 2
@@ -122,11 +145,11 @@ class StemPcmDataSource private constructor(
         fun ascii(s: String) { for (ch in s) h[p++] = ch.code.toByte() }
         fun le32(v: Int) { h[p++] = (v and 0xFF).toByte(); h[p++] = ((v shr 8) and 0xFF).toByte(); h[p++] = ((v shr 16) and 0xFF).toByte(); h[p++] = ((v shr 24) and 0xFF).toByte() }
         fun le16(v: Int) { h[p++] = (v and 0xFF).toByte(); h[p++] = ((v shr 8) and 0xFF).toByte() }
-        ascii("RIFF"); le32(-1)                        // RIFF size = 未知（0xFFFFFFFF 占位）
+        ascii("RIFF"); le32(riffSize)
         ascii("WAVE")
         ascii("fmt "); le32(16); le16(1); le16(channels)
         le32(sampleRate); le32(byteRate); le16(blockAlign); le16(16)
-        ascii("data"); le32(-1)                        // data size = 未知
+        ascii("data"); le32(dataSizeBytes())
         return h
     }
 
@@ -153,36 +176,61 @@ class StemPcmDataSource private constructor(
 
     companion object {
         const val WAV_HEADER_SIZE = 44
-        /** 伪 scheme：`stem://vocals` / `stem://accompaniment`。 */
+        /** 伪 scheme：`stem://vocals` / `stem://accompaniment`（播放入口用）。 */
         const val SCHEME = "stem"
-
-        /**
-         * ★G-3：路由式 DataSource —— 每次 [open] 实时取会话当前 buffer。
-         * 这是 `PlaybackService.singlePlayer` 全程安装的那个（既播文件也播分离流）。
-         */
-        @UnstableApi
-        fun createRouter(): DataSource = RouterDataSource()
     }
+}
+
+/**
+ * ★G-3：按 uri scheme 分发的 DataSource 工厂。
+ *
+ * `PlaybackService.singlePlayer` 在**构建时**就装它 → 同一个 player 既能播文件（原曲/旧多轨），
+ * 又能播分离流（`stem://…`）；无需运行时更换 MediaSourceFactory（ExoPlayer 实例不支持）。
+ *
+ * ✅ 关键：用 [ResolvingDataSource] —— **只**将 `stem://` 改写成 ring-buffer 数据源；
+ *   其他所有 scheme（file/content/…）**原样透传**给默认 DataSource。
+ *   （曾经的版本对所有 uri 都返回 RouterDataSource → 普通文件播放全坏，真机抓到。）
+ */
+@UnstableApi
+class StemStreamFactory(
+    private val upstream: DataSource.Factory,
+) : DataSource.Factory {
+
+    override fun createDataSource(): DataSource = DispatchingDataSource(upstream)
 
     /**
-     * 路由数据源：依据 DataSpec.uri 的 host（`vocals`/`accompaniment`）从
-     * [EdgeSeparationSession] 取当前 buffer，委派给 [StemPcmDataSource]。
-     * 若尚无会话/无 buffer → 抛 IOException（播放器会重试/报错，上层可回退原曲）。
+     * 单个 DataSource，但 open 时按 uri scheme 决定：
+     * - `stem://<host>` → [StemPcmDataSource]（从 session 取对应 buffer）；
+     * - 其他 → 委派给 [upstream]（普通文件/内容）。
+     *
+     * ⚠️ 两个 delegate 必须各自 close（都实现了 close）。
      */
-    @UnstableApi
-    private class RouterDataSource : DataSource {
-        private var delegate: StemPcmDataSource? = null
+    private class DispatchingDataSource(
+        private val upstream: DataSource.Factory,
+    ) : DataSource {
+        private var delegate: DataSource? = null
+        private var isStem = false
 
         override fun addTransferListener(transferListener: TransferListener) {}
 
         override fun open(dataSpec: DataSpec): Long {
-            val session = EdgeSeparationSession.get()
-            val host = dataSpec.uri.host ?: ""
-            val buffer = when (host) {
-                "accompaniment" -> session.accompBuffer
-                else -> session.vocalsBuffer   // 默认 vocals
-            } ?: throw IOException("no active edge separation buffer for host=$host")
-            val d = StemPcmDataSource(buffer, session.sampleRate, session.channels)
+            if (dataSpec.uri.scheme == StemPcmDataSource.SCHEME) {
+                isStem = true
+                val session = EdgeSeparationSession.get()
+                val host = dataSpec.uri.host ?: "vocals"
+                val buffer: StemPcmRingBuffer = (
+                    if (host == "accompaniment") session.accompBuffer else session.vocalsBuffer
+                    ) ?: throw IOException("no active edge buffer for host=$host")
+                // 注意：合成头的 data size 用“本行开始位置处理”→ totalFrames 传全曲帧数；
+                // dataSizeBytes() 会减去 open 的起始字节（已包含 startFrame 偏移）。
+                val d = StemPcmDataSource(
+                    buffer, session.sampleRate, session.channels, session.totalFrames,
+                )
+                delegate = d
+                return d.open(dataSpec.buildUpon().setUri(Uri.parse("stem-local://$host")).build())
+            }
+            isStem = false
+            val d = upstream.createDataSource()
             delegate = d
             return d.open(dataSpec)
         }
@@ -197,18 +245,4 @@ class StemPcmDataSource private constructor(
             delegate = null
         }
     }
-}
-
-/**
- * ★G-3：按 uri scheme 分发的 DataSource 工厂。
- *
- * `PlaybackService.singlePlayer` 在**构建时**就装它 → 同一个 player 既能播文件（原曲/旧多轨），
- * 又能播分离流（`stem://…`）；无需运行时更换 MediaSourceFactory（ExoPlayer 实例不支持）。
- *
- * 每次 [createDataSource]（即每次 open）都**实时**从 [EdgeSeparationSession] 取当前 buffers，
- * 所以会话重建（新一轮边分离边播）后无需重建 player。
- */
-@UnstableApi
-class StemStreamFactory : DataSource.Factory {
-    override fun createDataSource(): DataSource = StemPcmDataSource.createRouter()
 }
