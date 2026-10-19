@@ -105,6 +105,26 @@ object ModelCatalog {
     private const val SPLEETER2_ACCOMP_BYTES = 19_681_024L
     private const val SPLEETER4_BYTES = 19_714_141L
 
+    /**
+     * ★UVR 两档真实字节数（真机 `ls -l` 读回，与官方 content-length 一致）。
+     *
+     * ⚠️ 这些值**参与 `isInstalled()` 的容差判定**（±64KB），
+     * 因此绝不能再写成 `28_300_000` / `63_700_000` 这类抹零估值 ——
+     * 那会与实际文件差 1–3MB，导致“下载完永远显示未安装”。
+     */
+    /**
+     * ★UVR 两档真实字节数（真机 `ls -l` 读回，与官方 content-length 一致）。
+     *
+     * ⚠️ 这些值**参与 `isInstalled()` 的容差判定**（±64KB），
+     * 因此绝不能再写成 `28_300_000` / `63_700_000` 这类抹零估值 ——
+     * 那会与实际文件差 1–3MB，导致“下载完永远显示未安装”（真机实报）。
+     *
+     * 大模型三个文件实际分别为 66_762_795（Voc_FT）/ 66_759_522（Inst_HQ_3）/
+     * 66_759_516（Main），最大偏差 3.3KB，远小于容差 → 共用一个常量。
+     */
+    private const val UVR_SMALL_BYTES = 29_704_738L   // 9482 / KARA
+    private const val UVR_LARGE_BYTES = 66_759_522L   // Voc_FT / Inst_HQ_3 / Main
+
     val ALL: List<ModelPackInfo> = listOf(
         ModelPackInfo(
             pack = ModelPack.SPLEETER_2STEM,
@@ -163,9 +183,14 @@ object ModelCatalog {
      * 但 **上游 UVR/MDX-Net 模型权重多数没有显式许可声明**（部分源自 Sony MDX 研究发布，
      * 常带研究/非商业限制）。⇒ 弹窗与 NOTICE 里必须写清，不能声称“自由许可”。
      *
-     * ## 体积与速度（真机 BF00A 实测）
-     * 9482 / KARA 各 28MB，1.03×（可用）；
-     * Voc_FT / Inst_HQ_3 / Main 各 64MB，**0.34×**（4 分钟歌要 12 分钟）。
+     * ## ★体积常量必须是**真实字节数**（2026-10-20 修）
+     * 之前这里写的是抹零估值（`28_300_000` / `63_700_000`）。而 `isInstalled()` 会用
+     * `SIZE_TOLERANCE_BYTES`（±64KB）比对期望体积 —— 28_300_000 与真实 29_704_738
+     * 差 **1.4MB**，远超容差 ⇒ **下载完也永远显示“未安装”**（真机实报：“点下载、
+     * 等完、返回再进来还是没显示已安装”）。
+     *
+     * 教训：凡是参与完整性判定的常量，只能用**实测真实值**，不能用“约 xxMB”。
+     * 下面的数值是从真机 `ls -l` 读回的（与官方 content-length 一致）。
      */
     private fun uvrPacks(): List<ModelPackInfo> {
         fun pack(
@@ -197,23 +222,23 @@ object ModelCatalog {
         return listOf(
             pack(
                 ModelPack.UVR_9482, "UVR 9482（UVR 里最快）",
-                "$GH_UVR_BASE/UVR_MDXNET_9482.onnx", 28_300_000L, "实测 1.03×",
+                "$GH_UVR_BASE/UVR_MDXNET_9482.onnx", UVR_SMALL_BYTES, "实测 1.03×",
             ),
             pack(
                 ModelPack.UVR_KARA, "UVR KARA（伴奏/卡拉OK 导向）",
-                "$GH_UVR_BASE/UVR_MDXNET_KARA.onnx", 28_300_000L, "实测 1.03×",
+                "$GH_UVR_BASE/UVR_MDXNET_KARA.onnx", UVR_SMALL_BYTES, "实测 1.03×",
             ),
             pack(
                 ModelPack.UVR_VOC_FT, "UVR Voc_FT（人声导向）",
-                "$GH_UVR_BASE/UVR-MDX-NET-Voc_FT.onnx", 63_700_000L, "实测 0.34×，4 分钟歌约 12 分钟",
+                "$GH_UVR_BASE/UVR-MDX-NET-Voc_FT.onnx", UVR_LARGE_BYTES, "实测 0.34×，4 分钟歌约 12 分钟",
             ),
             pack(
                 ModelPack.UVR_INST_HQ_3, "UVR Inst_HQ_3（去人声最强）",
-                "$GH_UVR_BASE/UVR-MDX-NET-Inst_HQ_3.onnx", 63_700_000L, "实测 0.34×，4 分钟歌约 12 分钟",
+                "$GH_UVR_BASE/UVR-MDX-NET-Inst_HQ_3.onnx", UVR_LARGE_BYTES, "实测 0.34×，4 分钟歌约 12 分钟",
             ),
             pack(
                 ModelPack.UVR_MAIN, "UVR Main（通用）",
-                "$GH_UVR_BASE/UVR_MDXNET_Main.onnx", 63_700_000L, "实测 0.34×，4 分钟歌约 12 分钟",
+                "$GH_UVR_BASE/UVR_MDXNET_Main.onnx", UVR_LARGE_BYTES, "实测 0.34×，4 分钟歌约 12 分钟",
             ),
         )
     }

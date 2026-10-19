@@ -91,6 +91,36 @@ class ModelCatalogTest {
         assertTrue("两轨大小应接近（差 <1MB），实际差 $diff", diff < 1_000_000)
     }
 
+    /**
+     * ★回归（2026-10-20 真机实报）：UVR 的 `expectedBytes` 曾写成抹零估值
+     * `28_300_000` / `63_700_000`，与真实文件（29_704_738 / 66_759_522）差 1–3MB，
+     * 远超 `isInstalled()` 的 ±64KB 容差 → **下载完成仍显示“未安装”**。
+     *
+     * 这个测试锁死真实值。改常量时若写回“约 xxMB”，这里立刻失败。
+     */
+    @Test
+    fun `UVR 期望字节数必须是真实值而不是抹零估值`() {
+        // 真机 ls -l 读回的真实大小（与官方 content-length 一致）
+        val expected = mapOf(
+            ModelPack.UVR_9482 to 29_704_738L,
+            ModelPack.UVR_KARA to 29_704_738L,
+            ModelPack.UVR_INST_HQ_3 to 66_759_522L,
+            ModelPack.UVR_MAIN to 66_759_516L,
+            ModelPack.UVR_VOC_FT to 66_762_795L,
+        )
+        // isInstalled() 的容差：±64KB
+        val tolerance = 64L * 1024
+        for ((pack, realBytes) in expected) {
+            val declared = ModelCatalog.info(pack).files.single().expectedBytes
+            val diff = abs(declared - realBytes)
+            assertTrue(
+                "$pack 的 expectedBytes=$declared 与真实值 $realBytes 相差 $diff 字节，" +
+                    "超过容差 $tolerance —— 会导致“下载完仍显示未安装”",
+                diff <= tolerance,
+            )
+        }
+    }
+
     @Test
     fun `体积格式化可读`() {        assertEquals("39 MB", ModelCatalog.humanSize(39_000_000))
         assertEquals("181 MB", ModelCatalog.humanSize(181_000_000))
