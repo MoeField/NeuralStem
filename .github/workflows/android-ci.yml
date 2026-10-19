@@ -190,6 +190,19 @@ jobs:
           echo "name=$V" >> "$GITHUB_OUTPUT"
           echo "resolved version: '$V'"
 
+      - name: Ensure debug keystore exists
+        # ★release 用 debug 签名（见 app/build.gradle.kts）。
+        # Gradle 会自动生成，但显式先建一份更稳（避免并行/缓存异常）。
+        run: |
+          mkdir -p ~/.android
+          if [ ! -f ~/.android/debug.keystore ]; then
+            keytool -genkeypair -v -keystore ~/.android/debug.keystore \
+              -storepass android -alias androiddebugkey -keypass android \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
+          ls -l ~/.android/debug.keystore
+
       - name: Build release APK
         run: |
           set +e
@@ -197,7 +210,11 @@ jobs:
           if [ -n "${{ steps.ver.outputs.name }}" ]; then
             EXTRA="-PversionName=${{ steps.ver.outputs.name }}"
           fi
-          ./gradlew :app:assembleRelease $EXTRA --no-daemon --stacktrace \
+          # -x lintVital*：release 默认会跑 lintVital（需额外下载 lint-gradle 依赖，
+          #   与本流水线目的无关，且会增加一次网络失败点）。
+          ./gradlew :app:assembleRelease $EXTRA \
+            -x lintVitalAnalyzeRelease -x lintVitalRelease \
+            --no-daemon --stacktrace \
             -Porg.gradle.java.installations.auto-download=false 2>&1 | tee /tmp/build.log
           rc=${PIPESTATUS[0]}
           if [ "$rc" -ne 0 ]; then
