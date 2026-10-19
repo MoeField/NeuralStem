@@ -140,6 +140,30 @@
     <string name="settings_tier_slow_hint">Slower: long tracks will take a while.</string>
     <string name="settings_tier_veryslow_hint">Very slow: expect waiting; not recommended as default.</string>
 
+    <!-- ★Step4: sub-pages (model library / separation policy) -->
+    <string name="settings_page_models">Model library</string>
+    <string name="settings_page_models_sub">%1$d/%2$d installed · %3$s total</string>
+    <string name="settings_page_policy">Separation policy</string>
+    <string name="settings_page_policy_sub">2-stem: %1$d tiers on · 4-stem: %2$d fixed tiers</string>
+    <string name="page_back">Back</string>
+    <!-- Model library: size buckets -->
+    <string name="models_group_header">%1$s · %2$d models</string>
+    <string name="models_group_hint">measured %1$s</string>
+    <string name="models_rtf_unknown">not measured</string>
+    <string name="models_rtf_value">measured %1$s</string>
+    <string name="models_delete">Delete</string>
+    <string name="models_delete_title">Delete model?</string>
+    <string name="models_delete_body">“%1$s” (%2$s) will be removed from this device. You must download it again to use it. Benchmark history is kept.</string>
+    <string name="models_delete_confirm">Delete</string>
+    <string name="models_delete_failed">Delete failed (some files are in use). Please retry.</string>
+    <!-- Separation policy -->
+    <string name="policy_two_title">2-stem (by measured speed tier)</string>
+    <string name="policy_two_hint">Disabled tiers are hidden on the separation screen. Pick one model per tier; only installed candidates are listed.</string>
+    <string name="policy_tier_empty">No installed model in this tier</string>
+    <string name="policy_tier_installed_label">installed</string>
+    <string name="policy_four_title">4-stem (fixed, cannot be disabled)</string>
+    <string name="policy_four_hint">4-stem has two fixed tiers; its models do not follow the speed tiers.</string>
+
     <!-- Mix page (EQ + track mixer) -->
     <string name="mix_title">Mix</string>
     <string name="mix_tracks">Track mixer</string>
