@@ -200,6 +200,8 @@ class SeparationRepository(private val app: Application) {
         SeparationService.start(app)
         val session = EdgeSeparationSession.get()
         job = scope.launch {
+            // ★取消支持：捕获本协程的 Job（`cancel()` 会把外层 `job` 置 null，不能用它判断）。
+            val thisJob = coroutineContext[Job]
             try {
                 _state.value = State.Preparing(State.PrepPhase.DECODING)
                 // 1) 解码/重采样输入
@@ -260,6 +262,9 @@ class SeparationRepository(private val app: Application) {
                                 onFirstSegmentReady = {
                                     session.markFirstSegmentReady(1)
                                 },
+                                // ★取消支持：每块开始前检查 job 是否已取消。
+                                //   注意：不能读外层 `job`（cancel() 会置 null）→ 持久化到局部 val。
+                                isCancelled = { thisJob?.isActive == false },
                             ).run()
                             // ★G-3fix（关键）：**必须发终态**，否则 _state 永远停在 Running(99)。
                             session.complete()
