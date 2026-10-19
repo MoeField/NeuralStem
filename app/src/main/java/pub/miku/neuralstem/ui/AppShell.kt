@@ -1,5 +1,6 @@
 package pub.miku.neuralstem.ui
 
+import android.app.Application
 import android.content.res.Configuration
 import android.net.Uri
 import android.util.Log
@@ -27,6 +28,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -41,6 +43,7 @@ import pub.miku.neuralstem.playlist.PlaylistStore
 import pub.miku.neuralstem.playlist.PlaylistViewModel
 import pub.miku.neuralstem.settings.SettingsScreen
 import pub.miku.neuralstem.spike.EdgeSeparationSession
+import pub.miku.neuralstem.spike.SeparationRepository
 import pub.miku.neuralstem.spike.SeparationScreen
 import pub.miku.neuralstem.spike.Spleeter4Dsp
 
@@ -100,6 +103,33 @@ fun AppShell(
     // ★G-3ux：Snackbar 文案在 Composable 上下文取（协程内不能用 stringResource）。
     val edgeSwitchedMsg = stringResource(R.string.sep_edge_switched)
     val edgeAbortedMsg = stringResource(R.string.sep_edge_aborted)
+
+    // ★G-3fix：分离完成（EdgeDone）且已落盘 → **无声切到文件播放**。
+    //   不切的话：buffer 已关 → 播放器读 EOF → 误判 STATE_ENDED → 曲目提前结束。
+    val appCtx = LocalContext.current.applicationContext as Application
+    val repo = remember { SeparationRepository.get(appCtx) }
+    val repoState by repo.state.collectAsState()
+    LaunchedEffect(repoState) {
+        val rs = repoState as? SeparationRepository.State.EdgeDone ?: return@LaunchedEffect
+        val vf = rs.vocalsFile
+        val af = rs.accompanimentFile
+        if (vf == null || af == null || !vf.exists() || !af.exists()) {
+            Log.w("AppShell", "EdgeDone 但未落盘 → 保持流式播放（可能提前 EOF）")
+            return@LaunchedEffect
+        }
+        val posMs = rs.startFrame.toLong() * 1000L / rs.sampleRate.coerceAtLeast(1)
+        Log.i("AppShell", "EdgeDone → 切到文件播放 ${vf.name}，seek=$posMs ms")
+        playerVm.loadMultiTrack(
+            listOf(
+                Triple("vocals", "人声", vf),
+                Triple("accompaniment", "伴奏", af),
+            ),
+            startPositionMs = posMs,
+        )
+        playerVm.markStemsAvailable()
+        playerVm.play()
+    }
+
     LaunchedEffect(edgeState) {
         val st = edgeState
         if (st is EdgeSeparationSession.State.Preparing) edgeSwitched = false

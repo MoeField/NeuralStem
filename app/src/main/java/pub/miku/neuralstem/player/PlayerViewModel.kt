@@ -1001,8 +1001,14 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
      *
      * @param stems 每条轨的 (id, 显示名, 文件) —— 顺序即混音顺序
      */
-    fun loadMultiTrack(stems: List<Triple<String, String, File>>) {
+    fun loadMultiTrack(stems: List<Triple<String, String, File>>, startPositionMs: Long = 0L) {
         if (stems.isEmpty()) return
+        // ★G-3fix：优先带位置的多轨载入（edge 完成后切文件播放入口）；
+        //   seek 在 READY 时消费（prepare 后立即 seek 会被丢弃）。
+        if (startPositionMs > 0L) {
+            edgeSeekMs = startPositionMs
+            pendingSeekMs = startPositionMs
+        }
         // ★R-b：记住本次 stems（供分离开关“关→再开”恢复）；并标记可用。
         lastStems = stems
         _state.value = _state.value.copy(stemsAvailable = true)

@@ -35,6 +35,18 @@ class SegmentedSeparator(
     private val onProgress: ((doneFrames: Int, totalFrames: Int) -> Unit)? = null,
     /** 第一段写出后回调一次（供上层切换到“可播”）。 */
     private val onFirstSegmentReady: (() -> Unit)? = null,
+    /**
+     * ★G-3fix（可选）：并行落盘。非 null 时，**写给 ring buffer 的同一份数据**
+     * 同时 append 到这两个 WavWriter。
+     *
+     * 为何需要：edge 分离完成后要关 buffer（读端 EOF），若播放器此时还在读
+     * `stem://` 就会误判 `STATE_ENDED` → 播放提前结束。落盘后上层可**无缝切到
+     * 文件播放**（文件完整、可 seek 到 [startFrame] 之后任意位置）。
+     *
+     * 注意：落盘内容 = `[startFrame, 曲尾)`，**不包含** startFrame 之前的部分。
+     */
+    private val vocalsWriter: WavWriter? = null,
+    private val accompWriter: WavWriter? = null,
 ) {
     /** 统计。 */
     data class Stats(
@@ -126,6 +138,8 @@ class SegmentedSeparator(
                 }
                 vocalsBuffer.append(v, 0, mergeLen)
                 accompBuffer.append(a, 0, mergeLen)
+                vocalsWriter?.appendRegion(v, 0, mergeLen)
+                accompWriter?.appendRegion(a, 0, mergeLen)
                 pendFrames = 0
             }
 
@@ -173,6 +187,9 @@ class SegmentedSeparator(
         if (count <= 0) return
         vocalsBuffer.append(v, offsetFrames, count)
         accompBuffer.append(a, offsetFrames, count)
+        // ★G-3fix：并行落盘（与 buffer 写入同一份数据，保证内容一致）。
+        vocalsWriter?.appendRegion(v, offsetFrames, count)
+        accompWriter?.appendRegion(a, offsetFrames, count)
     }
 
     /** 与 [StreamingSeparator] 完全一致的权重公式。 */

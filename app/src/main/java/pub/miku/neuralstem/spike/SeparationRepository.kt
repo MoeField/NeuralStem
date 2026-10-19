@@ -112,6 +112,12 @@ class SeparationRepository(private val app: Application) {
             val inferTimeMs: Long,
             val peakPssMb: Float,
             val audioDurationMs: Long,
+            /** ★G-3fix：落盘的 stem 文件（内容 = [startFrame, 曲尾)）；null = 落盘失败。 */
+            val vocalsFile: File? = null,
+            val accompanimentFile: File? = null,
+            /** 落盘文件对应的起始帧（播放切过去时 seek 到这里）。 */
+            val startFrame: Int = 0,
+            val sampleRate: Int = 44_100,
         ) : State
     }
 
@@ -203,51 +209,80 @@ class SeparationRepository(private val app: Application) {
                         .toInt().coerceIn(0, frameSource.totalFrames)
                     // 2) 初始化会话 buffers（传 totalFrames → 合成 WAV 头能算出正确时长）
                     session.begin(startFrame, frameSource.sampleRate, frameSource.channels, frameSource.totalFrames)
-                    // 3) 定位模型（仅 Spleeter 2-stem）
-                    _state.value = State.Preparing(State.PrepPhase.LOADING_MODEL)
-                    val (vocalsPath, accompPath) = resolveModels(SherpaSourceSeparation.MODE_SPLEETER, uvrModelName)
-                    val sep = SherpaSourceSeparation.create(
-                        vocalsPath, accompPath,
-                        numThreads = NUM_THREADS,
-                        mode = SherpaSourceSeparation.MODE_SPLEETER,
-                    )
+
+                    // ★G-3fix：并行落盘到缓存目录。
+                    //   分离完成后 buffer 会被关（读端 EOF）→ 播放器误判 STATE_ENDED。
+                    //   落盘后上层可无缝切到文件播放，支持 seek 到 startFrame 之后。
+                    val outDir = File(app.filesDir, "stems-cache/${contentHash(source)}-spleeter")
+                    var vWriter: WavWriter? = null
+                    var aWriter: WavWriter? = null
+                    runCatching {
+                        outDir.mkdirs()
+                        vWriter = WavWriter(File(outDir, "vocals.edge.wav"), frameSource.channels, frameSource.sampleRate)
+                        aWriter = WavWriter(File(outDir, "accompaniment.edge.wav"), frameSource.channels, frameSource.sampleRate)
+                        Log.i(TAG, "edge: 落盘到 ${outDir.absolutePath}（from frame=$startFrame）")
+                    }.onFailure {
+                        Log.w(TAG, "edge: 落盘初始化失败，将仅边播不落盘", it)
+                        vWriter = null
+                        aWriter = null
+                    }
                     try {
-                        val schedule = SegmentedSeparator.defaultSchedule(frameSource.sampleRate)
-                        // ★G-3fix：推理计时起点（提前于 Separator 构造）。
-                        val t0 = System.currentTimeMillis()
-                        val stats = SegmentedSeparator(
-                            reader = frameSource,
-                            vocalsBuffer = session.vocalsBuffer!!,
-                            accompBuffer = session.accompBuffer!!,
-                            separator = sep::separate,
-                            startFrame = startFrame,
-                            chunkSchedule = schedule,
-                            onProgress = { done, total ->
-                                // ★G-3fix：用浮点算再取整，避免最后一块因 overlap 导致
-                                //   done*100/total 少 1（永远到不了 100）。
-                                val pct = if (total > 0) {
-                                    ((done.toDouble() * 100.0) / total).toInt().coerceIn(0, 100)
-                                } else 0
-                                session.updateProgress(pct)
-                                _state.value = State.Running(done, total, 0L, currentPssMb())
-                            },
-                            onFirstSegmentReady = {
-                                session.markFirstSegmentReady(1)
-                            },
-                        ).run()
-                        // ★G-3fix（关键）：**必须发终态**，否则 _state 永远停在 Running(99)。
-                        session.complete()
-                        val audioMs = frameSource.totalFrames.toLong() * 1000L /
-                            frameSource.sampleRate.coerceAtLeast(1)
-                        _state.value = State.EdgeDone(
-                            inferTimeMs = System.currentTimeMillis() - t0,
-                            peakPssMb = currentPssMb(),
-                            audioDurationMs = audioMs,
+                        // 3) 定位模型（仅 Spleeter 2-stem）
+                        _state.value = State.Preparing(State.PrepPhase.LOADING_MODEL)
+                        val (vocalsPath, accompPath) = resolveModels(SherpaSourceSeparation.MODE_SPLEETER, uvrModelName)
+                        val sep = SherpaSourceSeparation.create(
+                            vocalsPath, accompPath,
+                            numThreads = NUM_THREADS,
+                            mode = SherpaSourceSeparation.MODE_SPLEETER,
                         )
-                        Log.i(TAG, "edge done: vFrames=${stats.vocalsFrames} aFrames=${stats.accompFrames} " +
-                            "chunks=${stats.chunks}")
+                        try {
+                            val schedule = SegmentedSeparator.defaultSchedule(frameSource.sampleRate)
+                            // ★G-3fix：推理计时起点（提前于 Separator 构造）。
+                            val t0 = System.currentTimeMillis()
+                            val stats = SegmentedSeparator(
+                                reader = frameSource,
+                                vocalsBuffer = session.vocalsBuffer!!,
+                                accompBuffer = session.accompBuffer!!,
+                                separator = sep::separate,
+                                startFrame = startFrame,
+                                chunkSchedule = schedule,
+                                vocalsWriter = vWriter,
+                                accompWriter = aWriter,
+                                onProgress = { done, total ->
+                                    // ★G-3fix：用浮点算再取整，避免最后一块因 overlap 导致
+                                    //   done*100/total 少 1（永远到不了 100）。
+                                    val pct = if (total > 0) {
+                                        ((done.toDouble() * 100.0) / total).toInt().coerceIn(0, 100)
+                                    } else 0
+                                    session.updateProgress(pct)
+                                    _state.value = State.Running(done, total, 0L, currentPssMb())
+                                },
+                                onFirstSegmentReady = {
+                                    session.markFirstSegmentReady(1)
+                                },
+                            ).run()
+                            // ★G-3fix（关键）：**必须发终态**，否则 _state 永远停在 Running(99)。
+                            session.complete()
+                            val audioMs = frameSource.totalFrames.toLong() * 1000L /
+                                frameSource.sampleRate.coerceAtLeast(1)
+                            _state.value = State.EdgeDone(
+                                inferTimeMs = System.currentTimeMillis() - t0,
+                                peakPssMb = currentPssMb(),
+                                audioDurationMs = audioMs,
+                                vocalsFile = File(outDir, "vocals.edge.wav").takeIf { vWriter != null },
+                                accompanimentFile = File(outDir, "accompaniment.edge.wav").takeIf { aWriter != null },
+                                startFrame = startFrame,
+                                sampleRate = frameSource.sampleRate,
+                            )
+                            Log.i(TAG, "edge done: vFrames=${stats.vocalsFrames} aFrames=${stats.accompFrames} " +
+                                "chunks=${stats.chunks} files=${vWriter != null}")
+                        } finally {
+                            sep.release()
+                        }
                     } finally {
-                        sep.release()
+                        // 关闭落盘文件（回填 WAV 头部 size）。幂等。
+                        runCatching { vWriter?.close() }.onFailure { Log.w(TAG, "close vocals.edge.wav failed", it) }
+                        runCatching { aWriter?.close() }.onFailure { Log.w(TAG, "close accomp.edge.wav failed", it) }
                     }
                 } finally {
                     frameSource.close()
