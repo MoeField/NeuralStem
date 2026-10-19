@@ -48,6 +48,9 @@
     <string name="repeat_loop_one">Repeat one</string>
     <string name="sep_preparing">Preparing…</string>
     <string name="sep_running_pct">Separating %1$d%%</string>
+    <!-- ★G-3ux: edge separation — playable while separating in background -->
+    <string name="sep_running_playable">Playing · separating %1$d%% in background</string>
+    <string name="sep_edge_switched">Switched to separated stems, resuming from current position</string>
     <string name="sep_done_cache">✅ Cache hit (no re-inference)</string>
     <string name="sep_done">✅ Separation done</string>
     <string name="sep_done4_cache">✅ 4-stem cache hit</string>

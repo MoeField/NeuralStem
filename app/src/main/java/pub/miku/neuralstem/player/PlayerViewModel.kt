@@ -34,6 +34,7 @@ import org.json.JSONObject
 import kotlin.math.abs
 import pub.miku.neuralstem.playlist.PlaylistStore
 import pub.miku.neuralstem.settings.SettingsRepository
+import pub.miku.neuralstem.spike.EdgeSeparationSession
 
 /**
  * Task 1 基础播放器(guide F0.1–F0.4, N3)。
@@ -101,6 +102,13 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         val stemsAvailable: Boolean = false,
         /** ★Step10：当前播放曲的 uri（分离页用它作输入）。 */
         val currentUri: String? = null,
+        /**
+         * ★G-3ux：边分离边播**进行中**的进度百分比（0–100）；null = 无活动 edge 会话。
+         *
+         * 意义：用户点了「⚡ 快速」后，分离页/播放页都应能看到“还在分离”。
+         * 没有它时，切多轨后 UI 自相矛盾（开关说“已分离”，进度条说“分离中 58%”）。
+         */
+        val edgePercent: Int? = null,
     )
 
     /** Task 4.4:单条轨的 UI 状态(F4.2/F4.3) */
@@ -591,6 +599,22 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         Log.i(TAG, "VM init (instance=${hashCode()})")
         // V2(guide N4):连接 PlaybackService 的 session 拿 MediaController
         connectToService()
+        // ★G-3ux：把 edge 会话进度镜像进 PlayerState，
+        //   使播放页/分离页都能显示“边分离边播进行中 · N%”。
+        //   Idle/Cancelled/Failed → null；Preparing → 0；FirstSegmentReady/Running → 百分比；Done → null。
+        viewModelScope.launch {
+            EdgeSeparationSession.get().state.collect { st ->
+                val pct: Int? = when (st) {
+                    is EdgeSeparationSession.State.Preparing -> 0
+                    is EdgeSeparationSession.State.FirstSegmentReady -> st.percent
+                    is EdgeSeparationSession.State.Running -> st.percent
+                    else -> null   // Idle / Done / Failed / Cancelled
+                }
+                if (_state.value.edgePercent != pct) {
+                    _state.value = _state.value.copy(edgePercent = pct)
+                }
+            }
+        }
         // Task 2 / R3：把波形与封面流镜像到 UI state
         // （★ 9-24 之前**未收集** → 波形/封面永不显示，即历史“坑 55”）。
         viewModelScope.launch {
