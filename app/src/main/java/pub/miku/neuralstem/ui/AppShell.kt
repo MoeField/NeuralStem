@@ -96,6 +96,8 @@ fun AppShell(
     val edgeSession = remember { EdgeSeparationSession.get() }
     val edgeState by edgeSession.state.collectAsState()
     var edgeSwitched by remember { mutableStateOf(false) }
+    // ★G-3ux：Snackbar 文案在 Composable 上下文取（协程内不能用 stringResource）。
+    val edgeSwitchedMsg = stringResource(R.string.sep_edge_switched)
     LaunchedEffect(edgeState) {
         val st = edgeState
         if (st is EdgeSeparationSession.State.Preparing) edgeSwitched = false
@@ -108,6 +110,11 @@ fun AppShell(
             val posMs = edgeSession.startFrame.toLong() * 1000L / sr
             Log.i("AppShell", "edge first segment ready → auto switch @${posMs}ms")
             playerVm.loadEdgeMultiTrack(posMs)
+            // ★G-3ux：告知用户“已切到分离结果，可从当前位置继续”——
+            //   否则声音在用户无预期的时间点“换了一个”，易误以为出错。
+            scope.launch {
+                snackbarHostState.showSnackbar(edgeSwitchedMsg)
+            }
         }
     }
 
@@ -157,6 +164,8 @@ fun AppShell(
                 onSeparationStarted = { playerVm.markSeparationTarget(it) },
                 // ★G-3：当前播放位置（点击时才读）；供“从当前位置起分离”。
                 currentPositionMs = { playerVm.progress.positionMs },
+                // ★G-3ux：分离页进度文案区分“已可播/仍在跑”。
+                edgePercent = playerState.edgePercent,
                 onPlayStems = { done ->
                     // ★⑭b：若分离期间已切歌 → **不切多轨**，仅提示（防“播旧曲 stem、显新曲”错配）。
                     if (!playerVm.separationMatchesCurrent()) {

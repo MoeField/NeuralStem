@@ -452,11 +452,21 @@ private fun ControlsArea(
             onImport?.let {
                 Button(onClick = it) { Text(stringResource(R.string.player_import), maxLines = 1) }
             }
-            Text(
-                stringResource(if (state.separationOn) R.string.player_sep_on else R.string.player_sep_off),
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.weight(1f),
-            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    stringResource(if (state.separationOn) R.string.player_sep_on else R.string.player_sep_off),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                // ★G-3ux：边分离边播进行中 → 明确告知“已可听，但后台还在分离”。
+                //   没有这一行，用户会看到“多轨”却没意识到分离尚未完成。
+                state.edgePercent?.let { pct ->
+                    Text(
+                        stringResource(R.string.sep_running_playable, pct),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            }
             Switch(
                 checked = state.separationOn,
                 onCheckedChange = { onSeparationToggle(it) },

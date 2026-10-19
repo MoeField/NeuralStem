@@ -48,6 +48,9 @@
     <string name="repeat_loop_one">单曲循环</string>
     <string name="sep_preparing">准备中…</string>
     <string name="sep_running_pct">分离中 %1$d%%</string>
+    <!-- ★G-3ux：边分离边播——已可听但仍在后台分离 -->
+    <string name="sep_running_playable">已可播放 · 后台分离中 %1$d%%</string>
+    <string name="sep_edge_switched">已切到分离结果，可从当前位置继续播放</string>
     <string name="sep_done_cache">✅ 命中缓存（未重新推理）</string>
     <string name="sep_done">✅ 分离完成</string>
     <string name="sep_done4_cache">✅ 4-stem 命中缓存</string>

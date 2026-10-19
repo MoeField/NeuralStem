@@ -79,6 +79,8 @@ fun SeparationScreen(
     onSeparationStarted: (String?) -> Unit = {},
     // ★G-3：当前播放位置(ms)，供“从当前位置起分离”；由宿主注入 lambda（点击时才读）。
     currentPositionMs: () -> Long = { 0L },
+    // ★G-3ux：边分离边播进行中的百分比（null=无活动会话）——用于进度文案区分。
+    edgePercent: Int? = null,
 ) {
     val ctx = LocalContext.current
     val app = ctx.applicationContext as Application
@@ -267,7 +269,16 @@ fun SeparationScreen(
                     progress = { t.percent / 100f },
                     modifier = Modifier.fillMaxWidth(),
                 )
-                Text(stringResource(R.string.sep_running_pct, t.percent))
+                // ★G-3ux：边分离边播时，多轨已可听但仍需后台分离 → 文案要说明白，
+                //   否则“分离开关：多轨”与“分离中 58%”自相矛盾。
+                if (edgePercent != null) {
+                    Text(
+                        stringResource(R.string.sep_running_playable, t.percent),
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                } else {
+                    Text(stringResource(R.string.sep_running_pct, t.percent))
+                }
             }
             is SeparationTask.Done2 -> Text(
                 stringResource(if (t.fromCache) R.string.sep_done_cache else R.string.sep_done),
