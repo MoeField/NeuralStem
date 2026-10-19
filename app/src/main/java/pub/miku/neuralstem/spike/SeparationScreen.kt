@@ -82,6 +82,12 @@ fun SeparationScreen(
     // ★G-3ux：边分离边播进行中的百分比（null=无活动会话）——用于进度文案区分。
     edgePercent: Int? = null,
     /**
+     * ★闸门（2026-10-20）：分离跟不上播放，播放已被闸门自动暂停。
+     *
+     * 仅用于**解释现状**（“为什么没声”），不参与任何门控逻辑。
+     */
+    edgeStarved: Boolean = false,
+    /**
      * ★G-3ux：自动开始分离的触发 token。
      *
      * 使用递增整数而非布尔：同一值不重复触发，新值（+1）才触发 →
@@ -395,6 +401,14 @@ fun SeparationScreen(
                         stringResource(R.string.sep_running_playable, t.percent),
                         color = MaterialTheme.colorScheme.primary,
                     )
+                    // ★闸门：分离跟不上播放 → 已自动暂停，需要解释
+                    if (edgeStarved) {
+                        Text(
+                            stringResource(R.string.sep_edge_starved_paused, t.percent),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
                 } else {
                     Text(stringResource(R.string.sep_running_pct, t.percent))
                 }

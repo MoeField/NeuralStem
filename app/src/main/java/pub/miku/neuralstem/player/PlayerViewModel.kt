@@ -110,6 +110,15 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
          * 没有它时，切多轨后 UI 自相矛盾（开关说“已分离”，进度条说“分离中 58%”）。
          */
         val edgePercent: Int? = null,
+    /**
+     * ★闸门（2026-10-20）：边播时**播放被分离追上而暂停**。
+     *
+     * 与 [edgePercent] 分开是因为它俩含义不同：
+     * - [edgePercent] = “分离还在跑”（进度）
+     * - [edgeStarved] = “**现在没声，不是 bug**”（播放态）
+     * 没这一项时用户会以为播放坏了（慢模型 0.34× 会频繁进入此态）。
+     */
+    val edgeStarved: Boolean = false,
     )
 
     /** Task 4.4:单条轨的 UI 状态(F4.2/F4.3) */
@@ -644,6 +653,16 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 if (_state.value.edgePercent != pct) {
                     _state.value = _state.value.copy(edgePercent = pct)
+                }
+            }
+        }
+        // ★闸门：把“分离跟不上播放”镜像进 PlayerState，供播放页显示提示。
+        //   否则用户只看到“暂停”而不知道为什么（慢模型会反复进这个态）。
+        viewModelScope.launch {
+            EdgeSeparationSession.get().gate.collect { g ->
+                val starved = g is EdgeSeparationSession.Gate.Starved
+                if (_state.value.edgeStarved != starved) {
+                    _state.value = _state.value.copy(edgeStarved = starved)
                 }
             }
         }

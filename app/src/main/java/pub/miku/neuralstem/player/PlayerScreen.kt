@@ -459,8 +459,23 @@ private fun ControlsArea(
                 )
                 // ★G-3ux：边分离边播进行中 → 明确告知“已可听，但后台还在分离”。
                 //   没有这一行，用户会看到“多轨”却没意识到分离尚未完成。
-                state.edgePercent?.let { pct ->
-                    Text(
+                //
+                // ★闸门（2026-10-20）：分离跟不上播放时优先显示 **Starved** 文案
+                //   （“已暂停等待”），否则用户只看到“暂停”而不知道是⾃在等分离。
+                //   慢模型（0.34×）会反复进这个态，必须解释清楚。
+                val pct = state.edgePercent
+                when {
+                    state.edgeStarved && pct != null -> Text(
+                        stringResource(R.string.sep_edge_starved_paused, pct),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    state.edgeStarved -> Text(
+                        stringResource(R.string.sep_edge_starved),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    pct != null -> Text(
                         stringResource(R.string.sep_running_playable, pct),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.primary,
