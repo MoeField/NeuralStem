@@ -21,8 +21,39 @@ class ModelCatalogTest {
             assertTrue("${info.pack} 应有文件", info.files.isNotEmpty())
             assertTrue("${info.pack} 应有许可说明", info.license.isNotBlank())
             assertTrue("${info.pack} 应有许可详情", info.licenseNote.isNotBlank())
-            assertTrue("${info.pack} 来源应为 HF", info.sourceUrl.startsWith("https://huggingface.co/"))
+            // Spleeter/Demucs 走 HF；UVR 走 GitHub Release（镜像不了）。
+            assertTrue(
+                "${info.pack} 来源应为 HF 或 GitHub：${info.sourceUrl}",
+                info.sourceUrl.startsWith("https://huggingface.co/") ||
+                    info.sourceUrl.startsWith("https://github.com/"),
+            )
             assertTrue("${info.pack} 总体积应 > 0", info.totalBytes > 0)
+        }
+    }
+
+    @Test
+    fun `UVR 包必须如实标注许可未统一声明`() {
+        val uvrPacks = listOf(
+            ModelPack.UVR_9482, ModelPack.UVR_KARA, ModelPack.UVR_VOC_FT,
+            ModelPack.UVR_INST_HQ_3, ModelPack.UVR_MAIN,
+        )
+        for (p in uvrPacks) {
+            val info = ModelCatalog.info(p)
+            assertTrue(
+                "${p} 的许可必须写明“未统一声明”（不可声称自由许可）",
+                info.license.contains("未统一声明"),
+            )
+            assertTrue(
+                "${p} 的许可详情应提及上游风险",
+                info.licenseNote.contains("未显式声明") || info.licenseNote.contains("未统一"),
+            )
+        }
+    }
+
+    @Test
+    fun `UVR 模型落盘到 uvr 目录`() {
+        for (p in listOf(ModelPack.UVR_9482, ModelPack.UVR_VOC_FT)) {
+            assertEquals("uvr", ModelCatalog.info(p).files.first().targetSubdir)
         }
     }
 
@@ -67,8 +98,12 @@ class ModelCatalogTest {
     }
 
     @Test
-    fun `每个包的文件目标目录各不相同`() {
-        val dirs = ModelCatalog.ALL.map { it.files.first().targetSubdir }
-        assertEquals("不同包的落地目录不应重复", dirs.size, dirs.toSet().size)
+    fun `不同包的文件不应撞到同一文件名`() {
+        // 注：UVR 五个包**共享** uvr/ 目录（故意的——引擎按这个目录找），
+        // 但它们文件名各不相同，不会冲掉。
+        val keys = ModelCatalog.ALL.flatMap { info ->
+            info.files.map { "${it.targetSubdir}/${it.fileName}" }
+        }
+        assertEquals("不同包的（目录+文件名）不应重复", keys.size, keys.toSet().size)
     }
 }

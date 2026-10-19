@@ -12,6 +12,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -49,7 +50,12 @@ fun ModelManagerSection(modifier: Modifier = Modifier) {
     val ctx = LocalContext.current
     val repo = remember { SettingsRepository(ctx.applicationContext as Application) }
     val filesDir = remember { ctx.filesDir }
-    val downloader = remember { ModelDownloader(filesDir) }
+    val downloader = remember {
+        ModelDownloader(filesDir).apply {
+            // 注入代理前缀：UVR 模型只在 GitHub，国内常需代理
+            proxyProvider = { repo.downloadProxy }
+        }
+    }
     val scope = rememberCoroutineScope()
 
     // 已安装状态（下载完成后要刷新 → 用可变 state 承载）
@@ -106,6 +112,9 @@ fun ModelManagerSection(modifier: Modifier = Modifier) {
                 color = MaterialTheme.colorScheme.primary,
             )
         }
+
+        // ---- GitHub 代理（UVR 模型专用）----
+        GithubProxySetting(repo = repo)
 
         // ---- 各模型包 ----
         ModelCatalog.ALL.forEach { info ->
@@ -227,6 +236,48 @@ fun ModelManagerSection(modifier: Modifier = Modifier) {
                 }
             },
         )
+    }
+}
+
+/**
+ * GitHub 代理前缀设置（UVR 模型专用）。
+ *
+ * ## 为何单独一个设置
+ * UVR 系模型**只**在 GitHub Release（hf-mirror 镜像不了），而国内网络常
+ * `github.com:443` 连不上。默认填 `https://api.gitproxy.dev`（实测可用），
+ * 用户可改成自建代理或清空直连。
+ */
+@Composable
+private fun GithubProxySetting(repo: SettingsRepository) {
+    var value by remember { mutableStateOf(repo.downloadProxy) }
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(
+            stringResource(R.string.settings_models_proxy),
+            style = MaterialTheme.typography.labelLarge,
+        )
+        OutlinedTextField(
+            value = value,
+            onValueChange = { value = it },
+            singleLine = true,
+            placeholder = { Text("https://api.gitproxy.dev") },
+            modifier = Modifier.fillMaxWidth(),
+            trailingIcon = {
+                TextButton(onClick = {
+                    value = repo.downloadProxy
+                }) { Text(stringResource(R.string.settings_models_proxy_reset)) }
+            },
+        )
+        Text(
+            stringResource(R.string.settings_models_proxy_hint),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        // 只在值真的改变时落库（避免每敲一个字符就写 prefs）
+        if (value.trim() != repo.downloadProxy) {
+            TextButton(onClick = { repo.downloadProxy = value }) {
+                Text(stringResource(R.string.settings_models_proxy_save))
+            }
+        }
     }
 }
 

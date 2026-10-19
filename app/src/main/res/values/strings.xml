@@ -82,6 +82,10 @@
     <string name="settings_models_redownload">重新下载</string>
     <string name="settings_models_license">许可：%1$s</string>
     <string name="settings_models_source">下载源</string>
+    <string name="settings_models_proxy">GitHub 代理（UVR 模型用）</string>
+    <string name="settings_models_proxy_hint">UVR 模型只在 GitHub上，国内常连不上。默认走 api.gitproxy.dev（Cloudflare 加速）；清空则直连 GitHub。</string>
+    <string name="settings_models_proxy_reset">撤销</string>
+    <string name="settings_models_proxy_save">保存代理</string>
     <string name="settings_models_probing">正在检测网络…</string>
     <string name="settings_models_downloading">下载中 %1$d%%（%2$s）</string>
     <string name="settings_models_done">✓ 下载完成</string>
