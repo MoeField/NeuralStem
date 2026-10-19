@@ -73,9 +73,19 @@ jobs:
 
       - name: Unit tests (compileSdk 36 override)
         run: |
+          set +e
           ./gradlew :app:testDebugUnitTest --no-daemon --stacktrace \
             -Porg.gradle.java.installations.auto-download=false \
-            -PciCompileSdk=36
+            -PciCompileSdk=36 2>&1 | tee /tmp/gradle.log
+          rc=${PIPESTATUS[0]}
+          if [ "$rc" -ne 0 ]; then
+            # 把关键报错变成 annotation（无需 admin 就能通过 API 读到）
+            grep -iE "What went wrong|Caused by|error:|FAILED|> Could not|> Failed" /tmp/gradle.log | head -20 | while IFS= read -r line; do
+              msg=$(echo "$line" | tr -d '\r' | cut -c1-900)
+              echo "::error::$msg"
+            done
+          fi
+          exit $rc
 
       - name: Upload test reports
         if: always()
