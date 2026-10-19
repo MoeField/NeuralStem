@@ -325,7 +325,20 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
             repo.state.collect { s ->
                 // ★3a-2：把 repo 态驱动进状态机（单一真源），再镜像到 [separationTask]。
                 when (s) {
-                    is SeparationRepository.State.Preparing -> session.onSeparationPreparing()
+                    is SeparationRepository.State.Preparing ->
+                        // ★准备子阶段：把 repo 的 PrepPhase 映射到状态机，供 UI 显示具体步骤。
+                        session.onSeparationPreparing(
+                            when (s.phase) {
+                                SeparationRepository.State.PrepPhase.START ->
+                                    SeparationTask.PrepPhase.START
+                                SeparationRepository.State.PrepPhase.DECODING ->
+                                    SeparationTask.PrepPhase.DECODING
+                                SeparationRepository.State.PrepPhase.LOADING_MODEL ->
+                                    SeparationTask.PrepPhase.LOADING_MODEL
+                                SeparationRepository.State.PrepPhase.MODEL_READY ->
+                                    SeparationTask.PrepPhase.MODEL_READY
+                            },
+                        )
                     is SeparationRepository.State.Running -> {
                         // 首个 Running 若还在 Preparing，先进入 Running(0)
                         if (session.separation !is SeparationTask.Running) session.startSeparation()

@@ -48,7 +48,15 @@ sealed interface SeparationTask {
     data object Idle : SeparationTask
 
     /** 准备中（源解析 / 模型加载）。 */
-    data object Preparing : SeparationTask
+    data class Preparing(val phase: PrepPhase = PrepPhase.START) : SeparationTask
+
+    /**
+     * ★准备子阶段：供 UI 显示“在干什么”。
+     *
+     * 实测（BF00A）：点「快速」到首块推理要 **~13 秒**，其中绝大部分是解码整首 mp3。
+     * 之前只显示静态“准备中…”→ 像卡死。
+     */
+    enum class PrepPhase { START, DECODING, LOADING_MODEL, MODEL_READY }
 
     data class Running(val percent: Int) : SeparationTask
 
@@ -294,8 +302,8 @@ class SessionStateMachine(private val effects: Effects) {
     // ============================ I3：分离（一次性消费）============================
 
     /** 进入准备态（源解析 / 模型加载）。 */
-    fun onSeparationPreparing() {
-        separation = SeparationTask.Preparing
+    fun onSeparationPreparing(phase: SeparationTask.PrepPhase = SeparationTask.PrepPhase.START) {
+        separation = SeparationTask.Preparing(phase)
     }
 
     fun startSeparation() {
