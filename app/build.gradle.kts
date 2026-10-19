@@ -15,7 +15,8 @@ android {
     defaultConfig {
         applicationId = "pub.miku.neuralstem"
         minSdk = 23
-        targetSdk = 37
+        // CI 用 -PciCompileSdk=36 降级时，targetSdk 必须同步降至 36（AGP 要求 target <= compile）。
+        targetSdk = ciCompileSdk ?: 37
         versionCode = 10          // alpha 首发（0.1.0-alpha）
         versionName = "0.1.0-alpha"
 

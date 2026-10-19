@@ -28,12 +28,18 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      # 关键：只安装「稳定」的 SDK 36，绝不依赖预览版 37。
-      # 构建时用 -PciCompileSdk=36 覆盖 compileSdk（项目默认仍是 37，不影响本地）。
-      - name: Setup Android SDK (stable 36)
+      # 只装 sdkmanager 本身（不靠它的 packages 输入，那段曾静默没装上导致 AGP 找不到 android-36）。
+      - name: Setup Android SDK
         uses: android-actions/setup-android@v3
-        with:
-          packages: 'platforms;android-36 build-tools;36.0.0 platform-tools'
+
+      # 显式安装 + 断言，装不上就直接失败（而不是让 AGP 报 “Failed to find target android-36”）。
+      - name: Install stable SDK 36 (explicit + assert)
+        run: |
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager --install "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+          echo "--- platforms ---"
+          ls "$ANDROID_SDK_ROOT/platforms"
+          test -d "$ANDROID_SDK_ROOT/platforms/android-36" || (echo "::error::android-36 未安装成功"; exit 1)
 
       - name: Cache Gradle
         uses: actions/cache@v4
@@ -51,7 +57,7 @@ jobs:
         run: |
           java -version
           echo "SDK: $ANDROID_SDK_ROOT"
-          ls "$ANDROID_SDK_ROOT/platforms" || true
+          ls "$ANDROID_SDK_ROOT/platforms"
           ./gradlew --version
 
       - name: Unit tests (compileSdk 36 override)
