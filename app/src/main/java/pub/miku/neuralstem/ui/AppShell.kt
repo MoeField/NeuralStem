@@ -104,8 +104,8 @@ fun AppShell(
     val edgeSwitchedMsg = stringResource(R.string.sep_edge_switched)
     val edgeAbortedMsg = stringResource(R.string.sep_edge_aborted)
 
-    // ★G-3fix：分离完成（EdgeDone）且已落盘 → **无声切到文件播放**。
-    //   不切的话：buffer 已关 → 播放器读 EOF → 误判 STATE_ENDED → 曲目提前结束。
+    // ★G-3fix：分离完成（EdgeDone）→ 若为旧“半段文件”模式则切到文件播放。
+    //   新版（完整曲长文件）在首段就绪时就已经切过去，此处无需再动。
     val appCtx = LocalContext.current.applicationContext as Application
     val repo = remember { SeparationRepository.get(appCtx) }
     val repoState by repo.state.collectAsState()
@@ -114,20 +114,13 @@ fun AppShell(
         val vf = rs.vocalsFile
         val af = rs.accompanimentFile
         if (vf == null || af == null || !vf.exists() || !af.exists()) {
-            Log.w("AppShell", "EdgeDone 但未落盘 → 保持流式播放（可能提前 EOF）")
+            Log.w("AppShell", "EdgeDone 但无文件 → 保持当前播放")
             return@LaunchedEffect
         }
-        val posMs = rs.startFrame.toLong() * 1000L / rs.sampleRate.coerceAtLeast(1)
-        Log.i("AppShell", "EdgeDone → 切到文件播放 ${vf.name}，seek=$posMs ms")
-        playerVm.loadMultiTrack(
-            listOf(
-                Triple("vocals", "人声", vf),
-                Triple("accompaniment", "伴奏", af),
-            ),
-            startPositionMs = posMs,
-        )
-        playerVm.markStemsAvailable()
-        playerVm.play()
+        // 文件模式下，首段就绪时已经切到这些文件；这里只做一次幂等刷新（水位线置满后）。
+        if (playerVm.state.value.separationOn) {
+            Log.i("AppShell", "EdgeDone：已在多轨文件播放，水位线已置满（全曲可 seek）")
+        }
     }
 
     LaunchedEffect(edgeState) {
@@ -140,8 +133,30 @@ fun AppShell(
             edgeSwitched = true
             val sr = edgeSession.sampleRate.coerceAtLeast(1)
             val posMs = edgeSession.startFrame.toLong() * 1000L / sr
-            Log.i("AppShell", "edge first segment ready → auto switch @${posMs}ms")
-            playerVm.loadEdgeMultiTrack(posMs)
+            val vf = edgeSession.vocalsFile
+            val af = edgeSession.accompFile
+            if (vf != null && af != null) {
+                // ★G-3-重构（文件模式）：直接播**完整曲长的 stem 文件**。
+                //   文件从 0 就是对的（未分离区是静音），所以：
+                //   - 不需要 seek 补偿（位置天然对齐）；
+                //   - 不会“跳回起点”；
+                //   - 波形与文件时长一致。
+                //   水位线只用于“是否该暂停等待”，不影响播放起点。
+                Log.i("AppShell", "edge first segment ready → 文件模式播 ${vf.name} @${posMs}ms")
+                playerVm.loadMultiTrack(
+                    listOf(
+                        Triple("vocals", "人声", vf),
+                        Triple("accompaniment", "伴奏", af),
+                    ),
+                    startPositionMs = posMs,
+                )
+                playerVm.markStemsAvailable()
+                playerVm.play()
+            } else {
+                // 回退路径（旧 ring buffer 模式）：保持原有行为。
+                Log.i("AppShell", "edge first segment ready → 流式(ring buffer) @${posMs}ms")
+                playerVm.loadEdgeMultiTrack(posMs)
+            }
             // ★G-3ux：告知用户“已切到分离结果，可从当前位置继续”——
             //   否则声音在用户无预期的时间点“换了一个”，易误以为出错。
             scope.launch {
