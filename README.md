@@ -1,7 +1,11 @@
 # NeuralStem
 
+[![Android CI](https://github.com/MoeField/NeuralStem/actions/workflows/android-ci.yml/badge.svg)](https://github.com/MoeField/NeuralStem/actions/workflows/android-ci.yml)
+
 > **版本：`0.1.0-alpha`** —— alpha 首发。功能已闭环（导入/波形/变速变调/本地分离/多轨/EQ/后台），
 > 已知限制见文末。
+>
+> ⚠️ **模型不入库**（体积）；需自行获取 —— 见“快速上手 §2”。许可说明见 [NOTICE](NOTICE)。
 
 **本地 AI 音轨分离播放器** —— 在 Android 设备上完全离线地把一首歌拆成人声 / 伴奏两条音轨，
 并实时调节各轨音量、播放速度与音高。
