@@ -298,3 +298,141 @@ class WavWriter(
         const val DATA_START = 44L
     }
 }
+
+/**
+ * ★G-3-重构：**随机写 WAV**（完整曲长、按绝对帧位置写入）。
+ *
+ * ## 与 [WavWriter] 的区别
+ * | | [WavWriter] | 本类 |
+ * |---|---|---|
+ * | 长度 | 写完才回填 | **创建时就写死完整长度** |
+ * | 写入 | 只能顺序 append | **任意位置 writeAt(absFrame)** |
+ * | 用途 | 分离完再播（文件一次性写完） | **边分离边填（播放器同时读）** |
+ *
+ * ## 为何需要（解决用户实报的三个缺陷）
+ * 旧方案“只落盘 [startFrame, 曲尾) + 播放时 seek 补偿”导致：
+ * 1. 分离完跳回起始点；2. 结果不含前面部分；3. 波形差一截。
+ * 本类让**缓存文件从头就是完整曲长**，分离只是按绝对位置填充，上述问题自然消失。
+ *
+ * ## 技术前提（已由 `RandomWriteProtoTest` + 真机验证）
+ * - 预分配区读出来是 **0（静音）而非错误**；
+ * - ExoPlayer 能正常播“前段有数据、后段全 0”的 WAV（播到 10002ms 正常结束）；
+ * - 边写边读（双 fd）安全。
+ *
+ * ## 并发
+ * 写侧为本类单线程调用（分离协程）；读侧是播放器另一个 fd。
+ * 不保证“写完立刻可见”—— 需要时调用 [flush]（分离完成时调一次足够）。
+ *
+ * @param totalFrames 完整曲长帧数（头部与文件长度均按它写死）。
+ */
+class RandomAccessWavWriter(
+    file: File,
+    private val channels: Int,
+    private val sampleRate: Int,
+    totalFrames: Int,
+) : Closeable {
+
+    private val raf = RandomAccessFile(file, "rw")
+    private var closed = false
+
+    /** 完整曲长（帧）。 */
+    val totalFrames: Int = totalFrames
+
+    /** 已写入的**最大绝对帧号 + 1**（= 水位线；用于快速判断“能否读到该位置”）。 */
+    @Volatile
+    var writtenUpToFrame: Int = 0
+        private set
+
+    init {
+        require(channels in 1..2) { "Only mono/stereo supported, got $channels" }
+        require(totalFrames >= 0) { "totalFrames must be >= 0, got $totalFrames" }
+        val frameBytes = channels * 2
+        // 预分配完整长度（未写区域由文件系统填 0 = 静音）。
+        raf.setLength(DATA_START + totalFrames.toLong() * frameBytes)
+        raf.seek(0)
+        val dataSize = totalFrames * frameBytes
+        raf.write("RIFF".toByteArray(Charsets.US_ASCII))
+        raf.writeIntLE(36 + dataSize)
+        raf.write("WAVE".toByteArray(Charsets.US_ASCII))
+        raf.write("fmt ".toByteArray(Charsets.US_ASCII))
+        raf.writeIntLE(16)
+        raf.writeShortLE(1)                       // PCM
+        raf.writeShortLE(channels)
+        raf.writeIntLE(sampleRate)
+        raf.writeIntLE(sampleRate * frameBytes)   // byte rate
+        raf.writeShortLE(frameBytes)              // block align
+        raf.writeShortLE(16)                      // bits per sample
+        raf.write("data".toByteArray(Charsets.US_ASCII))
+        raf.writeIntLE(dataSize)
+        // 立刻落盘头部 —— 播放器可能在分离开始后立即打开本文件。
+        raf.fd.sync()
+    }
+
+    /**
+     * 将 [samples] 中从 [startFrame] 起的 [frames] 帧，写到文件的**绝对帧位置** [absFrame]。
+     *
+     * @param absFrame 目标绝对帧号（相对整曲开头，非块内偏移）。
+     */
+    fun writeAt(samples: FloatArray, startFrame: Int, frames: Int, absFrame: Int) {
+        require(startFrame >= 0) { "negative startFrame: $startFrame" }
+        require(frames >= 0) { "negative frames: $frames" }
+        require(absFrame >= 0) { "negative absFrame: $absFrame" }
+        if (frames == 0) return
+        require((startFrame + frames) * channels <= samples.size) {
+            "writeAt 越界: ($startFrame+$frames)*$channels > ${samples.size}"
+        }
+        require(absFrame + frames <= totalFrames) {
+            "writeAt 超出总长: absFrame=$absFrame frames=$frames total=$totalFrames"
+        }
+        raf.seek(DATA_START + absFrame.toLong() * channels * 2)
+        raf.write(toPcm16(samples, startFrame, frames))
+        // 更新水位线（水位线语义 = “连续可播到哪”；乱序写时取 max，够用）。
+        val end = absFrame + frames
+        if (end > writtenUpToFrame) writtenUpToFrame = end
+    }
+
+    /** 把已写数据刷到磁盘（分离完成或阶段结束时调，确保播放器读得到）。 */
+    fun flush() {
+        runCatching { raf.fd.sync() }
+    }
+
+    /** 关闭。文件的 data size 已在构造时写死，无需回填。幂等。 */
+    override fun close() {
+        if (closed) return
+        closed = true
+        runCatching { raf.fd.sync() }
+        raf.close()
+    }
+
+    private fun toPcm16(samples: FloatArray, startFrame: Int, frames: Int): ByteArray {
+        val buf = ByteArray(frames * channels * 2)
+        var b = 0
+        val base = startFrame * channels
+        for (i in 0 until frames * channels) {
+            var v = samples[base + i]
+            if (v > 1f) v = 1f else if (v < -1f) v = -1f
+            // 与 WavWriter 一致：用 round 而非截断，避免系统性偏小。
+            val s16 = Math.round(v * 32767f).toInt()
+            buf[b++] = (s16 and 0xFF).toByte()
+            buf[b++] = ((s16 shr 8) and 0xFF).toByte()
+        }
+        return buf
+    }
+
+    private fun RandomAccessFile.writeIntLE(v: Int) {
+        write(
+            byteArrayOf(
+                (v and 0xFF).toByte(), ((v shr 8) and 0xFF).toByte(),
+                ((v shr 16) and 0xFF).toByte(), ((v shr 24) and 0xFF).toByte(),
+            ),
+        )
+    }
+
+    private fun RandomAccessFile.writeShortLE(v: Int) {
+        write(byteArrayOf((v and 0xFF).toByte(), ((v shr 8) and 0xFF).toByte()))
+    }
+
+    private companion object {
+        const val DATA_START = 44L
+    }
+}
