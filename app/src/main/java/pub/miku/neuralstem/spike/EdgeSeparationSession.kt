@@ -118,7 +118,9 @@ class EdgeSeparationSession private constructor() {
         vocalsBuffer?.close()
         accompBuffer?.close()
         _state.value = State.Done
-        Log.i(TAG, "complete")
+        // ★诊断：buffer 引用仍保留（非 null），播放器可读到 EOF。
+        Log.i(TAG, "complete: buffers closed, refs kept " +
+            "(vWritten=${vocalsBuffer?.totalWrittenFrames} aWritten=${accompBuffer?.totalWrittenFrames})")
     }
 
     /** 失败。 */
@@ -126,7 +128,7 @@ class EdgeSeparationSession private constructor() {
         vocalsBuffer?.close()
         accompBuffer?.close()
         _state.value = State.Failed(message)
-        Log.w(TAG, "failed: $message")
+        Log.w(TAG, "failed: $message (buffers closed, refs kept)")
     }
 
     /** 取消/中止：关闭 buffers 并清空。 */
@@ -136,6 +138,8 @@ class EdgeSeparationSession private constructor() {
         accompBuffer?.close()
         vocalsBuffer = null
         accompBuffer = null
+        // ★诊断：buffer 置 null —— 若播放器此时仍持 stem:// uri，下一次 open 会抛 IOException。
+        Log.i(TAG, "abort: buffers→null (had=$had) state=${_state.value}")
         if (had) {
             _state.value = State.Cancelled
             Log.i(TAG, "abort")

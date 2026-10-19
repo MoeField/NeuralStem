@@ -1,6 +1,7 @@
 package pub.miku.neuralstem.player
 
 import android.net.Uri
+import android.util.Log
 import androidx.media3.common.C
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
@@ -55,6 +56,10 @@ class StemPcmDataSource internal constructor(
     private var openStartByte: Long = 0
 
     override fun open(dataSpec: DataSpec): Long {
+        // ★诊断：DataSource 打开（追“静音”问题时看这一行是否出现、位置多少）
+        Log.i(TAG_STEM, "open: uri=${dataSpec.uri} pos=${dataSpec.position} len=${dataSpec.length} " +
+            "closed=${buffer.isClosed} written=${buffer.totalWrittenFrames} " +
+            "sr=$sampleRate ch=$channels totalHint=$totalFramesHint")
         val c = buffer.openCursor(0)
         cursor = c
         position = 0
@@ -84,8 +89,18 @@ class StemPcmDataSource internal constructor(
         if (framesWanted <= 0) return 0
         val floatTmp = FloatArray(framesWanted * channels)
         val framesRead = c.read(floatTmp, 0, framesWanted)
-        if (framesRead < 0) return C.RESULT_END_OF_INPUT  // EOF
-        if (framesRead == 0) return 0                      // 暂无数据（上层重试）
+        if (framesRead < 0) {
+            // ★诊断：EOF（分离结束且已读完全部数据）。若未 Done 就 EOF = 异常。
+            Log.i(TAG_STEM, "read EOF @frame=${position / frameBytes} closed=${buffer.isClosed} " +
+                "written=${buffer.totalWrittenFrames}")
+            return C.RESULT_END_OF_INPUT
+        }
+        if (framesRead == 0) {
+            // ★诊断：暂无数据（读端等待超时）—— 若频繁出现，说明“播放追上分离”。
+            Log.w(TAG_STEM, "read STARVED @frame=${position / frameBytes} " +
+                "written=${buffer.totalWrittenFrames} closed=${buffer.isClosed}")
+            return 0
+        }
         val bytes = framesRead * frameBytes
         floatToPcm16(floatTmp, framesRead * channels, bufferDst, offset)
         position += bytes
@@ -99,6 +114,8 @@ class StemPcmDataSource internal constructor(
     override fun getUri(): Uri = Uri.parse("stem://${channels}ch_${sampleRate}")
 
     override fun close() {
+        Log.i(TAG_STEM, "close @frame=${position / frameBytes} " +
+            "written=${buffer.totalWrittenFrames} closed=${buffer.isClosed}")
         cursor?.close()
         cursor = null
         opened = false
@@ -175,6 +192,9 @@ class StemPcmDataSource internal constructor(
     }
 
     companion object {
+        /** ★诊断 TAG：`adb logcat -s StemTrace` 一次看全流式源生命周期。 */
+        internal const val TAG_STEM = "StemTrace"
+
         const val WAV_HEADER_SIZE = 44
         /** 伪 scheme：`stem://vocals` / `stem://accompaniment`（播放入口用）。 */
         const val SCHEME = "stem"
@@ -214,13 +234,16 @@ class StemStreamFactory(
         override fun addTransferListener(transferListener: TransferListener) {}
 
         override fun open(dataSpec: DataSpec): Long {
-            if (dataSpec.uri.scheme == StemPcmDataSource.SCHEME) {
+            val scheme = dataSpec.uri.scheme
+            if (scheme == StemPcmDataSource.SCHEME) {
                 isStem = true
                 val session = EdgeSeparationSession.get()
                 val host = dataSpec.uri.host ?: "vocals"
-                val buffer: StemPcmRingBuffer = (
-                    if (host == "accompaniment") session.accompBuffer else session.vocalsBuffer
-                    ) ?: throw IOException("no active edge buffer for host=$host")
+                val picked = if (host == "accompaniment") session.accompBuffer else session.vocalsBuffer
+                Log.i(StemPcmDataSource.TAG_STEM, "dispatch: STEM uri=${dataSpec.uri} host=$host " +
+                    "buffer=${if (picked != null) "ok" else "NULL"} state=${session.state.value}")
+                val buffer: StemPcmRingBuffer = picked
+                    ?: throw IOException("no active edge buffer for host=$host")
                 // 注意：合成头的 data size 用“本行开始位置处理”→ totalFrames 传全曲帧数；
                 // dataSizeBytes() 会减去 open 的起始字节（已包含 startFrame 偏移）。
                 val d = StemPcmDataSource(
@@ -229,6 +252,9 @@ class StemStreamFactory(
                 delegate = d
                 return d.open(dataSpec.buildUpon().setUri(Uri.parse("stem-local://$host")).build())
             }
+            // ★诊断：非 stem scheme → 委派给 upstream（file/content）。
+            //   若“普通文件没声音”，先看这一行是否存在、scheme 是否如预期。
+            Log.i(StemPcmDataSource.TAG_STEM, "dispatch: PASS-THROUGH scheme=$scheme uri=${dataSpec.uri}")
             isStem = false
             val d = upstream.createDataSource()
             delegate = d
