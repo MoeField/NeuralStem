@@ -5,16 +5,12 @@
 //   自建/私有代理前缀；如本机需代理访问 maven 中央仓，请自行配置 CI/Shell 代理。
 pluginManagement {
     repositories {
-        google {
-            url = uri("https://maven.aliyun.com/repository/google")
-            content {
-                includeGroupByRegex("com\\.android.*")
-                includeGroupByRegex("com\\.google.*")
-                includeGroupByRegex("androidx.*")
-            }
-        }
+        // 官方仓库优先（CI / 任意机器通用）；阿里云镜像放后面仅作本机加速。
+        // 否则第三方镜像故障（如 502）会直接拖垮构建（曾致 CI 失败）。
+        google()
         mavenCentral()
         gradlePluginPortal()
+        maven("https://maven.aliyun.com/repository/google")
     }
 }
 plugins {
@@ -23,10 +19,9 @@ plugins {
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
-        google {
-            url = uri("https://maven.aliyun.com/repository/google")
-        }
+        google()
         mavenCentral()
+        maven("https://maven.aliyun.com/repository/google")
     }
 }
 
