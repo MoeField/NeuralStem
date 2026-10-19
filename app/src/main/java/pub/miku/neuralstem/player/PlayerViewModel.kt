@@ -1205,8 +1205,12 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                 return false
             }
             // ★R-b：已有结果 → 直接恢复多轨（不必重跑分离）
-            Log.i(TAG, "toggleSeparation(true): 用 lastStems(${stems.size}) 恢复多轨")
-            loadMultiTrack(stems)
+            //
+            // ★G-3fix（用户实报）：必须带上**当前位置**。loadMultiTrack 会给主轨换
+            //   MediaItem（mp3 → vocals stem）→ 从 0 开始 → 进度条跳回 0。
+            val resumeMs = runCatching { mediaController?.currentPosition ?: 0L }.getOrDefault(0L)
+            Log.i(TAG, "toggleSeparation(true): 用 lastStems(${stems.size}) 恢复多轨 @${resumeMs}ms")
+            loadMultiTrack(stems, startPositionMs = resumeMs)
             mediaController?.play()
             return true
         } else {
