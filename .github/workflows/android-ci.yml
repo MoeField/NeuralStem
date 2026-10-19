@@ -1,7 +1,7 @@
-name: Android CI (unit tests)
+name: Android CI
 
-# B 版轻量 CI：只跑 JVM 单元测试（不编 APK、不装 NDK/CMake、不编 bench）。
-# 目的：保证每次提交「代码没坏」。
+# 轻量 CI：只跑 :app 的 JVM 单元测试。
+# 不装 NDK/CMake、不编 bench、不出 APK（这些留给本地 / beta 阶段）。
 
 on:
   push:
@@ -17,7 +17,7 @@ concurrency:
 jobs:
   unit-test:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 45
 
     steps:
       - uses: actions/checkout@v4
@@ -28,33 +28,12 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - name: Setup Android SDK
+      # 关键：只安装「稳定」的 SDK 36，绝不依赖预览版 37。
+      # 构建时用 -PciCompileSdk=36 覆盖 compileSdk（项目默认仍是 37，不影响本地）。
+      - name: Setup Android SDK (stable 36)
         uses: android-actions/setup-android@v3
-
-      - name: Accept licenses
-        run: yes | sdkmanager --licenses > /dev/null || true
-
-      # 尝试安装 API 37（预览）。装不上就降级用 36（脚本后续按实际情况传 -PciCompileSdk）。
-      - name: Install SDK (37 preview → fallback 36) + build-tools
-        id: sdk
-        run: |
-          set +e
-          sdkmanager --list --channel=3 2>/dev/null | grep -iE "platforms;android-3[6-9]" | head -20
-          installed37=0
-          for pkg in "platforms;android-37" "platforms;android-37.0"; do
-            if sdkmanager --channel=3 "$pkg" >/dev/null 2>&1; then installed37=1; echo "installed $pkg"; break; fi
-          done
-          if [ "$installed37" = "1" ]; then
-            sdkmanager "build-tools;37.0.0" >/dev/null 2>&1 || true
-            echo "compile_sdk_arg=" >> "$GITHUB_OUTPUT"
-            echo "SDK 37 installed"
-          else
-            echo "::warning::API 37 预览包不可用，降级 compileSdk 36 跑单测"
-            sdkmanager "platforms;android-36" "build-tools;36.0.0" >/dev/null 2>&1 || true
-            echo "compile_sdk_arg=-PciCompileSdk=36" >> "$GITHUB_OUTPUT"
-          fi
-          echo "--- installed platforms ---"
-          ls "$ANDROID_SDK_ROOT/platforms" || true
+        with:
+          packages: 'platforms;android-36 build-tools;36.0.0 platform-tools'
 
       - name: Cache Gradle
         uses: actions/cache@v4
@@ -65,20 +44,21 @@ jobs:
           key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle.kts', '**/libs.versions.toml', 'gradle/wrapper/gradle-wrapper.properties') }}
           restore-keys: gradle-${{ runner.os }}-
 
-      - name: Grant execute permission for gradlew
+      - name: Grant execute permission
         run: chmod +x ./gradlew
 
-      - name: Print env
+      - name: Environment info
         run: |
           java -version
-          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
-          ./gradlew --version || true
+          echo "SDK: $ANDROID_SDK_ROOT"
+          ls "$ANDROID_SDK_ROOT/platforms" || true
+          ./gradlew --version
 
-      - name: Run unit tests
+      - name: Unit tests (compileSdk 36 override)
         run: |
           ./gradlew :app:testDebugUnitTest --no-daemon --stacktrace \
             -Porg.gradle.java.installations.auto-download=false \
-            ${{ steps.sdk.outputs.compile_sdk_arg }}
+            -PciCompileSdk=36
 
       - name: Upload test reports
         if: always()
