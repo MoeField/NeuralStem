@@ -1199,11 +1199,21 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             return true
         } else {
             // 回原曲：退出多轨 → 重载原曲（单曲）；**保留 lastStems**
+            //
+            // ★G-3fix（用户实报）：必须先捕获**多轨时的当前位置**再传进 doLoad。
+            //   旧代码 doLoad 未传 startPositionMs → 回原曲从头开播，
+            //   表现为“关多轨后进度条跳到最前 + 两秒无声”。
+            val resumeMs = runCatching { mediaController?.currentPosition ?: 0L }.getOrDefault(0L)
             exitMultiTrack()
             val u = originalUri
             val p = mediaController
+            Log.i(TAG, "toggleSeparation(false): 回原曲 @${resumeMs}ms")
             // ★R-b：回原曲 = resetStems=false（**保留** lastStems，开关再开可恢复）
-            if (u != null && p != null) runCatching { doLoad(p, u, originalName, resetStems = false) }
+            if (u != null && p != null) {
+                runCatching {
+                    doLoad(p, u, originalName, resetStems = false, startPositionMs = resumeMs)
+                }
+            }
             _state.value = _state.value.copy(separationOn = false)
         }
         return true
