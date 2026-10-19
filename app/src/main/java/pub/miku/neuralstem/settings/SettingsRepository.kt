@@ -69,6 +69,30 @@ class SettingsRepository(app: Application) {
         }
 
     /**
+     * ★模型下载：**下载源偏好**（默认 [ModelSourcePreference.AUTO]）。
+     *
+     * AUTO = 运行时探测（HEAD 目标域名），官方优先、不通则用 hf-mirror。
+     */
+    var modelSourcePreference: ModelSourcePreference
+        get() = runCatching {
+            ModelSourcePreference.valueOf(
+                prefs.getString(KEY_MODEL_SOURCE, null)
+                    ?: ModelSourcePreference.AUTO.name,
+            )
+        }.getOrDefault(ModelSourcePreference.AUTO)
+        set(value) {
+            prefs.edit().putString(KEY_MODEL_SOURCE, value.name).apply()
+            Log.i(TAG, "modelSourcePreference=$value")
+        }
+
+    /** ★模型下载：上次 AUTO 探测到的实际源（仅用于设置页展示）。 */
+    var lastResolvedModelSource: String?
+        get() = prefs.getString(KEY_MODEL_RESOLVED, null)
+        set(value) {
+            prefs.edit().putString(KEY_MODEL_RESOLVED, value).apply()
+        }
+
+    /**
      * 播放模式（播放页**循环按钮**）。三态：
      * - [RepeatMode.SEQUENTIAL]：顺序（播完歌单停止）→ `REPEAT_MODE_OFF`
      * - [RepeatMode.LOOP_ALL]：循环歌单 → `REPEAT_MODE_ALL`
@@ -173,6 +197,8 @@ class SettingsRepository(app: Application) {
         private const val KEY_DECK_SEC = "deck_seconds_per_turn"
         private const val KEY_SPEED_X = "speed_range_x"
         private const val KEY_EDGE_SEP = "edge_separation_enabled"
+        private const val KEY_MODEL_SOURCE = "model_source_preference"
+        private const val KEY_MODEL_RESOLVED = "model_source_resolved"
 
         const val DECK_SEC_DEFAULT = 18
         const val DECK_SEC_MIN = 9

@@ -9,6 +9,13 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <!-- API 33+ 媒体通知需要运行时授权 -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!--
+      ★模型一键下载：需联网从 HuggingFace / hf-mirror 拉模型。
+      此前本项目完全离线，从未申请过网络权限 —— 缺了会 DNS 解析失败
+      （GaiException EAI_NODATA + EPERM，极易误判为“网络不通”）。
+    -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <application
         android:largeHeap="true"

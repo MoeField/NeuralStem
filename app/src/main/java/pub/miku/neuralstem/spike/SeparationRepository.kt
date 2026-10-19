@@ -706,9 +706,10 @@ class SeparationRepository(private val app: Application) {
         val vocals = File(modelDir, "vocals.fp16.onnx")
         val accomp = File(modelDir, "accompaniment.fp16.onnx")
         if (!vocals.exists() || !accomp.exists()) {
+            // ★模型一键下载：给**用户可操作**的指引，而不是 adb 命令。
             error(
-                "Spleeter 模型缺失: 请把 vocals/accompaniment.fp16.onnx " +
-                    "放到 ${modelDir.absolutePath}",
+                "尚未安装 Spleeter 模型（需要 vocals.fp16.onnx + accompaniment.fp16.onnx）。" +
+                    "请到「设置 → 模型管理」下载（约 39MB）。",
             )
         }
         return vocals.absolutePath to accomp.absolutePath
