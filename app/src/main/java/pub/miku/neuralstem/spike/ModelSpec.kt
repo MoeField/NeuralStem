@@ -144,6 +144,63 @@ object ModelRegistry {
     /** 全部模型(Spleeter 在前)。 */
     val ALL: List<ModelSpec> = listOf(SPLEETER) + UVR_VARIANTS
 
+    /**
+     * ★实验模型（13 个）：sherpa-onnx 官方 release 里**其余** UVR/MDX 变体。
+     *
+     * ## 为何单独一个列表
+     * 这些模型**不参与档位/默认引擎/设置页选择** —— 因为：
+     * - 它们的音质定位与现有 5 个重叠（只是不同作者的训练集不同）；
+     * - 全部暴露会让 UI 臃肿，且大部分实测比 9482 还慢。
+     * ➜ **仅供 benchmark 测速 / 手动选用**（不写入 [ALL]）。
+     *
+     * ## stem 顺序
+     * `Inst_*` / `Inst_Main` 系 → [StemOrder.ACCOMP_FIRST]（inst = instrumental 导向）；
+     * 其余（含 Crowd / KARA_2 / _9703 系）→ [StemOrder.VOCALS_FIRST]。
+     * ⚠️ 这批**未做 NCC 实证**，如需正式启用必须先验证反标签（参 Inst_HQ_3 的教训）。
+     */
+    val EXPERIMENTAL: List<ModelSpec> = listOf(
+        // ---- Inst 系（乐器导向，62/56MB，dim_f 3072 → 预期 ~0.35×）----
+        exp("uvr-Inst_1", "UVR Inst_1", "UVR-MDX-NET-Inst_1.onnx", 64, Purpose.INSTRUMENTAL, StemOrder.ACCOMP_FIRST),
+        exp("uvr-Inst_2", "UVR Inst_2", "UVR-MDX-NET-Inst_2.onnx", 64, Purpose.INSTRUMENTAL, StemOrder.ACCOMP_FIRST),
+        exp("uvr-Inst_3", "UVR Inst_3", "UVR-MDX-NET-Inst_3.onnx", 64, Purpose.INSTRUMENTAL, StemOrder.ACCOMP_FIRST),
+        exp("uvr-Inst_HQ_1", "UVR Inst_HQ_1", "UVR-MDX-NET-Inst_HQ_1.onnx", 64, Purpose.INSTRUMENTAL, StemOrder.ACCOMP_FIRST),
+        exp("uvr-Inst_HQ_2", "UVR Inst_HQ_2", "UVR-MDX-NET-Inst_HQ_2.onnx", 64, Purpose.INSTRUMENTAL, StemOrder.ACCOMP_FIRST),
+        exp("uvr-Inst_HQ_4", "UVR Inst_HQ_4", "UVR-MDX-NET-Inst_HQ_4.onnx", 56, Purpose.INSTRUMENTAL, StemOrder.ACCOMP_FIRST),
+        exp("uvr-Inst_HQ_5", "UVR Inst_HQ_5", "UVR-MDX-NET-Inst_HQ_5.onnx", 56, Purpose.INSTRUMENTAL, StemOrder.ACCOMP_FIRST),
+        exp("uvr-Inst_Main", "UVR Inst_Main", "UVR-MDX-NET-Inst_Main.onnx", 50, Purpose.INSTRUMENTAL, StemOrder.ACCOMP_FIRST),
+
+        // ---- 人声/合唱 ----
+        exp("uvr-Crowd_HQ_1", "UVR Crowd_HQ_1", "UVR-MDX-NET_Crowd_HQ_1.onnx", 56, Purpose.VOCALS),
+
+        // ---- 通用（28MB 系：dim_f 2048 → 预期 ~1.0×）----
+        exp("uvr-9703", "UVR 1_9703", "UVR_MDXNET_1_9703.onnx", 28, Purpose.GENERAL),
+        exp("uvr-9682", "UVR 2_9682", "UVR_MDXNET_2_9682.onnx", 28, Purpose.GENERAL),
+        exp("uvr-9662", "UVR 3_9662", "UVR_MDXNET_3_9662.onnx", 28, Purpose.GENERAL),
+
+        // ---- 卡拉OK 2（50MB，中等档）----
+        exp("uvr-KARA_2", "UVR KARA_2", "UVR_MDXNET_KARA_2.onnx", 50, Purpose.INSTRUMENTAL),
+    )
+
+    /** benchmark 用：已注册 5 个 + 实验 13 个。 */
+    val BENCHMARKABLE: List<ModelSpec> = ALL + EXPERIMENTAL
+
+    private fun exp(
+        id: String,
+        name: String,
+        file: String,
+        sizeMb: Int,
+        purpose: Purpose,
+        stemOrder: StemOrder = StemOrder.VOCALS_FIRST,
+    ) = ModelSpec(
+        id = id,
+        displayName = name,
+        fileName = file,
+        engine = SherpaSourceSeparation.MODE_UVR,
+        sizeMb = sizeMb,
+        purpose = purpose,
+        stemOrder = stemOrder,
+    )
+
     /** 按 id 查(找不到返回 null)。 */
     fun byId(id: String): ModelSpec? = ALL.firstOrNull { it.id == id }
 
