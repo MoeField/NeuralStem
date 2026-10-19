@@ -673,10 +673,18 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                     var pos = p.currentPosition
                     val isPlaying = p.isPlaying
                     // ★ seek 锁定：seek 后 currentPosition 可能短暂回退到旧值 → 防回跳。
+                    //
+                    // ★G-3fix（层次1）：`pendingResumeMs` **也要锁定**。
+                    //   场景：关多轨回原曲时 doLoad(startPositionMs=T) → 新 MediaItem
+                    //   prepare 期间 currentPosition 是 0，若不管就会“进度条跳回 0 再弹回来”。
+                    //   锁定期内一律显示 T，等真正追上了再解锁。
+                    //   （duration 为 0 = 还没 READY，此时 duration 也不可信，同理不改。）
                     val target = pendingSeekMs
+                        ?: pendingResumeMs.takeIf { it > 0L }
                     if (target != null) {
                         if (pos >= target - SEEK_LOCK_TOLERANCE_MS) {
-                            pendingSeekMs = null
+                            if (pendingSeekMs != null) pendingSeekMs = null
+                            if (pendingResumeMs in 1..(pos + SEEK_LOCK_TOLERANCE_MS)) pendingResumeMs = 0L
                             lastShownMs = pos
                         } else {
                             pos = target
@@ -691,7 +699,11 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                             lastShownMs = pos
                         }
                     }
-                    _progress.value = Progress(pos, dur)
+                    // ★G-3fix（层次1）：新 MediaItem prepare 期间 duration=0，
+                    //   若直接把 0 写进 progressFlow，进度条的“总长”会瞬间变 0 → 视觉抖动。
+                    //   此时沿用旧的 duration。
+                    val shownDur = if (dur > 0) dur else _progress.value.durationMs
+                    _progress.value = Progress(pos, shownDur)
                     // ★T-5：进度记忆——**节流落库**（每 ≥PROGRESS_SAVE_INTERVAL_MS 或曲目变化）。
                     //   仅在队列来自歌单（currentListId!=null）且有当前曲时记。
                     recordProgressThrottled(pos)
