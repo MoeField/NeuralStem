@@ -1,8 +1,9 @@
 name: Android CI
 
 # 轻量 CI：只跑 :app 的 JVM 单元测试。
-# 不用 setup-android action（其在全新 runner 上装 cmdline-tools 偶发失败），
-# 直接使用 ubuntu-latest 预装的 Android SDK + sdkmanager。
+# 注意：本项目 compileSdk=37（当前为预览版 Cinnamon Bun），无法降到 36 ——
+# 多个 AndroidX 依赖要求 compileSdk>=37（会触发 checkDebugAarMetadata 失败）。
+# 所以 CI 必须装到 37（preview channel）。
 
 on:
   push:
@@ -32,26 +33,27 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - name: Locate SDK + sdkmanager
+      - name: Locate sdkmanager
         run: |
-          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
-          ls -d "$ANDROID_SDK_ROOT" || true
           SDKM=$(ls "$ANDROID_SDK_ROOT"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | head -1)
-          echo "found sdkmanager=$SDKM"
-          if [ -z "$SDKM" ]; then
-            echo "::error::runner 上没有 cmdline-tools/sdkmanager"; exit 1
-          fi
+          [ -n "$SDKM" ] || { echo "::error::no sdkmanager"; exit 1; }
           echo "$SDKM" > /tmp/sdkm.path
           "$SDKM" --version
 
-      - name: Install stable SDK 36 (explicit + assert)
+      # API 37 目前是预览版：需要 --channel=3，且包名可能是 android-37 或 android-37.0。
+      - name: Install SDK 37 (preview) + build-tools
         run: |
           SDKM=$(cat /tmp/sdkm.path)
           yes | "$SDKM" --licenses > /dev/null 2>&1 || true
-          "$SDKM" --install "platforms;android-36" "build-tools;36.0.0" "platform-tools"
-          echo "--- platforms ---"
-          ls "$ANDROID_SDK_ROOT/platforms"
-          test -d "$ANDROID_SDK_ROOT/platforms/android-36" || { echo "::error::android-36 未安装"; exit 1; }
+          set -x
+          "$SDKM" --list --channel=3 2>/dev/null | grep -iE "platforms;android-3[6-9]" || true
+          ok=0
+          for pkg in "platforms;android-37" "platforms;android-37.0"; do
+            if "$SDKM" --channel=3 --install "$pkg" >/dev/null 2>&1; then ok=1; echo "installed $pkg"; break; fi
+          done
+          if [ "$ok" = "0" ]; then echo "::error::无法安装 API 37 预览平台"; exit 1; fi
+          "$SDKM" --channel=3 --install "build-tools;37.0.0" >/dev/null 2>&1 || "$SDKM" --channel=3 --install "build-tools;36.0.0" >/dev/null 2>&1 || true
+          echo "--- platforms ---"; ls "$ANDROID_SDK_ROOT/platforms"
 
       - name: Cache Gradle
         uses: actions/cache@v4
@@ -71,19 +73,17 @@ jobs:
           ls "$ANDROID_SDK_ROOT/platforms"
           ./gradlew --version
 
-      - name: Unit tests (compileSdk 36 override)
+      - name: Unit tests
         run: |
           set +e
           ./gradlew :app:testDebugUnitTest --no-daemon --stacktrace \
-            -Porg.gradle.java.installations.auto-download=false \
-            -PciCompileSdk=36 2>&1 | tee /tmp/gradle.log
+            -Porg.gradle.java.installations.auto-download=false 2>&1 | tee /tmp/gradle.log
           rc=${PIPESTATUS[0]}
           if [ "$rc" -ne 0 ]; then
-            # 把关键报错变成 annotation（无需 admin 就能通过 API 读到）
-            grep -iE "What went wrong|Caused by|error:|FAILED|> Could not|> Failed" /tmp/gradle.log | head -20 | while IFS= read -r line; do
-              msg=$(echo "$line" | tr -d '\r' | cut -c1-900)
-              echo "::error::$msg"
-            done
+            grep -iE "What went wrong|Caused by|error:|FAILED|> Could not|> Failed|requires|compileSdk" /tmp/gradle.log \
+              | head -25 | while IFS= read -r line; do
+                echo "::error::$(echo "$line" | tr -d '\r' | cut -c1-900)"
+              done
           fi
           exit $rc
 
