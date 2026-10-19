@@ -8,6 +8,10 @@ name: Android CI
 on:
   push:
     branches: [ main ]
+    # ★打 tag（v1.2.3）也触发 → build-apk job 会额外发 GitHub Release。
+    #   注意：`branches` 与 `tags` 是**并列**过滤条件（不是 AND）：
+    #   push 到 main 或推送 tag 任一满足即触发。
+    tags: [ 'v*' ]
     # 文档 / 报告 / 图片等不涉代码的改动不触发构建（省 CI 时间）。
     paths-ignore:
       - '**.md'
