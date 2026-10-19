@@ -438,7 +438,7 @@ private fun ControlsArea(
             }
         }
         Text(
-            state.repeatMode.label,
+            stringResource(state.repeatMode.labelRes),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

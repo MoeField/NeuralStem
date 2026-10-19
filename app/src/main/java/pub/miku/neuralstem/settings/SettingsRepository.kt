@@ -1,5 +1,7 @@
 package pub.miku.neuralstem.settings
 
+import androidx.annotation.StringRes
+import pub.miku.neuralstem.R
 import android.app.Application
 import android.content.Context
 import android.util.Log
@@ -83,11 +85,12 @@ class SettingsRepository(app: Application) {
         /** 下一个模式（循环按钮点击顺序）。 */
         fun next(): RepeatMode = entries[(ordinal + 1) % entries.size]
 
-        /** 按钮/提示文本。 */
-        val label: String get() = when (this) {
-            SEQUENTIAL -> "顺序"
-            LOOP_ALL -> "循环歌单"
-            LOOP_ONE -> "单曲循环"
+        /** 按钮/提示文本（i18n：改为字符串资源）。 */
+        @get:StringRes
+        val labelRes: Int get() = when (this) {
+            SEQUENTIAL -> R.string.repeat_sequential
+            LOOP_ALL -> R.string.repeat_loop_all
+            LOOP_ONE -> R.string.repeat_loop_one
         }
 
         /** 按钮字形（零图标依赖）。 */

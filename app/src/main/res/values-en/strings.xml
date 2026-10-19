@@ -36,6 +36,16 @@
     <string name="sep_gate_hint">⚠ Benchmark your device first (Settings → “Detect now”) before choosing a separation tier.</string>
     <string name="sep_stem_two">2 stems (vocals+accompaniment)</string>
     <string name="sep_stem_four">4 stems (vocals/drums/bass/other)</string>
+    <!-- Separation tier names (previously hard-coded in Tier enum) -->
+    <string name="tier_fast">Fast</string>
+    <string name="tier_balance">Balanced</string>
+    <string name="tier_quality">Quality</string>
+    <string name="stem_2">2 stems</string>
+    <string name="stem_4">4 stems</string>
+    <!-- Playback repeat modes (previously hard-coded) -->
+    <string name="repeat_sequential">Sequential</string>
+    <string name="repeat_loop_all">Loop playlist</string>
+    <string name="repeat_loop_one">Repeat one</string>
     <string name="sep_preparing">Preparing…</string>
     <string name="sep_running_pct">Separating %1$d%%</string>
     <string name="sep_done_cache">✅ Cache hit (no re-inference)</string>
