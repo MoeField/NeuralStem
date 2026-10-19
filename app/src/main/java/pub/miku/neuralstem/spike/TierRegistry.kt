@@ -66,6 +66,9 @@ sealed interface SepOption {
 
 /**
  * 一个「档位选择」：轨数 × 档位 → 候选模型列表 + 默认。
+ *
+ * ⚠️ **仅供 4 轨使用**（模型少且固定，不需要按速度动态分级）。
+ * 2 轨已改为 [TierChoices2]（按 [SpeedTier] 动态生成）。
  */
 data class TierChoices(
     val stem: StemCount,
@@ -77,34 +80,30 @@ data class TierChoices(
         candidates.firstOrNull { it.id == defaultId } ?: candidates.first()
 }
 
+/**
+ * ★2 轨的「速度簇档位」：一个 [SpeedTier] + 其候选模型。
+ *
+ * 与 [TierChoices] 的区别：
+ * - **不含 [Tier]** —— 2 轨的档位语义已从「快速/均衡/质量」改为「极快/临界/慢/很慢」；
+ * - **候选由实测 RTF 自动归属**（`DeviceBenchmark.cached()`）→ 换设备自动重排。
+ * - 模型只来自 [ModelRegistry.ALL]（Spleeter 2-stem + 5 个正式 UVR），
+ *   实验模型（[ModelRegistry.EXPERIMENTAL]）**不进档位**。
+ */
+data class TierChoices2(
+    val speedTier: SpeedTier,
+    /** 该簇内的候选（已装/未装都列，UI 自行过滤）。 */
+    val candidates: List<SepOption.Sherpa>,
+) {
+    val stem: StemCount get() = StemCount.TWO
+
+    /** 是否有任何已安装的候选（无则不显示该档按钮）。 */
+    fun hasInstalled(installedIds: Set<String>): Boolean =
+        candidates.any { it.id in installedIds }
+}
+
 object TierRegistry {
 
-    // 档位归属（按实测 RTF 分组，非硬编码“语义”；此处仅列 id）—— 声明在前，供下方 val 初始化用。
-    private val BALANCE_IDS = setOf("uvr-9482", "uvr-KARA")
-    private val QUALITY_IDS = setOf("uvr-Voc_FT", "uvr-Inst_HQ_3", "uvr-Main")
-
-    /** 2 轨 · 快速 = Spleeter 2-stem（唯一）。 */
-    val TWO_FAST = TierChoices(
-        StemCount.TWO, Tier.FAST,
-        candidates = listOf(SepOption.Sherpa(ModelRegistry.SPLEETER)),
-        defaultId = ModelRegistry.SPLEETER.id,
-    )
-
-    /** 2 轨 · 均衡 = 组②（实测 ~1.0×/2.25×）。 */
-    val TWO_BALANCE = TierChoices(
-        StemCount.TWO, Tier.BALANCE,
-        candidates = ModelRegistry.UVR_VARIANTS.filter { it.id in BALANCE_IDS }
-            .map { SepOption.Sherpa(it) },
-        defaultId = "uvr-9482",
-    )
-
-    /** 2 轨 · 质量 = 组③（实测 ~0.34×/0.72×）。 */
-    val TWO_QUALITY = TierChoices(
-        StemCount.TWO, Tier.QUALITY,
-        candidates = ModelRegistry.UVR_VARIANTS.filter { it.id in QUALITY_IDS }
-            .map { SepOption.Sherpa(it) },
-        defaultId = "uvr-Voc_FT",
-    )
+    // ==================== 4 轨（不变）====================
 
     /** 4 轨 · 快速 = Spleeter 4-stem。 */
     val FOUR_FAST = TierChoices(
@@ -120,15 +119,36 @@ object TierRegistry {
         defaultId = SepOption.Demucs.id,
     )
 
-    /** 全部（按 UI 顺序）。 */
-    val ALL: List<TierChoices> = listOf(
-        TWO_FAST, TWO_BALANCE, TWO_QUALITY,
-        FOUR_FAST, FOUR_QUALITY,
-    )
+    /** 4 轨的全部档位（固定 2 档，不支持禁用）。 */
+    val FOUR_TIERS: List<TierChoices> = listOf(FOUR_FAST, FOUR_QUALITY)
 
-    /** 某轨数的档位（UI 一行）。 */
-    fun forStem(stem: StemCount): List<TierChoices> = ALL.filter { it.stem == stem }
+    // ==================== 2 轨（★按速度簇动态）====================
 
+    /**
+     * 生成 2 轨的 4 个速度簇（按实测 RTF 归属）。
+     *
+     * - 模型池 = [ModelRegistry.ALL] 中 **engine = sherpa** 的（Spleeter 2-stem + 5 个正式 UVR）；
+     *   4-stem / Demucs 不属 2 轨，不进。
+     * - **空簇会被返回但 candidates 为空** → UI 自己过滤（`hasInstalled`）。
+     *   这样调用方能判断“用户禁用了几个簇”，而不是让簇凭空消失。
+     *
+     * @param rtf 实测 RTF（来自 `DeviceBenchmark.cached()`，键 = modelId）。无记录的模型归 VERY_SLOW。
+     */
+    fun twoStemTiers(rtf: Map<String, Float>): List<TierChoices2> {
+        val pool = ModelRegistry.ALL
+            .filter { it.engine == SherpaSourceSeparation.MODE_SPLEETER ||
+                it.engine == SherpaSourceSeparation.MODE_UVR }
+            .map { SepOption.Sherpa(it) }
+        val grouped = pool.groupBy { SpeedTier.of(rtf[it.id]) }
+        return SpeedTier.ordered.map { tier ->
+            TierChoices2(speedTier = tier, candidates = grouped[tier].orEmpty())
+        }
+    }
+
+    /** 向后兼容：旧代码可能需要“全部档位”的平铺列表（仅 4 轨）。 */
+    val ALL: List<TierChoices> = FOUR_TIERS
+
+    /** 4 轨某档位。 */
     fun find(stem: StemCount, tier: Tier): TierChoices? =
-        ALL.firstOrNull { it.stem == stem && it.tier == tier }
+        FOUR_TIERS.firstOrNull { it.stem == stem && it.tier == tier }
 }

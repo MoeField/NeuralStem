@@ -8,6 +8,7 @@ import android.util.Log
 import pub.miku.neuralstem.spike.ModelRegistry
 import pub.miku.neuralstem.spike.ModelSpec
 import pub.miku.neuralstem.spike.SepOption
+import pub.miku.neuralstem.spike.SpeedTier
 import pub.miku.neuralstem.spike.StemCount
 import pub.miku.neuralstem.spike.Tier
 import pub.miku.neuralstem.spike.TierRegistry
@@ -202,6 +203,36 @@ class SettingsRepository(app: Application) {
         val choices = TierRegistry.find(stem, tier) ?: return null
         val id = tierModelId(stem, tier)
         return choices.candidates.firstOrNull { it.id == id } ?: choices.default()
+    }
+
+    // ============================ ★2 轨：按速度簇（2026-10-20 重构）============================
+    //
+    // 2 轨不再用「快速/均衡/质量」，改为 4 个速度簇。每簇两个开关：
+    //   - `twoTierEnabled_<SpeedTier>`：是否在分离页显示该档（默认 true）
+    //   - `twoTierModel_<SpeedTier>`：该档选中的模型 id（默认 = 该簇内第一个已装模型）
+    //
+    // ⚠️ **不做偏好迁移**（用户确认：单人使用，旧 `tier_TWO_*` key 自然失效）。
+
+    /** 该速度簇是否启用（默认 true）。 */
+    fun twoTierEnabled(tier: SpeedTier): Boolean =
+        prefs.getBoolean("twoTierEnabled_${tier.name}", true)
+
+    /** 设置某速度簇是否启用。 */
+    fun setTwoTierEnabled(tier: SpeedTier, enabled: Boolean) {
+        prefs.edit().putBoolean("twoTierEnabled_${tier.name}", enabled).apply()
+        Log.i(TAG, "twoTierEnabled ${tier.name} = $enabled")
+    }
+
+    /** 该速度簇选中的模型 id（无记录或非法 → 回退到 [fallback]）。 */
+    fun twoTierModelId(tier: SpeedTier, fallback: String?): String? {
+        val saved = prefs.getString("twoTierModel_${tier.name}", null)
+        return saved ?: fallback
+    }
+
+    /** 设置某速度簇选中的模型 id。 */
+    fun setTwoTierModelId(tier: SpeedTier, id: String) {
+        prefs.edit().putString("twoTierModel_${tier.name}", id).apply()
+        Log.i(TAG, "twoTierModel ${tier.name} = $id")
     }
 
     companion object {

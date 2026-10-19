@@ -92,6 +92,14 @@ fun SeparationScreen(
     val ctx = LocalContext.current
     val app = ctx.applicationContext as Application
     val scope = rememberCoroutineScope()
+    // ★全局共用：设置仓库（档位选择/边播开关/下载代理等）。
+    //   原先定义在后面（仅档位区用），现上移——因为 startTwoTier/startTier 也要读它。
+    val settingsRepo = remember { SettingsRepository(app) }
+    // benchmark 缓存（本机实测/内置免跑）→ 速度簇归属 + 实时标记
+    val benchRtfAll = DeviceBenchmark(app).cached()
+    val benchRtf: Map<String, Float> = benchRtfAll.mapValues { it.value.rtf }
+    // ★G-1b：首启**强制**检测完成才能用分离——未检测(无缓存)则门控。
+    val benchmarked = benchRtfAll.isNotEmpty()
     // ★3a-2：分离任务状态 = 单一真源（来自状态机）；repoState 不再直接读。
     val separationTask by vm.separationTask.collectAsState()
     // ★F5.4：分离完成时的触感反馈。
@@ -103,10 +111,6 @@ fun SeparationScreen(
     // ★3a-2：busy 单一来源（不再拼接 spikeState + repoState）。
     val busy = separationTask is SeparationTask.Preparing ||
         separationTask is SeparationTask.Running
-    // ★G-1b：首启**强制**检测完成才能用分离——未检测(无缓存)则门控。
-    //   直读（不 remember）：确保 benchmark 完成/缓存变化后重新进入即时反映。
-    val benchRtfAll = DeviceBenchmark(app).cached()
-    val benchmarked = benchRtfAll.isNotEmpty()
 
     // ---- 完成 → 自动切多轨（★I3：**一次性消费**，天然只响应"Running→Done 转换"，----
     //      不响应进入时的遗留态；不再用 prevSpike/prevRepo 手搓 → 重建也不会误触发）----
@@ -129,9 +133,8 @@ fun SeparationScreen(
         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
     }
 
-    /** ★D-3：点「档位」→ 用设置里该档选的模型启动分离。 */
-    fun startTier(tc: TierChoices) {
-        val uri = currentUri ?: return
+    /** 统一入口：sherpa 引擎（Spleeter 2-stem / UVR）。 */
+    fun startSherpaOption(uri: String, opt: SepOption.Sherpa, isTwoFast: Boolean) {
         // ★⑭b：记录本次分离针对的曲（供完成时校验是否已切歌）。
         onSeparationStarted(uri)
         scope.launch {
@@ -140,19 +143,54 @@ fun SeparationScreen(
                 cacheMsg = app.getString(R.string.sep_uri_unreadable)
                 return@launch
             }
-            val repo = SettingsRepository(app)
-            val opt = repo.tierOption(tc.stem, tc.tier) ?: tc.default()
-            Log.i("SepScreen", "startTier: ${tc.stem}/${tc.tier} → ${opt.id} (${opt.displayName})")
-            // ★G-3：边分离边播（仅 2-stem + 快速档 + 开关开）→ 从当前位置起。
-            val useEdge = repo.edgeSeparationEnabled &&
-                tc.stem == StemCount.TWO && tc.tier == Tier.FAST
+            Log.i("SepScreen", "startOption: ${opt.id} (${opt.displayName})")
+            // ★G-3：边分离边播（仅 2-stem + 极快簇 + 开关开）→ 从当前位置起。
+            val useEdge = settingsRepo.edgeSeparationEnabled && isTwoFast
             if (useEdge) {
                 val posMs = currentPositionMs()
-                Log.i("SepScreen", "startTier: EDGE from=${posMs}ms")
+                Log.i("SepScreen", "startOption: EDGE from=${posMs}ms")
                 vm.startEdgeOption(src, posMs)
             } else {
                 vm.startOption(src, opt)
             }
+        }
+    }
+
+    /** 统一入口：非 sherpa（Spleeter4 / Demucs）。 */
+    fun startNonSherpaOption(uri: String, opt: SepOption) {
+        onSeparationStarted(uri)
+        scope.launch {
+            val src = CurrentTrackBridge.toFile(app, uri)
+            if (src == null) {
+                cacheMsg = app.getString(R.string.sep_uri_unreadable)
+                return@launch
+            }
+            Log.i("SepScreen", "startOption: ${opt.id}")
+            vm.startOption(src, opt)
+        }
+    }
+
+    /**
+     * ★2026-10-20：启动一次 **2 轨·速度簇** 分离。
+     *
+     * 选哪个模型由设置决定（`twoTierModelId`）；只用已安装的候选。
+     */
+    fun startTwoTier(tc: TierChoices2) {
+        val uri = currentUri ?: return
+        val installed = tc.candidates.filter { it.spec.isInstalled(app) }
+        val savedId = settingsRepo.twoTierModelId(tc.speedTier, null)
+        val chosen = installed.firstOrNull { it.id == savedId } ?: installed.firstOrNull() ?: return
+        startSherpaOption(uri, chosen, isTwoFast = tc.speedTier == SpeedTier.ULTRA)
+    }
+
+    /** ★D-3（4 轨仍用）：点「档位」→ 用设置里该档选的模型启动分离。 */
+    fun startTier(tc: TierChoices) {
+        val uri = currentUri ?: return
+        val opt = settingsRepo.tierOption(tc.stem, tc.tier) ?: tc.default()
+        if (opt is SepOption.Sherpa) {
+            startSherpaOption(uri, opt, isTwoFast = false)
+        } else {
+            startNonSherpaOption(uri, opt)
         }
     }
 
@@ -166,21 +204,18 @@ fun SeparationScreen(
             Log.i("SepScreen", "autoStart 跳过：hasSong=$hasSong busy=$busy benched=$benchmarked")
             return@LaunchedEffect
         }
-        val fast2 = TierRegistry.ALL.firstOrNull {
-            it.stem == StemCount.TWO && it.tier == Tier.FAST
-        }
-        if (fast2 != null) {
-            Log.i("SepScreen", "autoStart：自动开始 2 轨·快速分离")
-            startTier(fast2)
+        val ultra = TierRegistry.twoStemTiers(benchRtf)
+            .firstOrNull { it.speedTier == SpeedTier.ULTRA }
+            ?.takeIf { tc -> tc.candidates.any { it.spec.isInstalled(app) } }
+        if (ultra != null) {
+            Log.i("SepScreen", "autoStart：自动开始 2 轨·极快分离")
+            startTwoTier(ultra)
         }
     }
 
     // ★⑬：横屏左右分栏（右栏=档位；左栏=其余）；竖屏保持单列。
     val isLandscape =
         LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
-    val settingsRepo = remember { SettingsRepository(app) }
-    // benchmark 缓存（本机实测/内置免跑）→ 判断各档选中模型是否实时档。
-    val benchRtf: Map<String, Float> = benchRtfAll.mapValues { it.value.rtf }
 
     // ★⑬：当前可导出的 4-stem 结果（无则导出按钮禁用置灰、常在位）。
     val done4Result = (separationTask as? SeparationTask.Done4)
@@ -198,32 +233,67 @@ fun SeparationScreen(
                 color = MaterialTheme.colorScheme.error,
             )
         }
-        TierRegistry.ALL.groupBy { it.stem }.forEach { (stem, rows) ->
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+
+        // ==================== 2 轨：4 个速度簇（动态）====================
+        // 只显示：① 设置里启用 且 ② 至少有一个候选已安装。
+        val twoTiers = remember(benchRtf, settingsRepo) {
+            TierRegistry.twoStemTiers(benchRtf)
+                .filter { settingsRepo.twoTierEnabled(it.speedTier) }
+                .filter { tc -> tc.candidates.any { it.spec.isInstalled(app) } }
+        }
+        if (twoTiers.isNotEmpty()) {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(
-                    stringResource(if (stem == StemCount.TWO) R.string.sep_stem_two else R.string.sep_stem_four),
-                    // （labelRes 已提供，但此处沿用更具体的 sep_stem_* 文案）
+                    stringResource(R.string.sep_stem_two),
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                FlowRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    rows.forEach { tc ->
-                        val opt = settingsRepo.tierOption(tc.stem, tc.tier) ?: tc.default()
-                        // ★D-4：选中模型的实测 RTF（未测/非 sherpa 模型 → null → 不标）。
-                        val rtf = benchRtf[opt.id]
-                        val realtime = rtf != null && rtf >= REALTIME_RTF
-                        // ★⑨②：每档只一个按钮（档名 + ⚡ 实时标记）。
-                        Button(
-                            onClick = { startTier(tc) },
-                            enabled = hasSong && !busy && benchmarked,
-                        ) {
-                            val tierName = stringResource(tc.tier.labelRes)
-                            Text(if (realtime) "⚡ $tierName" else tierName)
+                // ★用户要求：4 档 → 2×2；≤3 档 → 一排
+                if (twoTiers.size == 4) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            twoTiers.take(2).forEach { tc ->
+                                TwoTierButton(tc, hasSong && !busy && benchmarked) { startTwoTier(tc) }
+                            }
                         }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            twoTiers.drop(2).forEach { tc ->
+                                TwoTierButton(tc, hasSong && !busy && benchmarked) { startTwoTier(tc) }
+                            }
+                        }
+                    }
+                } else {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        twoTiers.forEach { tc ->
+                            TwoTierButton(tc, hasSong && !busy && benchmarked) { startTwoTier(tc) }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ==================== 4 轨：固定 2 档（不变）====================
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(
+                stringResource(R.string.sep_stem_four),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                TierRegistry.FOUR_TIERS.forEach { tc ->
+                    val opt = settingsRepo.tierOption(tc.stem, tc.tier) ?: tc.default()
+                    val rtf = benchRtf[opt.id]
+                    val realtime = rtf != null && rtf >= REALTIME_RTF
+                    Button(
+                        onClick = { startTier(tc) },
+                        enabled = hasSong && !busy && benchmarked,
+                    ) {
+                        val tierName = stringResource(tc.tier.labelRes)
+                        Text(if (realtime) "⚡ $tierName" else tierName)
                     }
                 }
             }
@@ -381,3 +451,19 @@ fun SeparationScreen(
         ) { body() }
     }
 }
+
+/**
+ * ★2 轨速度簇按钮。
+ *
+ * 显示**只显示档位名**（不显示 RTF 数字 —— 「慢」档实测 0.41–0.61×，单个数字不准）。
+ * 若候选里恰好只有一个已装模型，就额外标 ⚡（实时簇 _ULTRA_ 才有意义）。
+ */
+@Composable
+private fun TwoTierButton(tc: TierChoices2, enabled: Boolean, onClick: () -> Unit) {
+    val isFast = tc.speedTier == SpeedTier.ULTRA
+    Button(onClick = onClick, enabled = enabled) {
+        val name = stringResource(tc.speedTier.labelRes)
+        Text(if (isFast) "⚡ $name" else name, maxLines = 1)
+    }
+}
+
