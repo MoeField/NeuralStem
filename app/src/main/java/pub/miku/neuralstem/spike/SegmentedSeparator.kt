@@ -22,9 +22,17 @@ import kotlinx.coroutines.CancellationException
  */
 class SegmentedSeparator(
     private val reader: FrameSource,
-    private val vocalsBuffer: StemPcmRingBuffer,
-    private val accompBuffer: StemPcmRingBuffer,
     private val separator: ChunkSeparator,
+    /**
+     * ★Step 2：**输出回调**（取代直接持 buffer/writer）。
+     *
+     * 参数：`(vocals, accomp, frames, absFrame)` —— 两轨样本（交织 float）、
+     * 本段帧数、以及它在**整曲中的绝对起始帧**。
+     *
+     * 为何抽象：本类不再关心"写到哪里"（ring buffer / 随机写文件 / 两者皆写），
+     * 由上层决定 → 同一套分离逻辑可服务“边播”与“落盘”两种场景。
+     */
+    private val onWrite: (vocals: FloatArray, accomp: FloatArray, frames: Int, absFrame: Int) -> Unit,
     /** 从该绝对帧开始分离（含）。默认 0。 */
     private val startFrame: Int = 0,
     /** 重叠帧数，默认 0.5s @44.1kHz（G-3 决策 D-F）。 */
@@ -36,18 +44,6 @@ class SegmentedSeparator(
     private val onProgress: ((doneFrames: Int, totalFrames: Int) -> Unit)? = null,
     /** 第一段写出后回调一次（供上层切换到“可播”）。 */
     private val onFirstSegmentReady: (() -> Unit)? = null,
-    /**
-     * ★G-3fix（可选）：并行落盘。非 null 时，**写给 ring buffer 的同一份数据**
-     * 同时 append 到这两个 WavWriter。
-     *
-     * 为何需要：edge 分离完成后要关 buffer（读端 EOF），若播放器此时还在读
-     * `stem://` 就会误判 `STATE_ENDED` → 播放提前结束。落盘后上层可**无缝切到
-     * 文件播放**（文件完整、可 seek 到 [startFrame] 之后任意位置）。
-     *
-     * 注意：落盘内容 = `[startFrame, 曲尾)`，**不包含** startFrame 之前的部分。
-     */
-    private val vocalsWriter: WavWriter? = null,
-    private val accompWriter: WavWriter? = null,
     /**
      * ★取消钩子：每个块开始前调用一次，返回 true 则抛 [CancellationException] 中止。
      *
@@ -104,6 +100,8 @@ class SegmentedSeparator(
         var pendFrames = 0
 
         var firstEmitted = false
+        // ★Step 2：统计实际写出的帧数（两轨等长，共用一个计数）。
+        var writtenFrames = 0L
         plan.forEachIndexed { idx, c ->
             // ★取消支持：`run()` 是同步阻塞代码（在 Dispatchers.IO 里跑），
             //   协程的 `job.cancel()` 只能标记状态，**无法中断正在执行的阻塞调用**。
@@ -151,19 +149,20 @@ class SegmentedSeparator(
                         a[dst + ch] = sa / sumW
                     }
                 }
-                vocalsBuffer.append(v, 0, mergeLen)
-                accompBuffer.append(a, 0, mergeLen)
-                vocalsWriter?.appendRegion(v, 0, mergeLen)
-                accompWriter?.appendRegion(a, 0, mergeLen)
+                // ★Step 2：统一走输出回调（绝对帧 = c.start，即本块起始）。
+                onWrite(v, a, mergeLen, c.start)
+                writtenFrames += mergeLen
                 pendFrames = 0
             }
 
             // ---- 其余 ----
             if (isLast) {
-                appendRaw(res.vocals, res.accompaniment, mergeLen, lFrames - mergeLen)
+                writtenFrames += appendRaw(res.vocals, res.accompaniment, mergeLen, lFrames - mergeLen, c.start + mergeLen)
             } else {
                 val settled = hop - mergeLen
-                if (settled > 0) appendRaw(res.vocals, res.accompaniment, mergeLen, settled)
+                if (settled > 0) {
+                    writtenFrames += appendRaw(res.vocals, res.accompaniment, mergeLen, settled, c.start + mergeLen)
+                }
                 // tail 暂存（加权）。
                 val count = lFrames - hop
                 require(count in 0..overlapFrames) { "pending 容量不足 count=$count" }
@@ -192,19 +191,27 @@ class SegmentedSeparator(
         return Stats(
             startFrame = from,
             totalFrames = totalFrames,
-            vocalsFrames = vocalsBuffer.totalWrittenFrames,
-            accompFrames = accompBuffer.totalWrittenFrames,
+            vocalsFrames = writtenFrames,
+            accompFrames = writtenFrames,
             chunks = plan.size,
         )
     }
 
-    private fun appendRaw(v: FloatArray, a: FloatArray, offsetFrames: Int, count: Int) {
-        if (count <= 0) return
-        vocalsBuffer.append(v, offsetFrames, count)
-        accompBuffer.append(a, offsetFrames, count)
-        // ★G-3fix：并行落盘（与 buffer 写入同一份数据，保证内容一致）。
-        vocalsWriter?.appendRegion(v, offsetFrames, count)
-        accompWriter?.appendRegion(a, offsetFrames, count)
+    /** @return 实际写出的帧数（0 表示没写）。 */
+    private fun appendRaw(v: FloatArray, a: FloatArray, offsetFrames: Int, count: Int, absFrame: Int): Int {
+        if (count <= 0) return 0
+        // ★Step 2：必要时先切片，保证回调收到的是「从 0 开始的连续段」。
+        if (offsetFrames == 0 && count == v.size / reader.channels) {
+            onWrite(v, a, count, absFrame)
+        } else {
+            val ch = reader.channels
+            val sv = FloatArray(count * ch)
+            val sa = FloatArray(count * ch)
+            System.arraycopy(v, offsetFrames * ch, sv, 0, count * ch)
+            System.arraycopy(a, offsetFrames * ch, sa, 0, count * ch)
+            onWrite(sv, sa, count, absFrame)
+        }
+        return count
     }
 
     /** 与 [StreamingSeparator] 完全一致的权重公式。 */
