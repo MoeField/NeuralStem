@@ -16,9 +16,19 @@
 \setlength{\pdfpagewidth}{8.5in}  % DO NOT CHANGE THIS
 \setlength{\pdfpageheight}{11in}  % DO NOT CHANGE THIS
 
+\usepackage{array}
 \usepackage{amssymb}
 \usepackage{tikz}
 \usetikzlibrary{arrows.meta,positioning,fit,backgrounds}
+
+% Line-breaking policy (affects hyphenation only; page geometry, margins and
+% fonts are untouched, as the template rules require).
+% Prose keeps default two-column hyphenation, which gives the most even
+% spacing. Table cells suppress it: a word broken across lines inside a
+% narrow column reads as a typesetting error, whereas in a justified
+% paragraph it is unremarkable.
+% Applied inside table groups only; values are restored when the group ends.
+\newcommand{\nohyph}{\hyphenpenalty=10000 \exhyphenpenalty=10000 \tolerance=10000 \emergencystretch=3em}
 
 \pdfinfo{
 /TemplateVersion (2026.1)
@@ -120,10 +130,10 @@ Android-compatible runtimes with the source-separation operators already
 implemented, which makes on-device inference practical without writing custom
 kernels.
 
-\paragraph{Playback.} ExoPlayer/Media3 \citep{media3} supplies the audio
-rendering, playback-parameter (tempo/pitch) support, and the
-\texttt{MediaSessionService} foreground-service pattern that desktop tools
-simply do not need.
+\paragraph{Playback.} ExoPlayer/Media3 \citep{media3} supplies audio
+rendering, playback-parameter support for tempo and pitch, and the
+\texttt{Media\-Session\-Service} pattern for foreground playback. Desktop
+tools need none of this.
 
 \paragraph{Positioning.} We do not claim to replicate a DJ application. The
 novelty we claim is the combination of (i) fully offline operation, (ii) a
@@ -137,8 +147,10 @@ Table~\ref{tab:compare} makes the comparison explicit. The rows match the
 capabilities a learner needs; the columns are the closest existing options.
 
 \begin{table}[t]
+\begingroup
 \centering
 \footnotesize
+\nohyph
 \setlength{\tabcolsep}{3pt}
 \begin{tabular}{lcccc}
 \hline
@@ -158,6 +170,7 @@ that emit stem files without playback. Only the proposed design combines
 playback, offline operation and hardware-aware model selection in one phone
 application.}
 \label{tab:compare}
+\endgroup
 \end{table}
 
 \section{Requirements and Design Goals}
@@ -177,10 +190,12 @@ activity. Sections~\ref{sec:arch} and~\ref{sec:pipeline} show that these two
 constraints, more than any stylistic preference, determine the architecture.
 
 \begin{table}[t]
+\begingroup
 \centering
 \footnotesize
+\nohyph
 \setlength{\tabcolsep}{3pt}
-\begin{tabular}{@{}p{0.82cm}p{5.55cm}@{}}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.82cm}>{\raggedright\arraybackslash}p{5.55cm}@{}}
 \hline
 \textbf{ID} & \textbf{Requirement} \\
 \hline
@@ -202,9 +217,10 @@ N6 & Graceful degradation: slower hardware is offered a faster model. \\
 N7 & The codebase is documented and explainable. \\
 \hline
 \end{tabular}
-\caption{Functional (P) and non-functional (N) requirements, phrased as
+\caption{Functional (P) and non\-functional (N) requirements, phrased as
 verifiable acceptance criteria.}
 \label{tab:req}
+\endgroup
 \end{table}
 
 The two requirements that drive the architecture are N2 and N4. N2 forces
@@ -246,8 +262,10 @@ no lifecycle hazard from a presenter outliving the view. Against MVVM, the
 layering is preserved but the view model no longer owns the state it exposes.
 
 \begin{table}[h]
+\begingroup
 \centering
 \footnotesize
+\nohyph
 \setlength{\tabcolsep}{3pt}
 \begin{tabular}{@{}l c c c c@{}}
 \hline
@@ -262,6 +280,7 @@ Illegal states   & possible  & possible   & possible   & ruled out \\
 \caption{Where our design sits relative to the classical patterns. The last
 row is the one that mattered in practice.}
 \label{tab:patterns}
+\endgroup
 \end{table}
 
 \subsection{Service-Owned Model with a State-Machine Core}
@@ -319,8 +338,10 @@ testable unit: the invariants become assertions on the transition function
 rather than comments scattered through the UI.
 
 \begin{table}[t]
+\begingroup
 \centering
 \footnotesize
+\nohyph
 \setlength{\tabcolsep}{3pt}
 \begin{tabular}{@{}l l l@{}}
 \hline
@@ -340,6 +361,7 @@ Multi       & load(track)        & Single (I1: exit first) \\
 multi-track without a completed separation) are absent by construction, which
 is what invariant I3 enforces.}
 \label{tab:sm}
+\endgroup
 \end{table}
 
 \subsection{The Separation Pipeline: Satisfying N2}\label{sec:pipeline}
@@ -398,35 +420,33 @@ a broken N4 requirement.
 
 \subsection{Design Trade-offs}
 
-Table~\ref{tab:trade} records the choices we expect to be questioned. Each is a
-place where a simpler design exists and was rejected for a stated reason; being
+The choices below are the ones we expect to be questioned. Each is a place
+where a simpler design exists and was rejected for a stated reason; being
 explicit about them is what makes the architecture defensible rather than
-merely different.
+merely different. They are given as a list rather than a table because each
+entry carries a full-sentence justification, which a narrow column renders
+unreadable.
 
-\begin{table}[t]
-\centering
-\footnotesize
-\setlength{\tabcolsep}{3pt}
-\begin{tabular}{@{}p{1.95cm}p{2.15cm}p{2.3cm}@{}}
-\hline
-\textbf{Decision} & \textbf{Alternative} & \textbf{Why rejected} \\
-\hline
-Service owns state & State in ViewModel & ViewModel dies with the activity;
-  playback and separation would be interrupted \\
-Multi-instance playback & Single player, mix in PCM & Mixing in the audio graph
-  would require implementing a mixer and re-deriving tempo and pitch on our own \\
-Streaming data source & Write stems to files first & A file is only playable once
-  its header is final, which defeats playback before separation ends \\
-Shared audio focus & Focus per track & Only one instance can hold focus; the
-  others would be paused by the system \\
-Staged model tiers & One model for all & A single model is either too slow on
-  weak hardware or too poor on strong hardware \\
-\hline
-\end{tabular}
-\caption{Architectural trade-offs. Each rejected alternative is genuinely
-simpler, which is why the chosen option needs a reason.}
-\label{tab:trade}
-\end{table}
+\begin{description}
+\item[Service-owned state.] \emph{Instead of} keeping state in the ViewModel:
+  a ViewModel is destroyed with its host, so playback and separation would be
+  interrupted exactly when they must persist.
+
+\item[Multi-instance playback.] \emph{Instead of} one player mixing in PCM:
+  mixing in the audio graph would mean implementing a mixer and re-deriving
+  tempo and pitch ourselves, duplicating work the platform already does.
+
+\item[Streaming data source.] \emph{Instead of} writing stems to files first:
+  a file is only playable once its header is final, which is precisely what
+  defeats playback before separation finishes.
+
+\item[Shared audio focus.] \emph{Instead of} one focus request per track: only
+  one instance can hold focus, and the system would pause the others.
+
+\item[Staged model tiers.] \emph{Instead of} one model for all devices: a
+  single model is either too slow on weak hardware or too poor on strong
+  hardware.
+\end{description}
 
 \subsection{Walkthrough of a Typical Session}
 
@@ -482,8 +502,10 @@ Their measured behaviour on the target device differs by an order of magnitude,
 which is what makes tiering necessary rather than decorative.
 
 \begin{table}[t]
+\begingroup
 \centering
 \footnotesize
+\nohyph
 \setlength{\tabcolsep}{3pt}
 \begin{tabular}{@{}l r r l@{}}
 \hline
@@ -501,6 +523,7 @@ device. A model that runs below $1\times$ cannot be used in a position-from-play
 workflow, which is why such models are offered only as an explicit
 ``separate first, then listen'' path.}
 \label{tab:models}
+\endgroup
 \end{table}
 
 The consequence for the design is direct. A single model cannot serve both a
@@ -540,34 +563,30 @@ milestone, and subsequent models are additive rather than prerequisites.
 tests for the separator geometry and the multi-track alignment, so the
 foundation is verifiable rather than merely demonstrated by hand.
 
-\paragraph{What remains, and what could go wrong.} Table~\ref{tab:risk} lists
-the risks that are still open. Each has a concrete mitigation and, importantly,
-a fallback that preserves a shippable application.
+\paragraph{What remains, and what could go wrong.} Five risks are still open.
+Each has a concrete mitigation and, importantly, a fallback that preserves a
+shippable application.
 
-\begin{table}[t]
-\centering
-\footnotesize
-\setlength{\tabcolsep}{3pt}
-\begin{tabular}{@{}p{2.35cm}p{1.75cm}p{2.3cm}@{}}
-\hline
-\textbf{Risk} & \textbf{Impact} & \textbf{Mitigation / fallback} \\
-\hline
-Large models fail to run on slow phones & Quality ceiling & Benchmark tiers; ship
-  the two-stem fast model as the guaranteed baseline \\
-Memory pressure with four stems & Crash on low-RAM devices & Keep models outside
-  the Java heap; offer four stems only where the benchmark permits \\
-State machine misses a transition & Inconsistent UI & Invariants I1--I4 plus
-  unit tests on the transition table \\
-Model licence restrictions & Redistribution problem & Present per-model licences
-  and download from origin rather than bundling \\
-Scope overrun & Unfinished project & Core milestone is the two-stem path;
-  everything else is additive \\
-\hline
-\end{tabular}
-\caption{Open risks. The last row is the reason the scope is staged: the
-project remains useful even if none of the optional tiers is reached.}
-\label{tab:risk}
-\end{table}
+\begin{description}
+\item[Slow phones cannot run large models] The impact is a quality ceiling.
+  Benchmark tiers keep the fast two-stem model as the guaranteed baseline.
+
+\item[Memory pressure with four stems] The impact is a crash on low-RAM
+  devices. Models are kept outside the Java heap, and four stems are offered
+  only where the benchmark permits.
+
+\item[State machine misses a transition] The impact is an inconsistent
+  interface, prevented by invariants I1--I4 and unit tests on the transition
+  table.
+
+\item[Model licence restrictions] The impact is a licence conflict. Licences
+  are shown per model, and weights are downloaded from the origin rather than
+  bundled.
+
+\item[Scope overrun] The impact is an unfinished project. The core milestone
+  is the two-stem path and everything else is additive, so the project remains
+  useful even if no optional tier is reached.
+\end{description}
 
 \section{Development Method}
 
@@ -608,10 +627,12 @@ Table~\ref{tab:mile} gives the remaining milestones. They are ordered so that
 the application is demonstrable after every step rather than only at the end.
 
 \begin{table}[t]
+\begingroup
 \centering
 \footnotesize
+\nohyph
 \setlength{\tabcolsep}{3pt}
-\begin{tabular}{@{}l p{4.9cm}@{}}
+\begin{tabular}{@{}l >{\raggedright\arraybackslash}p{4.9cm}@{}}
 \hline
 \textbf{Milestone} & \textbf{Content} \\
 \hline
@@ -627,6 +648,7 @@ M5 & Playlist and export; final evaluation and write-up. \\
 \caption{Remaining milestones. M1 alone yields a usable application, which is
 what makes the staged scope safe.}
 \label{tab:mile}
+\endgroup
 \end{table}
 
 \section{Quality Assurance: Limitations and Threats to Validity}
