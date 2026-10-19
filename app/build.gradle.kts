@@ -5,18 +5,14 @@ plugins {
 
 android {
     namespace = "pub.miku.neuralstem"
-    // 默认 compileSdk 37（本机）。CI 上 API 37 仅为预览版、可能装不上，
-    // 故允许用 -PciCompileSdk=36 降级（不影响本地默认 37）。
-    val ciCompileSdk = (providers.gradleProperty("ciCompileSdk").orNull)?.toIntOrNull()
     compileSdk {
-        if (ciCompileSdk != null) version = release(ciCompileSdk) else version = release(37)
+        version = release(37)
     }
 
     defaultConfig {
         applicationId = "pub.miku.neuralstem"
         minSdk = 23
-        // CI 用 -PciCompileSdk=36 降级时，targetSdk 必须同步降至 36（AGP 要求 target <= compile）。
-        targetSdk = ciCompileSdk ?: 37
+        targetSdk = 37
         versionCode = 10          // alpha 首发（0.1.0-alpha）
         versionName = "0.1.0-alpha"
 
