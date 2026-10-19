@@ -1,6 +1,7 @@
 package pub.miku.neuralstem.settings
 
 import java.io.File
+import kotlin.math.abs
 
 /**
  * ★模型一键下载：**模型清单**（唯一真源）。
@@ -64,8 +65,16 @@ object ModelCatalog {
     private const val HF_SPLEETER4 = "Best-Practice/spleeter-4stems-onnx"
     private const val HF_DEMUCS = "timcsy/demucs-web-onnx"
 
-    /** 单文件约 19.7MB（fp16）。 */
-    private const val SPLEETER_FILE_BYTES = 19_681_017L
+    /**
+     * 期望字节数（用于完整性校验）。
+     *
+     * ⚠️ **2-stem 与 4-stem 的文件大小并不相同**（4-stem 每个大 ~33KB）：
+     * 两者都是 U-Net 架构但权重不同，不能复用同一个常量。
+     * 曾因复用导致“已下载但 UI 显示未安装”（真机实报）。
+     */
+    private const val SPLEETER2_VOCALS_BYTES = 19_681_017L
+    private const val SPLEETER2_ACCOMP_BYTES = 19_681_024L
+    private const val SPLEETER4_BYTES = 19_714_141L
 
     val ALL: List<ModelPackInfo> = listOf(
         ModelPackInfo(
@@ -78,11 +87,11 @@ object ModelCatalog {
             files = listOf(
                 ModelFile(
                     "/$HF_SPLEETER2/resolve/main/vocals.fp16.onnx",
-                    "sherpa", "vocals.fp16.onnx", SPLEETER_FILE_BYTES,
+                    "sherpa", "vocals.fp16.onnx", SPLEETER2_VOCALS_BYTES,
                 ),
                 ModelFile(
                     "/$HF_SPLEETER2/resolve/main/accompaniment.fp16.onnx",
-                    "sherpa", "accompaniment.fp16.onnx", 19_681_024L,
+                    "sherpa", "accompaniment.fp16.onnx", SPLEETER2_ACCOMP_BYTES,
                 ),
             ),
         ),
@@ -94,10 +103,10 @@ object ModelCatalog {
                 "体积 4 × 19.7MB，音质与 2 轨同代（只提升粒度）。",
             sourceUrl = "https://huggingface.co/$HF_SPLEETER4",
             files = listOf(
-                ModelFile("/$HF_SPLEETER4/resolve/main/vocals.fp16.onnx", "spleeter4", "vocals.fp16.onnx", SPLEETER_FILE_BYTES),
-                ModelFile("/$HF_SPLEETER4/resolve/main/drums.fp16.onnx", "spleeter4", "drums.fp16.onnx", SPLEETER_FILE_BYTES),
-                ModelFile("/$HF_SPLEETER4/resolve/main/bass.fp16.onnx", "spleeter4", "bass.fp16.onnx", SPLEETER_FILE_BYTES),
-                ModelFile("/$HF_SPLEETER4/resolve/main/other.fp16.onnx", "spleeter4", "other.fp16.onnx", SPLEETER_FILE_BYTES),
+                ModelFile("/$HF_SPLEETER4/resolve/main/vocals.fp16.onnx", "spleeter4", "vocals.fp16.onnx", SPLEETER4_BYTES),
+                ModelFile("/$HF_SPLEETER4/resolve/main/drums.fp16.onnx", "spleeter4", "drums.fp16.onnx", SPLEETER4_BYTES),
+                ModelFile("/$HF_SPLEETER4/resolve/main/bass.fp16.onnx", "spleeter4", "bass.fp16.onnx", SPLEETER4_BYTES),
+                ModelFile("/$HF_SPLEETER4/resolve/main/other.fp16.onnx", "spleeter4", "other.fp16.onnx", SPLEETER4_BYTES),
             ),
         ),
         ModelPackInfo(
@@ -116,15 +125,28 @@ object ModelCatalog {
 
     fun info(pack: ModelPack): ModelPackInfo = ALL.first { it.pack == pack }
 
-    /** 该包是否已全部安装（文件存在且大小合理）。 */
+    /**
+     * 该包是否已全部安装。
+     *
+     * 判定：文件存在且非空；若知道 [ModelFile.expectedBytes] 则额外校验大小。
+     *
+     * ★为何用**答差**而不是精确相等：fp16 onnx 的四个 stem 文件大小
+     * 略有差异（实测 19,714,139 / 140 / 140 / 141）—— 它们自描述头长度不一。
+     * 早期用精确相等 → “已下载但显示未安装”（真机实报）。
+     */
     fun isInstalled(filesDir: File, pack: ModelPack): Boolean {
         val info = info(pack)
         return info.files.all { f ->
             val target = File(File(filesDir, f.targetSubdir), f.fileName)
-            target.exists() && target.length() > 0L &&
-                (f.expectedBytes <= 0L || target.length() == f.expectedBytes)
+            if (!target.exists() || target.length() <= 0L) return@all false
+            if (f.expectedBytes <= 0L) return@all true
+            val diff = abs(target.length() - f.expectedBytes)
+            diff <= SIZE_TOLERANCE_BYTES
         }
     }
+
+    /** 文件大小容差（±64KB）：足够区分“下完”与“下了一半”，又能吸收头长度差异。 */
+    private const val SIZE_TOLERANCE_BYTES = 64L * 1024
 
     /** 已安装的包。 */
     fun installed(filesDir: File): List<ModelPack> =

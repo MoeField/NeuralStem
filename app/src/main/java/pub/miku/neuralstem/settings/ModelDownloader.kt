@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
+import kotlin.math.abs
 
 /**
  * ★模型一键下载：**下载源探测 + 文件下载**。
@@ -32,7 +33,6 @@ class ModelDownloader(private val filesDir: File) {
         data object Idle : State
         data class Probing(val hint: String) : State
         data class Downloading(
-            val pack: ModelPack,
             /** 已下载字节（全部文件累加）。 */
             val bytesDone: Long,
             val bytesTotal: Long,
@@ -43,12 +43,29 @@ class ModelDownloader(private val filesDir: File) {
                     ((bytesDone * 100) / bytesTotal).toInt().coerceIn(0, 100)
                 } else 0
         }
-        data class Done(val pack: ModelPack, val baseUrl: String) : State
-        data class Failed(val pack: ModelPack?, val message: String) : State
+        data class Done(val baseUrl: String) : State        data class Failed(val message: String) : State
     }
 
-    private val _state = MutableStateFlow<State>(State.Idle)
-    val state: StateFlow<State> = _state.asStateFlow()
+    /**
+     * ★每个模型包**独立**的状态。
+     *
+     * 为何不用单一 `StateFlow<State>`：用户可能**同时下载多个模型**，
+     * 共享单值时后启动的会覆盖前面的 → UI 上两个进度条“互相跳”（真机实报）。
+     */
+    private val _states = MutableStateFlow<Map<ModelPack, State>>(emptyMap())
+    val states: StateFlow<Map<ModelPack, State>> = _states.asStateFlow()
+
+    /** 设置某个包的状态（线程安全地替换 map 中的一项）。 */
+    @Synchronized
+    private fun setState(pack: ModelPack, s: State) {
+        _states.value = _states.value.toMutableMap().apply { put(pack, s) }
+    }
+
+    /** 取某个包的当前状态（无记录 = Idle）。 */
+    fun stateOf(pack: ModelPack): State = _states.value[pack] ?: State.Idle
+
+    /** 该包是否正在下载（用于 UI 禁用/展示）。 */
+    fun isDownloading(pack: ModelPack): Boolean = stateOf(pack) is State.Downloading
 
     /** 上次探测结果（进程内缓存；设置页展示用）。 */
     @Volatile
@@ -69,7 +86,9 @@ class ModelDownloader(private val filesDir: File) {
         ModelSources.baseUrl(pref)?.let { return@withContext it }
         lastProbedBaseUrl?.let { return@withContext it }
 
-        _state.value = State.Probing("正在检测网络…")
+        // 探测是**全局**的（与具体包无关）→ 不写进某个包的状态，
+        // 避免“下载 A 时又去下载 B”把探测文案挂在 A 的进度上。
+        Log.i(TAG, "probing network for model source…")
         val result = coroutineScope {
             val hf = async { probeHost(ModelSources.HUGGINGFACE) }
             val mirror = async { probeHost(ModelSources.HF_MIRROR) }
@@ -124,37 +143,39 @@ class ModelDownloader(private val filesDir: File) {
                 val dir = File(filesDir, f.targetSubdir).apply { mkdirs() }
                 val target = File(dir, f.fileName)
 
-                // 已存在且大小匹配 → 跳过（已下完的文件不重下）
+                // 已存在且大小合理 → 跳过（已下完的文件不重下）
+                // 容差同 ModelCatalog.isInstalled（fp16 头部长度会差几十字节）
                 if (target.exists() && target.length() > 0L &&
-                    (f.expectedBytes <= 0L || target.length() == f.expectedBytes)
+                    (f.expectedBytes <= 0L ||
+                        abs(target.length() - f.expectedBytes) <= 64L * 1024)
                 ) {
                     done += target.length()
-                    _state.value = State.Downloading(pack, done, total, f.fileName)
+                    setState(pack, State.Downloading(done, total, f.fileName))
                     continue
                 }
 
                 val part = File(dir, "${f.fileName}.part")
                 if (part.exists()) part.delete()
 
-                _state.value = State.Downloading(pack, done, total, f.fileName)
+                setState(pack, State.Downloading(done, total, f.fileName))
                 downloadOne("$base${f.remotePath}", part) { delta ->
                     done += delta
-                    _state.value = State.Downloading(pack, done, total, f.fileName)
+                    setState(pack, State.Downloading(done, total, f.fileName))
                 }
                 if (!part.renameTo(target)) {
                     throw IOException("无法重命名 ${part.name} → ${target.name}")
                 }
             }
-            _state.value = State.Done(pack, base)
+            setState(pack, State.Done(base))
             Log.i(TAG, "download done: $pack via $base (${ModelCatalog.humanSize(done)})")
         } catch (ce: CancellationException) {
             cleanupPartFiles(pack)
-            _state.value = State.Idle
+            setState(pack, State.Idle)
             throw ce
         } catch (t: Throwable) {
             cleanupPartFiles(pack)
             Log.e(TAG, "download failed: $pack", t)
-            _state.value = State.Failed(pack, describe(t))
+            setState(pack, State.Failed(describe(t)))
         }
     }
 
