@@ -170,9 +170,15 @@ fun AppShell(
             st is EdgeSeparationSession.State.Failed
         if (aborted && edgeSwitched) {
             edgeSwitched = false
-            Log.i("AppShell", "edge session aborted (${st::class.simpleName}) → exitMultiTrack 回原曲")
-            playerVm.exitMultiTrack()
-            playerVm.play()
+            Log.i("AppShell", "edge session aborted (${st::class.simpleName}) → 回原曲")
+            // ★修正：只用 exitMultiTrack() 会“退了多轨但没播”、“1 Tracks 0 active”。
+            //   必须走 toggleSeparation(false) —— 它内部 exitMultiTrack + doLoad(originalUri)
+            //   重载原曲并开播（且保留 lastStems，开关再开可恢复）。
+            if (!playerVm.toggleSeparation(false)) {
+                // 极端情况（无 originalUri）：至少退回播放态，避免卡在 0 active。
+                playerVm.exitMultiTrack()
+                playerVm.play()
+            }
             scope.launch {
                 snackbarHostState.showSnackbar(edgeAbortedMsg)
             }
