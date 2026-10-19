@@ -1,0 +1,11 @@
+# LaTeX intermediate files
+*.aux
+*.log
+*.out
+*.toc
+*.bbl
+*.blg
+*.synctex.gz
+
+# Keep the compiled PDF (it is the deliverable)
+!neuralstem.pdf
