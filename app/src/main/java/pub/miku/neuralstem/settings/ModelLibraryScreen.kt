@@ -106,14 +106,23 @@ fun ModelLibraryScreen(
         resolvedSource?.let { repo.lastResolvedModelSource = it }
     }
 
-    // 体积分节 + 展开状态（默认展开“有已装模型”的节）
+    // 体积分节 + 展开状态。
+    //
+    // ★为何要记“用户手动折叠过哪些”而不是只记“展开哪些”：
+    //   旧实现用 `remember { 含已装模型的节 }` 初始化，**此后不再跟随**。
+    //   于是：展开→关一节（用户意图要记住）+ 下载完成（理应自动展开新装的那节）
+    //   两个需求冲突时只能用一套状态 → 初版选了“记住用户意图”，代价是
+    //   “下载完却看不到已安装”（真机实报）。
+    //   ⇒ 拆成两个不相交的集合：**自动展开**（含已装模型的节）∪ **用户手动展开** − **用户手动折叠**。
     val groups = remember { ModelCatalog.groupBySize() }
-    var expanded by remember {
-        mutableStateOf(
-            groups.filter { (_, list) -> list.any { it.pack in installedIds } }
-                .map { it.first }.toSet(),
-        )
+    var manualOpen by remember { mutableStateOf(emptySet<Long>()) }
+    var manualClosed by remember { mutableStateOf(emptySet<Long>()) }
+    // 含已装模型的节“自动”展开（派生值：下载/删除后会跟着变）
+    val installedBuckets = remember(installedIds) {
+        groups.filter { (_, list) -> list.any { it.pack in installedIds } }
+            .map { it.first }.toSet()
     }
+    fun isOpen(bytes: Long) = (bytes in installedBuckets || bytes in manualOpen) && bytes !in manualClosed
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
@@ -188,14 +197,21 @@ fun ModelLibraryScreen(
 
             // ---------------- 体积分节 ----------------
             groups.forEach { (bytes, list) ->
-                val isOpen = bytes in expanded
+                val isOpen = isOpen(bytes)
                 item(key = "hdr-$bytes") {
                     // 节头：▸ / ▾ + 体积 + 数量 + 该体积簇的典型 RTF
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable {
-                                expanded = if (isOpen) expanded - bytes else expanded + bytes
+                                // 用户手动切换：若当前开→记入 closed；若当前关→记入 open 并撤销 closed
+                                if (isOpen) {
+                                    manualOpen = manualOpen - bytes
+                                    manualClosed = manualClosed + bytes
+                                } else {
+                                    manualClosed = manualClosed - bytes
+                                    manualOpen = manualOpen + bytes
+                                }
                             }
                             .padding(vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
