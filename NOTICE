@@ -1,0 +1,63 @@
+NeuralStem — 第三方组件与模型许可声明
+=====================================
+
+本仓库原创代码以 MIT 许可发布（见 LICENSE）。但本项目的构建依赖若干第三方库，
+**运行时的音频分离功能还依赖独立的 AI 模型文件**。这些内容各有其许可，均不属于本项目，
+不随本仓库分发（模型不入库，需用户自行获取）。
+
+请在使用 / 分发 / 商用前，逐项核对下列许可。
+
+
+1. 主要第三方运行时库
+-----------------------------------------------------------------------
+- sherpa-onnx (k2-fsa)            Apache-2.0
+  https://github.com/k2-fsa/sherpa-onnx
+- ONNX Runtime (Microsoft)        MIT
+  https://github.com/microsoft/onnxruntime
+- AndroidX / Jetpack Compose /
+  Media3 (ExoPlayer)              Apache-2.0
+  https://developer.android.com/jetpack
+  https://github.com/androidx/media
+- Kotlin / kotlinx.coroutines     Apache-2.0
+  https://github.com/JetBrains/kotlin
+- 其他 Gradle 依赖见 gradle/libs.versions.toml（各库遵循其自身许可）
+
+注：`app/src/main/cpp/ort-libs/include/*.h` 为 ONNX Runtime 的公开头文件，
+带有 "Copyright (c) Microsoft Corporation. Licensed under the MIT License"，
+其中 `onnxruntime_float16.h` 内含的部分代码版权归 Fabian Giesen (2016)。
+
+
+2. 音轨分离模型（★需重点核对，不随仓库分发）
+-----------------------------------------------------------------------
+本项目支持多种分离模型，用户需自行下载放置。**各模型的许可相互独立、并不统一**：
+
+- **Spleeter 2-stem / 4-stem**（Deezer 架构，权重来自 sherpa-onnx release）
+  - 代码：MIT（https://github.com/deezer/spleeter）
+  - 权重：随 sherpa-onnx 的 `source-separation-models` release 分发，通常视为 MIT。
+  - ⚠️ 仍建议以官方仓库 LICENSE 为准。
+
+- **UVR / MDX-Net 系列**（Ultraviolet，如 UVR-MDX-NET-Voc_FT / 9482 / KARA / Inst_HQ_3 / Main）
+  - 应用代码：MIT（https://github.com/Anjok07/ultimatevocalremovergui）
+  - **模型权重：许可不统一**，由各模型作者单独设定；部分仅限**非商业 / 研究用途**。
+  - ⚠️ **商用或公开分发前，必须逐个模型核对其 LICENSE**，或联系模型作者。
+
+- **Demucs (htdemucs)**（Meta）
+  - 代码：MIT（https://github.com/facebookresearch/demucs）
+  - 权重：随代码按 MIT 分发；商用请确认其 MODEL-CARD / LICENSE。
+
+
+3. 音频素材
+-----------------------------------------------------------------------
+仓库中**不包含**任何测试音频。开发期使用的示例歌曲仅在本机，不随源码分发。
+如果你要发布演示视频或 APK，请注意所用音乐本身的版权（非本项目授权范围）。
+
+
+4. 本项目自研部分
+-----------------------------------------------------------------------
+以下为本项目原创（MIT）：
+- Kotlin/Compose 应用层（播放器、多轨、EQ、波形、分离档位、边分离边播等）
+- JNI 胶水层 `app/src/main/cpp/sherpa_spike.c` 等
+- `StreamingSeparator` / `SegmentedSeparator` / `StemPcmRingBuffer` /
+  `StemPcmDataSource` 等分离与流式播放实现
+
+若你发现本仓库误含了未署名的第三方代码，请提 Issue 指出，会立即更正。
