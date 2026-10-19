@@ -1,7 +1,7 @@
 name: Android CI (unit tests)
 
 # B 版轻量 CI：只跑 JVM 单元测试（不编 APK、不装 NDK/CMake、不编 bench）。
-# 目的：保证每次提交「代码没坏」。完整 APK 构建见 beta 阶段的升级计划。
+# 目的：保证每次提交「代码没坏」。
 
 on:
   push:
@@ -17,15 +17,13 @@ concurrency:
 jobs:
   unit-test:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
 
     steps:
       - uses: actions/checkout@v4
 
-      # JDK 21：Gradle 9.x / AGP 9.x 均支持；并用 auto-download=false 关掉 toolchain 自动下载
-      # （本地曾因 foojay 插件尝试下载 JDK 25 而卡死，CI 必须显式禁用）。
       - name: Set up JDK 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
@@ -36,14 +34,27 @@ jobs:
       - name: Accept licenses
         run: yes | sdkmanager --licenses > /dev/null || true
 
-      # compileSdk=37 目前只有预览版（Cinnamon Bun，包名可能与最终版不同）。
-      # 这里装预览渠道平台 + build-tools；若将来看到该包改名，改这一行即可。
-      - name: Install SDK platform 37 (preview) + build-tools
+      # 尝试安装 API 37（预览）。装不上就降级用 36（脚本后续按实际情况传 -PciCompileSdk）。
+      - name: Install SDK (37 preview → fallback 36) + build-tools
+        id: sdk
         run: |
-          sdkmanager --channel=3 "platforms;android-37" || \
-          sdkmanager --channel=3 "platforms;android-37.0" || \
-          (echo "::warning::未能安装 android-37（预览），尝试继续" )
-          sdkmanager "build-tools;37.0.0" || true
+          set +e
+          sdkmanager --list --channel=3 2>/dev/null | grep -iE "platforms;android-3[6-9]" | head -20
+          installed37=0
+          for pkg in "platforms;android-37" "platforms;android-37.0"; do
+            if sdkmanager --channel=3 "$pkg" >/dev/null 2>&1; then installed37=1; echo "installed $pkg"; break; fi
+          done
+          if [ "$installed37" = "1" ]; then
+            sdkmanager "build-tools;37.0.0" >/dev/null 2>&1 || true
+            echo "compile_sdk_arg=" >> "$GITHUB_OUTPUT"
+            echo "SDK 37 installed"
+          else
+            echo "::warning::API 37 预览包不可用，降级 compileSdk 36 跑单测"
+            sdkmanager "platforms;android-36" "build-tools;36.0.0" >/dev/null 2>&1 || true
+            echo "compile_sdk_arg=-PciCompileSdk=36" >> "$GITHUB_OUTPUT"
+          fi
+          echo "--- installed platforms ---"
+          ls "$ANDROID_SDK_ROOT/platforms" || true
 
       - name: Cache Gradle
         uses: actions/cache@v4
@@ -57,12 +68,17 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x ./gradlew
 
-      # 只跑 :app 的单测（150 项，全部是 JVM 测试，用假分离器，不依赖真实模型）。
-      # 不编 bench（含 QNN 大 so，体积大、耗时长）。
+      - name: Print env
+        run: |
+          java -version
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+          ./gradlew --version || true
+
       - name: Run unit tests
         run: |
           ./gradlew :app:testDebugUnitTest --no-daemon --stacktrace \
-            -Porg.gradle.java.installations.auto-download=false
+            -Porg.gradle.java.installations.auto-download=false \
+            ${{ steps.sdk.outputs.compile_sdk_arg }}
 
       - name: Upload test reports
         if: always()
@@ -72,4 +88,5 @@ jobs:
           path: |
             app/build/reports/tests/testDebugUnitTest/
             app/build/test-results/testDebugUnitTest/
+          if-no-files-found: warn
           retention-days: 7
