@@ -259,6 +259,8 @@ fun AppShell(
                 currentPositionMs = { playerVm.progress.positionMs },
                 // ★G-3ux：分离页进度文案区分“已可播/仍在跑”。
                 edgePercent = playerState.edgePercent,
+                // ★闸门：分离跟不上播放时，分离页也说明“已暂停等待”。
+                edgeStarved = playerState.edgeStarved,
                 // ★G-3ux：无缓存时跳过来 → 自动开始分离（不用用户再点一次）。
                 autoStartToken = autoStartSeparate,
                 onPlayStems = { done ->
