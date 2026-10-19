@@ -39,6 +39,12 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# ★发 Release 需要写权限。
+# GitHub 对新建仓库的 GITHUB_TOKEN 默认为**只读** → softprops/action-gh-release 会 403
+# （"Resource not accessible by integration"）。必须显式声明。
+permissions:
+  contents: write
+
 jobs:
   unit-test:
     runs-on: ubuntu-latest
