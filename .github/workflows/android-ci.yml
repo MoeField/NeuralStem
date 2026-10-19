@@ -16,6 +16,9 @@ on:
       - 'LICENSE'
       - 'NOTICE'
       - '.gitignore'
+      # NCM 模块默认不编译，CI 也不启用（-Pwith_ncm），其改动不影响构建结果
+      - 'app/src/ncm/**'
+      - 'app/src/ncmTest/**'
   pull_request:
     branches: [ main ]
     paths-ignore:
@@ -24,6 +27,8 @@ on:
       - 'report/**'
       - 'LICENSE'
       - 'NOTICE'
+      - 'app/src/ncm/**'
+      - 'app/src/ncmTest/**'
   workflow_dispatch:
 
 concurrency:
