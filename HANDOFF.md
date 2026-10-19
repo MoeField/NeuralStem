@@ -170,8 +170,10 @@
 | **`HANDOFF.md`**（本文件） | 现状 + 约定 + 下一步 | 首先 |
 | [`README.md`](README.md) | **使用说明**（构建 / 安装 / 上手 / 技术栈） | 交付 / 上手 |
 | [`doc/.memory.md`](doc/.memory.md) | 过程笔记、**全部实测数据**、决策依据 | 写报告 / 需要数据时 |
-| [`doc/.critical_steps.md`](doc/.critical_steps.md) | **64 条踩坑记录**（编号可全文引用） | 改代码出问题时 |
+| [`doc/.critical_steps.md`](doc/.critical_steps.md) | **68 条踩坑记录**（编号可全文引用） | 改代码出问题时 |
 | [`doc/research_separation.md`](doc/research_separation.md) | 分离方案选型调研 | 想换模型时 |
+| [`doc/latex_report_notes.md`](doc/latex_report_notes.md) | **报告写作 / LaTeX 排版笔记**（PDF 校验、连字、表格 vs 列表、截图取素材） | 写报告时 |
+| [`report/`](report/) | 课程报告源码（`.tex`）+ 生成 PDF | 交稿 / 复现 |
 | [`implementation_plan.artifact.md`](implementation_plan.artifact.md) | 滚动实施计划 | 规划下一步时 |
 
 ---
@@ -316,7 +318,7 @@ app/src/deprecated/              已废弃代码存档(TFLite 路线,不编译)
 
 ## 七、踩过的最重要的坑（**改代码前请先看这些**）
 
-完整 64 条见 [`doc/.critical_steps.md`](doc/.critical_steps.md)，以下是**最容易再次踩到**的：
+完整 68 条见 [`doc/.critical_steps.md`](doc/.critical_steps.md)，以下是**最容易再次踩到**的：
 
 | # | 坑 | 一句话 |
 |---|---|---|

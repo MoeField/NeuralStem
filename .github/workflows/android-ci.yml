@@ -8,8 +8,22 @@ name: Android CI
 on:
   push:
     branches: [ main ]
+    # 文档 / 报告 / 图片等不涉代码的改动不触发构建（省 CI 时间）。
+    paths-ignore:
+      - '**.md'
+      - 'doc/**'
+      - 'report/**'
+      - 'LICENSE'
+      - 'NOTICE'
+      - '.gitignore'
   pull_request:
     branches: [ main ]
+    paths-ignore:
+      - '**.md'
+      - 'doc/**'
+      - 'report/**'
+      - 'LICENSE'
+      - 'NOTICE'
   workflow_dispatch:
 
 concurrency:
