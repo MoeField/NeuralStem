@@ -29,20 +29,21 @@
 | Spleeter 2-stem | 30.2s（历史） | **7.9×** | 740MB | |
 | **Spleeter 4-stem** | **99803ms** | **3.15×** | 1176.9MB | 本机实测 |
 | **UVR 9482** | **310508ms** | **1.01×** | 1140.4MB | 与 benchmark 1.03× 一致 |
-| **Demucs htdemucs** | **❌ 失败** | — | — | **Java 堆 OOM**（见下）|
+| **Demucs htdemucs** | ~~❌ 失败~~ → **✅ 已修复** | **0.61×**（5:14） | 4933.9 MB | **Java 堆 OOM 已修（`fc463cf`）** |
 
-### ★ Demucs 失败详情
-
-```
-java.lang.OutOfMemoryError: Failed to allocate 11010064 byte ...
-  target footprint 536870912, growth limit 536870912
-  at DemucsStft.stftPacked(DemucsStft.kt:59)
-```
-
-- **Java 堆 OOM**（上限 512MB，`largeHeap` 也到此）。
-- `stftPacked` 在 **Java 堆**里开大数组 → 完整歌（vocal 5:14）扛不住。
-- 历史 M4 里 Demucs 只跑过 **40s 片段**（40s→39s，1.02×）；**完整歌此前没跑过**。
-- ⇒ **Demucs 在本机上「完整歌不可用」**（既有问题，非本轮引入）。修复需把 STFT 搬出 Java 堆或分块。
+> [!IMPORTANT]
+> **本节原结论「Demucs 完整歌不可用」已被推翻，保留仅为追溯。**
+> 根因是 `DemucsSeparator.acc = Array(4){Array(2){FloatArray(total)}}` 常驻 Java 堆 443 MB，
+> 已由 **`fc463cf`** 改为**滑动窗口 O(WAVE)≈7 MB**（块处理完即归一化+落盘+丢弃）。
+>
+> **修复后实测（BF00A 完整歌 5:14）**：
+> ```
+> demucs done: in=out=13849391 blocks=54, infer=516803ms realtime=0.61x, peakPss=4933.9MB
+> ```
+> 四轨等长 ✅。遗留的 ~4.9 GB 是 **native ORT arena**（非 Java 堆），见
+> [`m4_evidence.md`](m4_evidence.md) §8。
+>
+> **Demucs 的完整跨设备数据（BF00A 0.82× / Gen3 1.83×）见 [`m4_evidence.md`](m4_evidence.md)。**
 
 ---
 
