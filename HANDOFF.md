@@ -1,5 +1,11 @@
 # NeuralStem 交接文档（给新对话/新 Agent 看）
 
+> **仓库**：`https://github.com/MoeField/NeuralStem`（**Public**，MIT；模型不入库）
+> **CI**：GitHub Actions `Android CI` → `:app:testDebugUnitTest`（已全绿；见 `doc/.critical_steps.md` 坑 65/66）
+>
+> ⚠️ 推拉需经代理（本机 `sslocal` SOCKS5 `127.0.0.1:1080`）：
+> `git -c http.proxy=socks5h://127.0.0.1:1080 -c https.proxy=socks5h://127.0.0.1:1080 push`
+>
 > **项目**：NeuralStem — Android 原生「AI 音轨分离播放器」（EE5415 个人项目）
 > **需求文档**：[`doc/guide.md`](doc/guide.md)
 > **本文件用途**：5 分钟了解项目现状、约定与下一步。**先读这个，再读其它文档。**
