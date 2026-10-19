@@ -416,7 +416,12 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
 
             override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
                 // ★按钮“文字”来源：不受 seek 缓冲抖动影响（seek 时 isPlaying 会短暂 false）。
-                if (!_state.value.isMultiTrack && _state.value.playWhenReady != playWhenReady) {
+                //
+                // ★G-3fix：**多轨时也必须更新**。历史上这里有 `!isMultiTrack` 门控，
+                //   导致多轨下点播放/暂停后按钮文字永远不变（真机实报：
+                //   “点播放键，显示还是播放键”，而实际 2 Tracks active + PLAYING）。
+                //   playWhenReady 是“用户意图”，与轨数无关 —— 多轨的跟随轨同步由 Service 负责。
+                if (_state.value.playWhenReady != playWhenReady) {
                     _state.value = _state.value.copy(playWhenReady = playWhenReady)
                 }
             }
