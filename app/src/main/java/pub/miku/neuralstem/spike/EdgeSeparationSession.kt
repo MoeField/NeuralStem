@@ -4,6 +4,7 @@ import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import java.io.File
 
 /**
  * ★G-3：「边分离边播」会话的**进程级单例**。
@@ -66,6 +67,37 @@ class EdgeSeparationSession private constructor() {
     @Volatile var totalFrames: Int = 0
         private set
 
+    // ==================== ★G-3-重构：文件模式（随机写） ====================
+
+    /**
+     * 文件模式下的两个 stem 文件（完整曲长，未写区为静音）；null = 用旧的 ring buffer 模式。
+     *
+     * 为何要做这个模式：旧方案只落盘 `[startFrame, 曲尾)` → 导致
+     * “分离完跳回起点 / 不含前面部分 / 波形差一截”。
+     * 文件模式下缓存文件从头就是完整曲长，分离按绝对位置填充 → 上述问题消失。
+     */
+    @Volatile var vocalsFile: File? = null
+        private set
+    @Volatile var accompFile: File? = null
+        private set
+
+    /**
+     * ★水位线：文件模式下**已连续写到的绝对帧号**（不含）。
+     *
+     * 供 [pub.miku.neuralstem.player.StemPcmDataSource] 判断“该位置可不可以读”。
+     * 分离完成时置为 [totalFrames]。
+     *
+     * 为何用 volatile 而不是 StateFlow：播放器在高频 read() 里要读它，
+     * 不能每次走 Flow 收集。
+     */
+    @Volatile var writtenUpToFrame: Int = 0
+        private set
+
+    /** 更新水位线（分离器每写完一块调一次）。只允许前进。 */
+    fun updateWaterMark(frame: Int) {
+        if (frame > writtenUpToFrame) writtenUpToFrame = frame
+    }
+
     /** 是否首段已就绪。 */
     val firstSegmentReady: Boolean
         get() = _state.value is State.FirstSegmentReady ||
@@ -73,10 +105,10 @@ class EdgeSeparationSession private constructor() {
             _state.value is State.Done
 
     /**
-     * 开始一次会话：新建两个 ring buffer。
+     * 开始一次会话。
      * 若已有活跃会话，先 [abort]。
      *
-     * @param capacityFrames 每个 stem 缓冲容量（默认 60s @44.1k）。
+     * @param capacityFrames 每个 stem 缓冲容量（默认 60s @44.1k）；仅 ring buffer 模式用。
      */
     fun begin(
         startFrame: Int,
@@ -94,6 +126,33 @@ class EdgeSeparationSession private constructor() {
         accompBuffer = StemPcmRingBuffer(channels, capacityFrames)
         _state.value = State.Preparing
         Log.i(TAG, "begin: startFrame=$startFrame sr=$sampleRate ch=$channels cap=$capacityFrames")
+    }
+
+    /**
+     * ★G-3-重构：开始一次**文件模式**会话（完整曲长随机写）。
+     *
+     * 与 [begin] 的区别：不建 ring buffer，而是用两个完整曲长的 stem 文件；
+     * 播放器直接读文件，并按 [writtenUpToFrame] 判断可播范围。
+     */
+    fun beginFiles(
+        startFrame: Int,
+        sampleRate: Int,
+        channels: Int,
+        totalFrames: Int,
+        vocalsFile: File,
+        accompFile: File,
+    ) {
+        abort()
+        this.startFrame = startFrame.coerceAtLeast(0)
+        this.sampleRate = sampleRate
+        this.channels = channels
+        this.totalFrames = totalFrames
+        this.vocalsFile = vocalsFile
+        this.accompFile = accompFile
+        writtenUpToFrame = 0
+        _state.value = State.Preparing
+        Log.i(TAG, "beginFiles: startFrame=$startFrame sr=$sampleRate ch=$channels " +
+            "total=$totalFrames vf=${vocalsFile.name} af=${accompFile.name}")
     }
 
     /** 首段产出（由分离开关回调）。幂等：只在 Preparing 时切到 FirstSegmentReady。 */
@@ -117,10 +176,16 @@ class EdgeSeparationSession private constructor() {
     fun complete() {
         vocalsBuffer?.close()
         accompBuffer?.close()
+        // ★文件模式：水位线置满 → 全曲可播可 seek。
+        if (vocalsFile != null && totalFrames > 0) writtenUpToFrame = totalFrames
         _state.value = State.Done
         // ★诊断：buffer 引用仍保留（非 null），播放器可读到 EOF。
-        Log.i(TAG, "complete: buffers closed, refs kept " +
-            "(vWritten=${vocalsBuffer?.totalWrittenFrames} aWritten=${accompBuffer?.totalWrittenFrames})")
+        Log.i(
+            TAG,
+            "complete: buffers closed, refs kept " +
+                "(vWritten=${vocalsBuffer?.totalWrittenFrames} aWritten=${accompBuffer?.totalWrittenFrames} " +
+                "fileMode=${vocalsFile != null} waterMark=$writtenUpToFrame/$totalFrames)",
+        )
     }
 
     /** 失败。 */
@@ -133,13 +198,16 @@ class EdgeSeparationSession private constructor() {
 
     /** 取消/中止：关闭 buffers 并清空。 */
     fun abort() {
-        val had = vocalsBuffer != null || accompBuffer != null
+        val had = vocalsBuffer != null || accompBuffer != null || vocalsFile != null
         vocalsBuffer?.close()
         accompBuffer?.close()
         vocalsBuffer = null
         accompBuffer = null
+        // ★文件模式：保留文件引用（供上层清缓存时参考），但清空水位线。
+        //   文件本身不删（若已写入部分数据，可能对用户仍有价值；由缓存清理统一管理）。
+        writtenUpToFrame = 0
         // ★诊断：buffer 置 null —— 若播放器此时仍持 stem:// uri，下一次 open 会抛 IOException。
-        Log.i(TAG, "abort: buffers→null (had=$had) state=${_state.value}")
+        Log.i(TAG, "abort: buffers→null (had=$had) fileMode=${vocalsFile != null} state=${_state.value}")
         if (had) {
             _state.value = State.Cancelled
             Log.i(TAG, "abort")

@@ -209,25 +209,28 @@ class SeparationRepository(private val app: Application) {
                 try {
                     val startFrame = (fromPositionMs.coerceAtLeast(0) * frameSource.sampleRate / 1000L)
                         .toInt().coerceIn(0, frameSource.totalFrames)
-                    // 2) 初始化会话 buffers（传 totalFrames → 合成 WAV 头能算出正确时长）
-                    session.begin(startFrame, frameSource.sampleRate, frameSource.channels, frameSource.totalFrames)
 
-                    // ★G-3fix：并行落盘到缓存目录。
-                    //   分离完成后 buffer 会被关（读端 EOF）→ 播放器误判 STATE_ENDED。
-                    //   落盘后上层可无缝切到文件播放，支持 seek 到 startFrame 之后。
+                    // ★G-3-重构：**文件模式**——创建完整曲长的 stem 文件，按绝对帧随机写。
+                    //   解决旧方案的三个缺陷：分离完跳回起点 / 不含前面部分 / 波形差一截。
                     val outDir = File(app.filesDir, "stems-cache/${contentHash(source)}-spleeter")
-                    var vWriter: WavWriter? = null
-                    var aWriter: WavWriter? = null
-                    runCatching {
-                        outDir.mkdirs()
-                        vWriter = WavWriter(File(outDir, "vocals.edge.wav"), frameSource.channels, frameSource.sampleRate)
-                        aWriter = WavWriter(File(outDir, "accompaniment.edge.wav"), frameSource.channels, frameSource.sampleRate)
-                        Log.i(TAG, "edge: 落盘到 ${outDir.absolutePath}（from frame=$startFrame）")
-                    }.onFailure {
-                        Log.w(TAG, "edge: 落盘初始化失败，将仅边播不落盘", it)
-                        vWriter = null
-                        aWriter = null
-                    }
+                    val vFile = File(outDir, "vocals.wav")
+                    val aFile = File(outDir, "accompaniment.wav")
+                    outDir.mkdirs()
+                    val vRw = RandomAccessWavWriter(vFile, frameSource.channels, frameSource.sampleRate, frameSource.totalFrames)
+                    val aRw = RandomAccessWavWriter(aFile, frameSource.channels, frameSource.sampleRate, frameSource.totalFrames)
+
+                    // 会话进入文件模式（播放器据此读文件 + 看水位线）。
+                    session.beginFiles(
+                        startFrame = startFrame,
+                        sampleRate = frameSource.sampleRate,
+                        channels = frameSource.channels,
+                        totalFrames = frameSource.totalFrames,
+                        vocalsFile = vFile,
+                        accompFile = aFile,
+                    )
+                    Log.i(TAG, "edge(file): 完整曲长文件 ${outDir.absolutePath} " +
+                        "total=${frameSource.totalFrames} from frame=$startFrame")
+
                     try {
                         // 3) 定位模型（仅 Spleeter 2-stem）
                         _state.value = State.Preparing(State.PrepPhase.LOADING_MODEL)
@@ -239,24 +242,20 @@ class SeparationRepository(private val app: Application) {
                         )
                         try {
                             val schedule = SegmentedSeparator.defaultSchedule(frameSource.sampleRate)
-                            // ★G-3fix：推理计时起点（提前于 Separator 构造）。
                             val t0 = System.currentTimeMillis()
                             val stats = SegmentedSeparator(
                                 reader = frameSource,
                                 separator = sep::separate,
-                                // ★Step 2：输出走回调（本步先保持旧行为：写 ring buffer + writer）。
                                 onWrite = { v, a, frames, absFrame ->
-                                    session.vocalsBuffer?.append(v, 0, frames)
-                                    session.accompBuffer?.append(a, 0, frames)
-                                    // 旧 writer 是顺序 append；此处 absFrame 递增，等价。
-                                    vWriter?.appendRegion(v, 0, frames)
-                                    aWriter?.appendRegion(a, 0, frames)
+                                    // ★按绝对帧位置写入完整曲长文件（未写区保持静音）。
+                                    vRw.writeAt(v, 0, frames, absFrame)
+                                    aRw.writeAt(a, 0, frames, absFrame)
+                                    // 水位线 = 分离进度末端（供播放器判断可播范围）。
+                                    session.updateWaterMark(absFrame + frames)
                                 },
                                 startFrame = startFrame,
                                 chunkSchedule = schedule,
                                 onProgress = { done, total ->
-                                    // ★G-3fix：用浮点算再取整，避免最后一块因 overlap 导致
-                                    //   done*100/total 少 1（永远到不了 100）。
                                     val pct = if (total > 0) {
                                         ((done.toDouble() * 100.0) / total).toInt().coerceIn(0, 100)
                                     } else 0
@@ -266,11 +265,11 @@ class SeparationRepository(private val app: Application) {
                                 onFirstSegmentReady = {
                                     session.markFirstSegmentReady(1)
                                 },
-                                // ★取消支持：每块开始前检查 job 是否已取消。
-                                //   注意：不能读外层 `job`（cancel() 会置 null）→ 持久化到局部 val。
                                 isCancelled = { thisJob?.isActive == false },
                             ).run()
-                            // ★G-3fix（关键）：**必须发终态**，否则 _state 永远停在 Running(99)。
+                            // 刷盘 + 关闭（头部长度已在构造时写死，无需回填）。
+                            vRw.close()
+                            aRw.close()
                             session.complete()
                             val audioMs = frameSource.totalFrames.toLong() * 1000L /
                                 frameSource.sampleRate.coerceAtLeast(1)
@@ -278,20 +277,20 @@ class SeparationRepository(private val app: Application) {
                                 inferTimeMs = System.currentTimeMillis() - t0,
                                 peakPssMb = currentPssMb(),
                                 audioDurationMs = audioMs,
-                                vocalsFile = File(outDir, "vocals.edge.wav").takeIf { vWriter != null },
-                                accompanimentFile = File(outDir, "accompaniment.edge.wav").takeIf { aWriter != null },
+                                vocalsFile = vFile,
+                                accompanimentFile = aFile,
                                 startFrame = startFrame,
                                 sampleRate = frameSource.sampleRate,
                             )
-                            Log.i(TAG, "edge done: vFrames=${stats.vocalsFrames} aFrames=${stats.accompFrames} " +
-                                "chunks=${stats.chunks} files=${vWriter != null}")
+                            Log.i(TAG, "edge done(file): vFrames=${stats.vocalsFrames} " +
+                                "aFrames=${stats.accompFrames} chunks=${stats.chunks} " +
+                                "total=${stats.totalFrames}")
                         } finally {
                             sep.release()
                         }
                     } finally {
-                        // 关闭落盘文件（回填 WAV 头部 size）。幂等。
-                        runCatching { vWriter?.close() }.onFailure { Log.w(TAG, "close vocals.edge.wav failed", it) }
-                        runCatching { aWriter?.close() }.onFailure { Log.w(TAG, "close accomp.edge.wav failed", it) }
+                        runCatching { vRw.close() }.onFailure { Log.w(TAG, "close vocals.wav failed", it) }
+                        runCatching { aRw.close() }.onFailure { Log.w(TAG, "close accompaniment.wav failed", it) }
                     }
                 } finally {
                     frameSource.close()
