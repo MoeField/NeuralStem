@@ -81,6 +81,13 @@ fun SeparationScreen(
     currentPositionMs: () -> Long = { 0L },
     // ★G-3ux：边分离边播进行中的百分比（null=无活动会话）——用于进度文案区分。
     edgePercent: Int? = null,
+    /**
+     * ★G-3ux：自动开始分离的触发 token。
+     *
+     * 使用递增整数而非布尔：同一值不重复触发，新值（+1）才触发 →
+     * 用户每次从播放页“无缓存点开关”都能重新触发，而重组不会误触。
+     */
+    autoStartToken: Int = 0,
 ) {
     val ctx = LocalContext.current
     val app = ctx.applicationContext as Application
@@ -146,6 +153,25 @@ fun SeparationScreen(
             } else {
                 vm.startOption(src, opt)
             }
+        }
+    }
+
+    // ★G-3ux：从播放页“无缓存点开关”跳过来 → **自动开始分离**（2 轨·快速档）。
+    //   用 token 而非布尔：重组不触发；每次新 token（+1）才触发一次。
+    var handledAutoToken by remember { mutableStateOf(0) }
+    LaunchedEffect(autoStartToken) {
+        if (autoStartToken <= 0 || autoStartToken == handledAutoToken) return@LaunchedEffect
+        handledAutoToken = autoStartToken
+        if (!hasSong || busy || !benchmarked) {
+            Log.i("SepScreen", "autoStart 跳过：hasSong=$hasSong busy=$busy benched=$benchmarked")
+            return@LaunchedEffect
+        }
+        val fast2 = TierRegistry.ALL.firstOrNull {
+            it.stem == StemCount.TWO && it.tier == Tier.FAST
+        }
+        if (fast2 != null) {
+            Log.i("SepScreen", "autoStart：自动开始 2 轨·快速分离")
+            startTier(fast2)
         }
     }
 

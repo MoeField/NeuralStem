@@ -79,6 +79,9 @@ fun AppShell(
     initial: AppDestination = AppDestination.PLAYER,
 ) {
     var current by remember { mutableStateOf(initial) }
+    // ★G-3ux：用户在播放页点开分离开关但**无缓存** → 跳分离页时**自动开始分离**，
+    //   不用用户再手动点一次「快速」。传一个递增的 token 而非布尔（可重复触发）。
+    var autoStartSeparate by remember { mutableStateOf(0) }
     // ★⑭b：用于“分离完成但已切歌”→ snackbar 提示。
     val scope = rememberCoroutineScope()
     // 歌单 VM（供歌单页显示 + 点曲时解析 uri）
@@ -209,7 +212,11 @@ fun AppShell(
             AppDestination.PLAYER -> PlayerScreen(
                 modifier = Modifier.fillMaxSize().padding(padding),
                 vm = playerVm,
-                onOpenSpike = { current = AppDestination.SEPARATE },
+                // ★G-3ux：无缓存点开开关 → 跳分离页 **并自动开始分离**。
+                onOpenSpike = {
+                    autoStartSeparate++
+                    current = AppDestination.SEPARATE
+                },
                 // ★R2：仅选中“选择型(FILE)歌单”时可导入；导入结果追加进该歌单。
                 importEnabled = importEnabled,
                 onImported = { uri, title ->
@@ -233,6 +240,8 @@ fun AppShell(
                 currentPositionMs = { playerVm.progress.positionMs },
                 // ★G-3ux：分离页进度文案区分“已可播/仍在跑”。
                 edgePercent = playerState.edgePercent,
+                // ★G-3ux：无缓存时跳过来 → 自动开始分离（不用用户再点一次）。
+                autoStartToken = autoStartSeparate,
                 onPlayStems = { done ->
                     // ★⑭b：若分离期间已切歌 → **不切多轨**，仅提示（防“播旧曲 stem、显新曲”错配）。
                     if (!playerVm.separationMatchesCurrent()) {
