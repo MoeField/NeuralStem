@@ -30,6 +30,16 @@ android {
             optimization {
                 enable = false
             }
+            /**
+             * ★release 用 **debug 签名**（alpha 阶段）。
+             *
+             * 为何：无签名产出的 `*-unsigned.apk` **装不上**（CI 出来的包等于废包）。
+             * 配 debug keystore 后能直接安装、能被用户侧加载。
+             *
+             * ⚠️ 局限：不同机器的 debug keystore 不同 → 不能跨机覆盖安装；
+             *    上应用商店必须换正式签名（见 doc/.todo.md）。
+             */
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 
