@@ -60,13 +60,24 @@ class SegmentedSeparatorTest {
         chunkFrames: Int = 20_000,
     ): Triple<SegmentedSeparator.Stats, FloatArray, FloatArray> {
         val total = input.size / channels
+        // ★Step 2：用 onWrite 回调收集输出（不再直连 ring buffer），
+        //   同时校验 absFrame 的连续性（所有分段应无空洞、无重叠地铺满）。
         val rbV = StemPcmRingBuffer(channels, capacityFrames = total + 8192)
         val rbA = StemPcmRingBuffer(channels, capacityFrames = total + 8192)
+        var expectedAbs = startFrame
         val stats = SegmentedSeparator(
             reader = MemFrameSource(input, channels, sampleRate),
-            vocalsBuffer = rbV,
-            accompBuffer = rbA,
             separator = SherpaLike(channels),
+            onWrite = { v, a, frames, absFrame ->
+                require(absFrame == expectedAbs) {
+                    "absFrame 不连续: 期望 $expectedAbs 实际 $absFrame"
+                }
+                require(v.size == frames * channels) { "vocals 长度不符" }
+                require(a.size == frames * channels) { "accomp 长度不符" }
+                rbV.append(v, 0, frames)
+                rbA.append(a, 0, frames)
+                expectedAbs += frames
+            },
             startFrame = startFrame,
             overlapFrames = overlap,
             chunkSchedule = schedule,
@@ -128,9 +139,11 @@ class SegmentedSeparatorTest {
         val firstCalls = AtomicInteger(0)
         val stats = SegmentedSeparator(
             reader = MemFrameSource(input, ch, sr),
-            vocalsBuffer = rbV,
-            accompBuffer = rbA,
             separator = SherpaLike(ch),
+            onWrite = { v, a, f, _ ->
+                rbV.append(v, 0, f)
+                rbA.append(a, 0, f)
+            },
             overlapFrames = overlap,
             chunkSchedule = schedule,
             onFirstSegmentReady = { firstCalls.incrementAndGet() },

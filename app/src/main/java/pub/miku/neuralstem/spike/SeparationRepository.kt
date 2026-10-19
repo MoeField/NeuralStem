@@ -243,13 +243,17 @@ class SeparationRepository(private val app: Application) {
                             val t0 = System.currentTimeMillis()
                             val stats = SegmentedSeparator(
                                 reader = frameSource,
-                                vocalsBuffer = session.vocalsBuffer!!,
-                                accompBuffer = session.accompBuffer!!,
                                 separator = sep::separate,
+                                // ★Step 2：输出走回调（本步先保持旧行为：写 ring buffer + writer）。
+                                onWrite = { v, a, frames, absFrame ->
+                                    session.vocalsBuffer?.append(v, 0, frames)
+                                    session.accompBuffer?.append(a, 0, frames)
+                                    // 旧 writer 是顺序 append；此处 absFrame 递增，等价。
+                                    vWriter?.appendRegion(v, 0, frames)
+                                    aWriter?.appendRegion(a, 0, frames)
+                                },
                                 startFrame = startFrame,
                                 chunkSchedule = schedule,
-                                vocalsWriter = vWriter,
-                                accompWriter = aWriter,
                                 onProgress = { done, total ->
                                     // ★G-3fix：用浮点算再取整，避免最后一块因 overlap 导致
                                     //   done*100/total 少 1（永远到不了 100）。
