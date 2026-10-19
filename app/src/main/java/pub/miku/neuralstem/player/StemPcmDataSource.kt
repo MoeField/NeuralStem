@@ -39,9 +39,22 @@ class StemPcmDataSource internal constructor(
     private val buffer: StemPcmRingBuffer,
     private val sampleRate: Int,
     private val channels: Int,
-    /** ★G-3：整段总帧数（合成 WAV 头用，使 ExoPlayer 能算出正确时长）。0=未知。 */
+    /** ★G-3：整曲总帧数（用于合成 WAV 头声明时长）。0=未知。 */
     private val totalFramesHint: Int = 0,
+    /**
+     * ★G-3-fix：本流对应的**原曲绝对起始帧**（= 分离起点）。
+     *
+     * ## 为什么必须知道它（坐标系统一）
+     * ring buffer 里第 0 帧对应的是**原曲第 [startFrame] 帧**（分离从播放当前位置开始）。
+     * 但 ExoPlayer 对 `MediaItem` 的 position 是**原曲绝对字节坐标**。
+     * 因此 `open(pos)` / seek 的绝对位置必须减去 `startFrame` 才能映射到 buffer 内偏移，
+     * 否则会把 cursor 推到 buffer 末尾之外 → 永久 `STARVED` → 播放卡死。
+     *
+     * 同理：本流对外暴露的 WAV 头应声明 **`totalFrames - startFrame`** 帧的时长。
+     */
+    private val startFrame: Int = 0,
 ) : DataSource {
+
 
     /** 每帧字节数（PCM16 × channels）。 */
     private val frameBytes: Int = channels * 2
@@ -65,8 +78,17 @@ class StemPcmDataSource internal constructor(
         position = 0
         openStartByte = dataSpec.position
         opened = true
-        // 支持从任意 position 打开（seek）：头部区间 [0,44) 之外映射到帧。
+        // ★G-3-fix：把绝对起始字节换算成绝对帧，再映射到 buffer 内偏移。
+        //   诊断：absFrame < startFrame 说明 ExoPlayer 从分离起点**之前**开始读
+        //   （理论上不会发生；若出现，startFrame 之前的部分必然 STARVED）。
         val startPos = dataSpec.position
+        if (startPos > WAV_HEADER_SIZE) {
+            val absFrame = (startPos - WAV_HEADER_SIZE) / frameBytes
+            if (absFrame < startFrame) {
+                Log.w(TAG_STEM, "open BEFORE start: absFrame=$absFrame < startFrame=$startFrame " +
+                    "→ buffer 内无此段数据（将 STARVED）")
+            }
+        }
         if (startPos > 0) skipInternal(startPos)
         bytesRemaining = dataSpec.length
         return bytesRemaining
@@ -91,13 +113,14 @@ class StemPcmDataSource internal constructor(
         val framesRead = c.read(floatTmp, 0, framesWanted)
         if (framesRead < 0) {
             // ★诊断：EOF（分离结束且已读完全部数据）。若未 Done 就 EOF = 异常。
-            Log.i(TAG_STEM, "read EOF @frame=${position / frameBytes} closed=${buffer.isClosed} " +
+            //   bufFrame 必须减 startFrame（position 是**绝对**帧，buffer 内偏移要扣起点）。
+            Log.i(TAG_STEM, "read EOF @bufFrame=${bufFrame()} closed=${buffer.isClosed} " +
                 "written=${buffer.totalWrittenFrames}")
             return C.RESULT_END_OF_INPUT
         }
         if (framesRead == 0) {
             // ★诊断：暂无数据（读端等待超时）—— 若频繁出现，说明“播放追上分离”。
-            Log.w(TAG_STEM, "read STARVED @frame=${position / frameBytes} " +
+            Log.w(TAG_STEM, "read STARVED @bufFrame=${bufFrame()} " +
                 "written=${buffer.totalWrittenFrames} closed=${buffer.isClosed}")
             return 0
         }
@@ -121,6 +144,9 @@ class StemPcmDataSource internal constructor(
         opened = false
     }
 
+    /** ★诊断：当前 position（绝对帧）换算成 buffer 内帧号（已扣 startFrame）。 */
+    private fun bufFrame(): Long = (position / frameBytes) - startFrame
+
     /** 跳过 [bytes] 字节（含头）；用于 open(position)/seek。 */
     private fun skipInternal(bytes: Long) {
         val c = cursor ?: return
@@ -133,7 +159,17 @@ class StemPcmDataSource internal constructor(
         }
         if (remaining <= 0) return
         val frames = remaining / frameBytes
-        if (frames > 0) c.seekTo(c.position + frames)
+        if (frames > 0) {
+            // ★G-3-fix：绝对帧 → buffer 内帧（减 startFrame）。
+            //   否则 seek 到“开始位置”时会把 cursor 推到 buffer 末尾之外 → 永久 STARVED。
+            //
+            // 注意：全程按“绝对帧”算，不累加 c.position ——
+            //   skipInternal 仅在 open() 里由 position 0 起跳一次，
+            //   后续读取由 read() 自己推进 cursor。用绝对帧可避免双重计数。
+            val targetInBuffer = (frames - startFrame).coerceAtLeast(0)
+            c.seekTo(targetInBuffer)
+            Log.i(TAG_STEM, "skip: absFrames=$frames startFrame=$startFrame → bufFrame=$targetInBuffer")
+        }
         position += frames * frameBytes
     }
 
@@ -145,6 +181,15 @@ class StemPcmDataSource internal constructor(
      * - 否则回退 `-1`（未知，时长会算错——但不致命）。
      */
     private fun dataSizeBytes(): Int {
+        // ★G-3-fix（关键）：WAV 头**必须声明整曲全长**（totalFrames），而不是从 startFrame 起的剩余长度。
+        //
+        // 原因：ExoPlayer 对 stem:// 流做 seek 时，用**原曲绝对位置**算 DataSpec.position
+        // （实测 seekTo(213885ms) → pos=855584 字节 = 44 + 213885×4）。
+        // 若头里只声明剩余长度，ExoPlayer 会认为流“比 213885ms 短”→ seek 被 clamp 或
+        // 直接判 EOF → 无声。
+        //
+        // 于是对外表现为“整曲长度”，而 buffer 内偏移在 skipInternal 里减 startFrame（见下）。
+        // 代价：startFrame 之前的部分读取会 STARVED（但上层从 startFrame 处 seek 过来，不会碰到）。
         if (totalFramesHint <= 0) return -1
         val totalBytes = totalFramesHint.toLong() * channels * 2
         val startByteInData = (openStartByte - WAV_HEADER_SIZE).coerceAtLeast(0)
@@ -187,8 +232,11 @@ class StemPcmDataSource internal constructor(
         private val buffer: StemPcmRingBuffer,
         private val sampleRate: Int,
         private val channels: Int,
+        private val totalFramesHint: Int = 0,
+        private val startFrame: Int = 0,
     ) : DataSource.Factory {
-        override fun createDataSource(): DataSource = StemPcmDataSource(buffer, sampleRate, channels)
+        override fun createDataSource(): DataSource =
+            StemPcmDataSource(buffer, sampleRate, channels, totalFramesHint, startFrame)
     }
 
     companion object {
@@ -246,8 +294,10 @@ class StemStreamFactory(
                     ?: throw IOException("no active edge buffer for host=$host")
                 // 注意：合成头的 data size 用“本行开始位置处理”→ totalFrames 传全曲帧数；
                 // dataSizeBytes() 会减去 open 的起始字节（已包含 startFrame 偏移）。
+                // ★G-3-fix：传入 session.startFrame —— buffer 第 0 帧 = 原曲 startFrame。
                 val d = StemPcmDataSource(
-                    buffer, session.sampleRate, session.channels, session.totalFrames,
+                    buffer, session.sampleRate, session.channels,
+                    session.totalFrames, session.startFrame,
                 )
                 delegate = d
                 return d.open(dataSpec.buildUpon().setUri(Uri.parse("stem-local://$host")).build())
