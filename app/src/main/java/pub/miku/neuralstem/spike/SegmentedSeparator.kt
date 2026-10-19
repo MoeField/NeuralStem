@@ -1,6 +1,7 @@
 package pub.miku.neuralstem.spike
 
 import android.util.Log
+import kotlinx.coroutines.CancellationException
 
 /**
  * ★G-3：“边分离边播”的**分段分离器**。
@@ -47,6 +48,14 @@ class SegmentedSeparator(
      */
     private val vocalsWriter: WavWriter? = null,
     private val accompWriter: WavWriter? = null,
+    /**
+     * ★取消钩子：每个块开始前调用一次，返回 true 则抛 [CancellationException] 中止。
+     *
+     * 为何需要：本类的 `run()` 是**同步阻塞**代码（在 `Dispatchers.IO` 跑），
+     * Kotlin 协程的 `job.cancel()` 只标记状态、不会中断阻塞调用 →
+     * 用户点“取消分离”要等到**整首跑完**才生效。每块前查一次即可快速响应。
+     */
+    private val isCancelled: (() -> Boolean)? = null,
 ) {
     /** 统计。 */
     data class Stats(
@@ -96,6 +105,12 @@ class SegmentedSeparator(
 
         var firstEmitted = false
         plan.forEachIndexed { idx, c ->
+            // ★取消支持：`run()` 是同步阻塞代码（在 Dispatchers.IO 里跑），
+            //   协程的 `job.cancel()` 只能标记状态，**无法中断正在执行的阻塞调用**。
+            //   因此每个块开始前主动查一次 —— 否则用户点「取消分离」要等到整首跑完才生效。
+            if (isCancelled != null && isCancelled()) {
+                throw CancellationException("segmented separation cancelled at chunk #$idx")
+            }
             val isFirst = idx == 0
             val isLast = idx == plan.lastIndex
             val hop = c.hop
