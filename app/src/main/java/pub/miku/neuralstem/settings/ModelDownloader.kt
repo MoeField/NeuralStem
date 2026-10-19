@@ -107,7 +107,47 @@ class ModelDownloader(private val filesDir: File) {
         result
     }
 
+    /**
+     * 拼接/改写最终下载 URL。
+     *
+     * 规则：
+     * 1. **remotePath 是完整 URL**（UVR 的 GitHub Release 直链）→ 用它；
+     *    否则拼 `base + remotePath`（HF / hf-mirror）。
+     * 2. 若目标是 **github.com** 且该域名自己连不上 → 改写成代理前缀
+     *    `https://api.gitproxy.dev/github.com/<path>`（Cloudflare 加速，实测可用）。
+     */
+    private fun resolveUrl(f: ModelFile, base: String): String {
+        val raw = if (f.remotePath.startsWith("http")) f.remotePath else "$base${f.remotePath}"
+        return maybeProxyGithub(raw)
+    }
+
+    /**
+     * GitHub ↔ 代理前缀改写。
+     *
+     * ## 为何需要
+     * 国内网络常见 `github.com:443` 连不上（TCP 超时），而 UVR 模型**只**在
+     * GitHub Release 里（hf-mirror 镜像不了）。实测 `api.gitproxy.dev` 可用，
+     * 且它做的是**前缀替换**：`api.gitproxy.dev/github.com/<path>` → `github.com/<path>`。
+     *
+     * ## 策略
+     * - 用户显式填了代理 → 一律走代理；
+     * - 否则默认走 `api.gitproxy.dev`（可在设置里关掉）。
+     */
+    private fun maybeProxyGithub(url: String): String {
+        if (!url.startsWith("https://github.com/")) return url
+        val cfg = proxyConfig()
+        if (cfg.isBlank()) return url
+        val rest = url.removePrefix("https://github.com/")
+        return "$cfg/github.com/$rest"
+    }
+
+    /** 代理前缀（空 = 不改写，直连 GitHub）；由调用方注入（见 [proxyProvider]）。 */
+    var proxyProvider: () -> String = { SettingsRepository.DEFAULT_GITHUB_PROXY }
+
+    private fun proxyConfig(): String = proxyProvider().trimEnd('/')
+
     /** HEAD 探测单域名（3s 超时）。 */
+
     private fun probeHost(baseUrl: String): Boolean = runCatching {
         val c = (URL("$baseUrl/").openConnection() as HttpURLConnection).apply {
             requestMethod = "HEAD"
@@ -158,7 +198,8 @@ class ModelDownloader(private val filesDir: File) {
                 if (part.exists()) part.delete()
 
                 setState(pack, State.Downloading(done, total, f.fileName))
-                downloadOne("$base${f.remotePath}", part) { delta ->
+                // ★URL 组装 + 代理改写，见 [resolveUrl]
+                downloadOne(resolveUrl(f, base), part) { delta ->
                     done += delta
                     setState(pack, State.Downloading(done, total, f.fileName))
                 }
@@ -206,21 +247,46 @@ class ModelDownloader(private val filesDir: File) {
         }
     }
 
-    /** 下载单个文件到 [dest]，按块回调增量字节。 */
+    /**
+     * 下载单个文件到 [dest]，按块回调增量字节。
+     *
+     * ★必须**手动跟随重定向**：GitHub Release 的下载链接会 302 到
+     * `objects.githubusercontent.com`（**跨域名**），而 Java 的
+     * `instanceFollowRedirects = true` **不会跨域名跟随** → 会得到一个
+     * 空 body 并卡住（实测：UVR 从 GitHub 下载永远停在 0 B）。
+     */
     private suspend fun downloadOne(urlStr: String, dest: File, onDelta: (Long) -> Unit) =
         withContext(Dispatchers.IO) {
-            Log.i(TAG, "GET $urlStr")
-            val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
-                requestMethod = "GET"
-                connectTimeout = CONNECT_TIMEOUT_MS
-                readTimeout = READ_TIMEOUT_MS
-                instanceFollowRedirects = true
-                setRequestProperty("User-Agent", "NeuralStem/Android")
-            }
+            var url = urlStr
+            var conn: HttpURLConnection? = null
             try {
-                val code = conn.responseCode
-                if (code !in 200..299) throw IOException("HTTP $code")
-                conn.inputStream.use { input ->
+                // 最多跟 5 跳（GitHub 一般 1 跳：github.com → objects.githubusercontent.com）
+                var hops = 0
+                while (true) {
+                    Log.i(TAG, "GET $url")
+                    val c = (URL(url).openConnection() as HttpURLConnection).apply {
+                        requestMethod = "GET"
+                        connectTimeout = CONNECT_TIMEOUT_MS
+                        readTimeout = READ_TIMEOUT_MS
+                        instanceFollowRedirects = false // 手动跟，见 KDoc
+                        setRequestProperty("User-Agent", "NeuralStem/Android")
+                    }
+                    val code = c.responseCode
+                    if (code in 300..399) {
+                        val loc = c.getHeaderField("Location")
+                        c.disconnect()
+                        if (loc.isNullOrBlank() || ++hops > 5) {
+                            throw IOException("重定向失败（HTTP $code, Location=$loc）")
+                        }
+                        url = if (loc.startsWith("http")) loc else URL(URL(url), loc).toString()
+                        continue
+                    }
+                    if (code !in 200..299) throw IOException("HTTP $code")
+                    conn = c
+                    break
+                }
+                val c = conn ?: throw IOException("no connection")
+                c.inputStream.use { input ->
                     dest.outputStream().use { out ->
                         val buf = ByteArray(BUF_SIZE)
                         while (true) {
@@ -233,7 +299,7 @@ class ModelDownloader(private val filesDir: File) {
                     }
                 }
             } finally {
-                conn.disconnect()
+                conn?.disconnect()
             }
         }
 

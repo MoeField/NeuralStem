@@ -93,6 +93,23 @@ class SettingsRepository(app: Application) {
         }
 
     /**
+     * ★模型下载：**GitHub 代理前缀**（默认 `https://api.gitproxy.dev`）。
+     *
+     * ## 为何需要
+     * UVR 系模型只在 **GitHub Release**（hf-mirror 镜像不了），而国内网络常见
+     * `github.com:443` 连不上（TCP 超时）。代理做**前缀替换**：
+     * `api.gitproxy.dev/github.com/<path>` → `github.com/<path>`（Cloudflare 加速）。
+     *
+     * 空字符串 = 直连 GitHub（若你在国外或自建了网络）。
+     */
+    var downloadProxy: String
+        get() = prefs.getString(KEY_DOWNLOAD_PROXY, DEFAULT_GITHUB_PROXY) ?: DEFAULT_GITHUB_PROXY
+        set(value) {
+            prefs.edit().putString(KEY_DOWNLOAD_PROXY, value.trim()).apply()
+            Log.i(TAG, "downloadProxy=${value.ifBlank { "(直连)" }}")
+        }
+
+    /**
      * 播放模式（播放页**循环按钮**）。三态：
      * - [RepeatMode.SEQUENTIAL]：顺序（播完歌单停止）→ `REPEAT_MODE_OFF`
      * - [RepeatMode.LOOP_ALL]：循环歌单 → `REPEAT_MODE_ALL`
@@ -199,6 +216,14 @@ class SettingsRepository(app: Application) {
         private const val KEY_EDGE_SEP = "edge_separation_enabled"
         private const val KEY_MODEL_SOURCE = "model_source_preference"
         private const val KEY_MODEL_RESOLVED = "model_source_resolved"
+        private const val KEY_DOWNLOAD_PROXY = "model_download_proxy"
+
+        /**
+         * ★默认 GitHub 代理前缀（实测可用）：`api.gitproxy.dev/github.com/<path>`
+         * **前缀替换**为 `github.com/<path>`（Cloudflare 加速）。
+         * 用户清空设置 = 直连 github.com。
+         */
+        const val DEFAULT_GITHUB_PROXY = "https://api.gitproxy.dev"
 
         const val DECK_SEC_DEFAULT = 18
         const val DECK_SEC_MIN = 9

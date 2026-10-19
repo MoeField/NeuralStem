@@ -31,6 +31,23 @@ enum class ModelPack(val id: String) {
 
     /** Demucs htdemucs（SOTA 音质）—— 172MB 单文件，仅旗舰机可用。 */
     DEMUCS("demucs"),
+
+    // ---- UVR / MDX-Net 系（sherpa-onnx 官方 release 转发）----
+
+    /** UVR Voc_FT —— 人声导向，64MB，实测 0.34× 实时。 */
+    UVR_VOC_FT("uvr-voc-ft"),
+
+    /** UVR 9482 —— 通用，28MB，实测 1.03×（UVR 里最快）。 */
+    UVR_9482("uvr-9482"),
+
+    /** UVR KARA —— 卡拉OK/伴奏导向，28MB，实测 1.03×。 */
+    UVR_KARA("uvr-kara"),
+
+    /** UVR Inst_HQ_3 —— 乐器导向（去人声最强），64MB，0.34×。 */
+    UVR_INST_HQ_3("uvr-inst-hq3"),
+
+    /** UVR Main —— 通用，64MB，0.34×。 */
+    UVR_MAIN("uvr-main"),
 }
 
 /** 一个待下载的文件。 */
@@ -64,6 +81,18 @@ object ModelCatalog {
     private const val HF_SPLEETER2 = "csukuangfj/sherpa-onnx-spleeter-2stems-fp16"
     private const val HF_SPLEETER4 = "Best-Practice/spleeter-4stems-onnx"
     private const val HF_DEMUCS = "timcsy/demucs-web-onnx"
+
+    /**
+     * UVR 模型的来源：**sherpa-onnx 官方 GitHub Release**（不是 HF）。
+     *
+     * 为何不用 HF：这批 UVR/MDX 模型就是 k2-fsa 在 GitHub Release 里转发的，
+     * HF 上没有对应镜像（或不同步）。
+     *
+     * ⚠️ **hf-mirror 镜像不了 GitHub** → UVR 在“自动切镜像”时仍会走 github.com，
+     *    国内网络可能很慢。已在下拉源说明里告知用户。
+     */
+    private const val GH_UVR_BASE =
+        "https://github.com/k2-fsa/sherpa-onnx/releases/download/source-separation-models"
 
     /**
      * 期望字节数（用于完整性校验）。
@@ -121,7 +150,73 @@ object ModelCatalog {
                 ModelFile("/$HF_DEMUCS/resolve/main/htdemucs_embedded.onnx", "demucs", "htdemucs_embedded.onnx", 180_534_758L),
             ),
         ),
-    )
+    ) + uvrPacks()
+
+    /**
+     * ★UVR / MDX-Net 系 5 个（全部来自 sherpa-onnx 官方 GitHub Release）。
+     *
+     * ## 为何单独抽成函数
+     * 这 5 个的许可/来源/体积都同构，抽出来避免重复 5 遍模板。
+     *
+     * ## 许可说明（重要，必须如实告知用户）
+     * 这批模型由 **k2-fsa（sherpa-onnx 作者）转发**，与 Spleeter 在同一个 release；
+     * 但 **上游 UVR/MDX-Net 模型权重多数没有显式许可声明**（部分源自 Sony MDX 研究发布，
+     * 常带研究/非商业限制）。⇒ 弹窗与 NOTICE 里必须写清，不能声称“自由许可”。
+     *
+     * ## 体积与速度（真机 BF00A 实测）
+     * 9482 / KARA 各 28MB，1.03×（可用）；
+     * Voc_FT / Inst_HQ_3 / Main 各 64MB，**0.34×**（4 分钟歌要 12 分钟）。
+     */
+    private fun uvrPacks(): List<ModelPackInfo> {
+        fun pack(
+            p: ModelPack,
+            title: String,
+            file: String,
+            bytes: Long,
+            speedNote: String,
+        ) = ModelPackInfo(
+            pack = p,
+            displayName = title,
+            license = "未统一声明",
+            licenseNote = "模型由 **k2-fsa（sherpa-onnx 作者）** 在官方 GitHub Release 转发，" +
+                "与 Spleeter 同一个 release。⚠️ **上游 UVR/MDX-Net 权重多数未显式声明许可**" +
+                "（部分源自 Sony MDX 研究发布，常带研究/非商业限制）—— **仅供个人学习研究**，" +
+                "商用请自行联系模型作者或改用 Spleeter。" +
+                "\n\n速度（$speedNote）。",
+            sourceUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/tag/source-separation-models",
+            files = listOf(
+                ModelFile(
+                    remotePath = file,   // 完整 URL（含 https://）→ 下载器识别后不走 base
+                    targetSubdir = "uvr",
+                    fileName = file.substringAfterLast('/'),
+                    expectedBytes = bytes,
+                ),
+            ),
+        )
+
+        return listOf(
+            pack(
+                ModelPack.UVR_9482, "UVR 9482（UVR 里最快）",
+                "$GH_UVR_BASE/UVR_MDXNET_9482.onnx", 28_300_000L, "实测 1.03×",
+            ),
+            pack(
+                ModelPack.UVR_KARA, "UVR KARA（伴奏/卡拉OK 导向）",
+                "$GH_UVR_BASE/UVR_MDXNET_KARA.onnx", 28_300_000L, "实测 1.03×",
+            ),
+            pack(
+                ModelPack.UVR_VOC_FT, "UVR Voc_FT（人声导向）",
+                "$GH_UVR_BASE/UVR-MDX-NET-Voc_FT.onnx", 63_700_000L, "实测 0.34×，4 分钟歌约 12 分钟",
+            ),
+            pack(
+                ModelPack.UVR_INST_HQ_3, "UVR Inst_HQ_3（去人声最强）",
+                "$GH_UVR_BASE/UVR-MDX-NET-Inst_HQ_3.onnx", 63_700_000L, "实测 0.34×，4 分钟歌约 12 分钟",
+            ),
+            pack(
+                ModelPack.UVR_MAIN, "UVR Main（通用）",
+                "$GH_UVR_BASE/UVR_MDXNET_Main.onnx", 63_700_000L, "实测 0.34×，4 分钟歌约 12 分钟",
+            ),
+        )
+    }
 
     fun info(pack: ModelPack): ModelPackInfo = ALL.first { it.pack == pack }
 
