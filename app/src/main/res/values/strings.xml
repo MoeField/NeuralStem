@@ -140,6 +140,30 @@
     <string name="settings_tier_slow_hint">较慢：长篇会等一会儿。</string>
     <string name="settings_tier_veryslow_hint">很慢：需等待，不建议作为默认。</string>
 
+    <!-- ★Step4：设置页的两个二级页入口 + 模型库 + 分离策略 -->
+    <string name="settings_page_models">模型库</string>
+    <string name="settings_page_models_sub">已装 %1$d/%2$d · 共 %3$s</string>
+    <string name="settings_page_policy">分离策略</string>
+    <string name="settings_page_policy_sub">2 轨 %1$d 档启用 · 4 轨 %2$d 档固定</string>
+    <string name="page_back">返回</string>
+    <!-- 模型库：体积分节 -->
+    <string name="models_group_header">%1$s · %2$d 个模型</string>
+    <string name="models_group_hint">实测 %1$s</string>
+    <string name="models_rtf_unknown">未测</string>
+    <string name="models_rtf_value">实测 %1$s</string>
+    <string name="models_delete">删除</string>
+    <string name="models_delete_title">删除模型？</string>
+    <string name="models_delete_body">将从设备删除「%1$s」（%2$s）。删除后需重新下载才能使用该模型。测速记录会保留。</string>
+    <string name="models_delete_confirm">删除</string>
+    <string name="models_delete_failed">删除失败（部分文件被占用），请重试。</string>
+    <!-- 分离策略 -->
+    <string name="policy_two_title">2 轨（按实测速度簇）</string>
+    <string name="policy_two_hint">关掉的档不会出现在分离页。簇内点选一个模型；只列出已安装的候选。</string>
+    <string name="policy_tier_empty">本机该簇暂无已装模型</string>
+    <string name="policy_tier_installed_label">已装</string>
+    <string name="policy_four_title">4 轨（固定，不参与禁用）</string>
+    <string name="policy_four_hint">4 轨只有两个固定档位，模型不随速度簇变化。</string>
+
     <!-- 混音页（EQ + 分轨混音） -->
     <string name="mix_title">混音</string>
     <string name="mix_tracks">分轨混音</string>

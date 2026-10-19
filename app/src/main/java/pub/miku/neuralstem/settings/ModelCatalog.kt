@@ -247,6 +247,37 @@ object ModelCatalog {
     fun installed(filesDir: File): List<ModelPack> =
         ModelPack.entries.filter { isInstalled(filesDir, it) }
 
+    /**
+     * ★模型库：把全部包**按体积分节**（升序）。
+     *
+     * ## 为何按体积而不是按名字/引擎
+     * 19 个模型的实测 RTF 与**文件名无关、与体积强相关**（`doc/model_speed_tiers.md`）：
+     * ```
+     * 28MB → 1.00–1.04×   39MB → 8.56×（Spleeter 2 轨）
+     * 50MB → 0.52×        56MB → 0.41×       64MB → 0.34–0.35×   172MB → 0.06×（Demucs）
+     * ```
+     * 所以「体积」是速度簇的**物理成因**，按它分组比按功能分组更能解释“为什么慢”。
+     *
+     * @return 每个元素 = (节体积字节, 该节的包)；节内保持 [ALL] 的原顺序。
+     */
+    fun groupBySize(): List<Pair<Long, List<ModelPackInfo>>> =
+        ALL.groupBy { it.totalBytes }.toSortedMap().map { (bytes, list) -> bytes to list }
+
+    /**
+     * 某包的「该体积簇典型 RTF 区间」说明（仅用于分节头的小字，非精确值）。
+     *
+     * 无对应体积 → null（UI 不显示）。
+     */
+    fun sizeBucketHint(bytes: Long): String? = when {
+        bytes >= 150_000_000L -> "≈0.06×（旗舰机才勉强可用）"
+        bytes >= 60_000_000L -> "≈0.34–0.35×"
+        bytes >= 52_000_000L -> "≈0.41×"
+        bytes >= 45_000_000L -> "≈0.52×"
+        bytes >= 30_000_000L -> "≈8.6×（最快）"
+        bytes >= 20_000_000L -> "≈1.00–1.04×"
+        else -> null
+    }
+
     /** 人类可读体积。 */
     fun humanSize(bytes: Long): String = when {
         bytes >= 1_000_000_000 -> "%.1f GB".format(bytes / 1e9)

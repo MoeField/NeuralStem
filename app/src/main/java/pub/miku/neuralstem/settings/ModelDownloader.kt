@@ -248,6 +248,40 @@ class ModelDownloader(private val filesDir: File) {
     }
 
     /**
+     * ★删除一个模型包的所有文件（模型库页的「删除」按钮）。
+     *
+     * 会一并清掉 `.part` 临时文件与内存中的下载状态（回到 [State.Idle]）。
+     *
+     * ## 注意
+     * - **不动 benchmark 缓存**：实测 RTF 按 modelId 存，删文件后仍是历史真值；
+     *   下次「重新检测」只会测**已装**模型，自然收敛。主动清会丢失测速历史。
+     * - 下载中不允许删除（由 UI 禁用按钮；这里再挡一次）。
+     *
+     * @return true = 该包已不在磁盘上（全部删除成功/本来就没装）。
+     */
+    @Synchronized
+    fun delete(pack: ModelPack): Boolean {
+        if (isDownloading(pack)) {
+            Log.w(TAG, "delete($pack) 被拒：正在下载")
+            return false
+        }
+        var ok = true
+        ModelCatalog.info(pack).files.forEach { f ->
+            val dir = File(filesDir, f.targetSubdir)
+            val target = File(dir, f.fileName)
+            if (target.exists() && !target.delete()) ok = false
+            runCatching { File(dir, "${f.fileName}.part").delete() }
+        }
+        if (ok) {
+            _states.value = _states.value.toMutableMap().apply { remove(pack) }
+            Log.i(TAG, "deleted: $pack")
+        } else {
+            Log.w(TAG, "delete($pack) 部分文件删除失败")
+        }
+        return ok
+    }
+
+    /**
      * 下载单个文件到 [dest]，按块回调增量字节。
      *
      * ★必须**手动跟随重定向**：GitHub Release 的下载链接会 302 到
