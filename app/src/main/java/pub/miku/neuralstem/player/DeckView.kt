@@ -333,7 +333,23 @@ private fun DrawScope.drawStemOverviewRing(
         for (i in 0 until lines) {
             val frac = i.toFloat() / lines
             val tMs = (frac * (if (playerDurationMs > 0) playerDurationMs else decodedMs)).toLong()
-            if (tMs > decodedMs) continue
+            val deg = -90f + i * perDeg
+            val rad = Math.toRadians(deg.toDouble())
+            val dx = cos(rad).toFloat(); val dy = sin(rad).toFloat()
+            val from = Offset(center.x + dx * bandInner, center.y + dy * bandInner)
+            // ★G-3-ux2：未分离到这里（或该轨完全没有波形）→ 只画**淡基线**，
+            //   告知用户“这段还没分离”，而不是完全空白（易被当成 bug）。
+            if (tMs > decodedMs) {
+                drawLine(
+                    // 0.16：既能看出“还有一段”，又不会跟真波形抢注意力。
+                    // （0.10 在浅色主题下几乎看不见，实测两轨都要 0.16 才一致可辨。）
+                    baseColor.copy(alpha = 0.16f),
+                    from,
+                    Offset(center.x + dx * bandOuter, center.y + dy * bandOuter),
+                    strokeWidth = 1.2f,
+                )
+                continue
+            }
             val srcIdx = wf.indexForPositionMs(tMs)
             val j2 = wf.indexForPositionMs(tMs + 500L).coerceAtMost(wf.pointCount)
             var amp = 0f
@@ -344,15 +360,12 @@ private fun DrawScope.drawStemOverviewRing(
                 k++
             }
             amp = amp.coerceIn(0f, 1f)
-            val deg = -90f + i * perDeg
-            val rad = Math.toRadians(deg.toDouble())
-            val dx = cos(rad).toFloat(); val dy = sin(rad).toFloat()
             val endR = bandInner + (bandOuter - bandInner) * (0.15f + 0.85f * amp)
             val played = frac <= progress
             val alpha = if (played) 1f else 0.45f
             drawLine(
                 baseColor.copy(alpha = alpha),
-                Offset(center.x + dx * bandInner, center.y + dy * bandInner),
+                from,
                 Offset(center.x + dx * endR, center.y + dy * endR),
                 strokeWidth = 2f,
             )

@@ -265,6 +265,10 @@ class SeparationRepository(private val app: Application) {
                                 onFirstSegmentReady = {
                                     session.markFirstSegmentReady(1)
                                 },
+                                // ★G-3-ux2：实时波形——分离时顺手算包络（零额外解码）。
+                                onEnvelope = { stemIndex, absFrame, mn, mx, n ->
+                                    session.appendEnvelope(stemIndex, absFrame, mn, mx, n)
+                                },
                                 isCancelled = { thisJob?.isActive == false },
                             ).run()
                             // 刷盘 + 关闭（头部长度已在构造时写死，无需回填）。

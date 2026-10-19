@@ -52,6 +52,18 @@ class SegmentedSeparator(
      * 用户点“取消分离”要等到**整首跑完**才生效。每块前查一次即可快速响应。
      */
     private val isCancelled: (() -> Boolean)? = null,
+    /**
+     * ★G-3-ux2：**包络回调**（波形实时更新用）。
+     *
+     * 参数：`(stemIndex, absFrame, min, max, pointCount)` —— stemIndex 0=vocals 1=accomp；
+     * min/max 长度 = pointCount，每个点对应 20ms（= `sr / 50` 帧）。
+     *
+     * 为何在分离器里算：分离时 PCM 本就在手上，顺手算 min/max 几乎零额外成本；
+     * 而重提取（读文件重新解码）会重复耗时，且文件未写完时读到的是静音。
+     *
+     * 回调在**每个块完成后**触发一次，带上本块覆盖的包络区间。
+     */
+    private val onEnvelope: ((stemIndex: Int, absFrame: Int, min: FloatArray, max: FloatArray, pointCount: Int) -> Unit)? = null,
 ) {
     /** 统计。 */
     data class Stats(
@@ -200,18 +212,68 @@ class SegmentedSeparator(
     /** @return 实际写出的帧数（0 表示没写）。 */
     private fun appendRaw(v: FloatArray, a: FloatArray, offsetFrames: Int, count: Int, absFrame: Int): Int {
         if (count <= 0) return 0
+        val ch = reader.channels
         // ★Step 2：必要时先切片，保证回调收到的是「从 0 开始的连续段」。
-        if (offsetFrames == 0 && count == v.size / reader.channels) {
-            onWrite(v, a, count, absFrame)
+        val sv: FloatArray
+        val sa: FloatArray
+        if (offsetFrames == 0 && count == v.size / ch) {
+            sv = v
+            sa = a
         } else {
-            val ch = reader.channels
-            val sv = FloatArray(count * ch)
-            val sa = FloatArray(count * ch)
+            sv = FloatArray(count * ch)
+            sa = FloatArray(count * ch)
             System.arraycopy(v, offsetFrames * ch, sv, 0, count * ch)
             System.arraycopy(a, offsetFrames * ch, sa, 0, count * ch)
-            onWrite(sv, sa, count, absFrame)
         }
+        onWrite(sv, sa, count, absFrame)
+        // ★G-3-ux2：顺带算包络（PCM 本就在手上，零额外解码）���
+        emitEnvelope(sv, 0, count, absFrame)
+        emitEnvelope(sa, 1, count, absFrame)
         return count
+    }
+
+    /**
+     * ★G-3-ux2：把一段 PCM 转成包络点并回调。
+     *
+     * 包络点固定 20ms（= `sampleRate / 50` 帧），且**按绝对帧对齐**：
+     * 第 p 个点覆盖 `[p*fpp, (p+1)*fpp)`，与 [WaveformExtractor.POINTS_PER_SECOND] 一致。
+     */
+    private fun emitEnvelope(samples: FloatArray, stemIndex: Int, frames: Int, absFrame: Int) {
+        val cb = onEnvelope ?: return
+        val ch = reader.channels
+        val fpp = (reader.sampleRate / 50).coerceAtLeast(1)   // 每包的帧数
+        // 找出本次要输出的包络点区间：floor(absFrame/fpp) .. ceil((absFrame+frames)/fpp)
+        val p0 = absFrame / fpp
+        val p1 = (absFrame + frames + fpp - 1) / fpp
+        val n = p1 - p0
+        if (n <= 0) return
+        val mn = FloatArray(n)
+        val mx = FloatArray(n)
+        for (k in 0 until n) {
+            val pt = p0 + k
+            // 该点在整曲中的帧区间，与本次数据的交集。
+            val ptStart = pt.toLong() * fpp
+            val ptEnd = ptStart + fpp
+            val segStart = maxOf(ptStart, absFrame.toLong())
+            val segEnd = minOf(ptEnd, (absFrame + frames).toLong())
+            if (segEnd <= segStart) {
+                // 本点不在此段内（一般不会发生，仅边界）
+                mn[k] = 0f; mx[k] = 0f; continue
+            }
+            var lo = Float.MAX_VALUE
+            var hi = -Float.MAX_VALUE
+            var i = ((segStart - absFrame) * ch).toInt()
+            val end = ((segEnd - absFrame) * ch).toInt()
+            while (i < end) {
+                val x = samples[i]
+                if (x < lo) lo = x
+                if (x > hi) hi = x
+                i += ch
+            }
+            mn[k] = if (lo == Float.MAX_VALUE) 0f else lo
+            mx[k] = if (hi == -Float.MAX_VALUE) 0f else hi
+        }
+        cb(stemIndex, (p0 * fpp).toInt(), mn, mx, n)
     }
 
     /** 与 [StreamingSeparator] 完全一致的权重公式。 */
