@@ -74,6 +74,24 @@
 
     <!-- 设置 -->
     <string name="settings_title">设置</string>
+    <!-- ★模型一键下载 -->
+    <string name="settings_models">模型管理</string>
+    <string name="settings_models_hint">分离功能需要模型文件。首次使用请先下载（只需一次）。</string>
+    <string name="settings_models_installed">✓ 已安装</string>
+    <string name="settings_models_download">下载（%1$s）</string>
+    <string name="settings_models_redownload">重新下载</string>
+    <string name="settings_models_license">许可：%1$s</string>
+    <string name="settings_models_source">下载源</string>
+    <string name="settings_models_probing">正在检测网络…</string>
+    <string name="settings_models_downloading">下载中 %1$d%%（%2$s）</string>
+    <string name="settings_models_done">✓ 下载完成</string>
+    <string name="settings_models_failed">下载失败：%1$s</string>
+    <string name="settings_models_cancel">取消下载</string>
+    <string name="settings_models_license_title">下载前请确认许可</string>
+    <string name="settings_models_license_agree">同意并下载</string>
+    <string name="settings_models_license_cancel">取消</string>
+    <string name="settings_models_source_page">来源：%1$s</string>
+
     <string name="settings_device">设备能力</string>
     <string name="settings_about">关于</string>
     <string name="settings_bench_running">检测中…</string>

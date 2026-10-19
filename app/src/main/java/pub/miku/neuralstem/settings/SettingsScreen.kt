@@ -80,6 +80,10 @@ fun SettingsScreen(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        // ★模型一键下载（放在最前：未装模型时分离功能不可用，是首启第一件事）
+        ModelManagerSection(modifier = Modifier.fillMaxWidth())
+        HorizontalDivider()
+
         Text(stringResource(R.string.settings_device), style = MaterialTheme.typography.titleMedium)
         Text(vm.deviceSummary(), style = MaterialTheme.typography.bodyMedium)
 
