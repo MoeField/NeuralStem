@@ -1,5 +1,8 @@
 package pub.miku.neuralstem.spike
 
+import android.content.Context
+import java.io.File
+
 /**
  * 分离模型注册表(阶段 M2 任务 A)。
  *
@@ -73,6 +76,25 @@ data class ModelSpec(
 ) {
     /** 是否需要在落盘前交换两轨(Inst 系为 true)。 */
     val needsStemSwap: Boolean get() = stemOrder == StemOrder.ACCOMP_FIRST
+
+    /**
+     * ★该模型的 onnx 是否已装到 `filesDir/{sherpa,uvr}/`。
+     *
+     * 供 UI 判断“该档能不能点”（未装的候选不出按钮）。
+     * - Spleeter 2-stem：需两个文件都在（`vocals` + `accompaniment`，后者在 [spleeterAccompFile]）
+     * - UVR：只需 [fileName] 在 `filesDir/uvr/`
+     */
+    fun isInstalled(app: Context): Boolean {
+        val dir = when (engine) {
+            SherpaSourceSeparation.MODE_SPLEETER -> File(app.filesDir, "sherpa")
+            else -> File(app.filesDir, "uvr")
+        }
+        val main = File(dir, fileName)
+        if (!main.exists() || main.length() <= 0L) return false
+        val accomp = spleeterAccompFile ?: return true
+        val a = File(dir, accomp)
+        return a.exists() && a.length() > 0L
+    }
 }
 
 object ModelRegistry {

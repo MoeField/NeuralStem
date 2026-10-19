@@ -40,6 +40,17 @@
     <string name="tier_fast">Fast</string>
     <string name="tier_balance">Balanced</string>
     <string name="tier_quality">Quality</string>
+
+    <!-- ★2-stem speed tiers (auto-derived from measured RTF; names only, no numbers in UI) -->
+    <string name="speed_tier_ultra">Ultra</string>
+    <string name="speed_tier_critical">Critical</string>
+    <string name="speed_tier_slow">Slow</string>
+    <string name="speed_tier_very_slow">Very slow</string>
+    <!-- Settings hint: range -->
+    <string name="speed_tier_ultra_hint">≥ 2× · a 4-min song in under 2 min</string>
+    <string name="speed_tier_critical_hint">0.9–2× · separating takes about as long as playing</string>
+    <string name="speed_tier_slow_hint">0.4–0.9× · slower than playback; separate first</string>
+    <string name="speed_tier_very_slow_hint">\u003c 0.4× · quality first; be patient</string>
     <string name="stem_2">2 stems</string>
     <string name="stem_4">4 stems</string>
     <!-- Playback repeat modes (previously hard-coded) -->
