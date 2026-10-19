@@ -30,6 +30,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import pub.miku.neuralstem.R
 import pub.miku.neuralstem.player.MixScreen
@@ -98,6 +99,7 @@ fun AppShell(
     var edgeSwitched by remember { mutableStateOf(false) }
     // ★G-3ux：Snackbar 文案在 Composable 上下文取（协程内不能用 stringResource）。
     val edgeSwitchedMsg = stringResource(R.string.sep_edge_switched)
+    val edgeAbortedMsg = stringResource(R.string.sep_edge_aborted)
     LaunchedEffect(edgeState) {
         val st = edgeState
         if (st is EdgeSeparationSession.State.Preparing) edgeSwitched = false
@@ -114,6 +116,20 @@ fun AppShell(
             //   否则声音在用户无预期的时间点“换了一个”，易误以为出错。
             scope.launch {
                 snackbarHostState.showSnackbar(edgeSwitchedMsg)
+            }
+            return@LaunchedEffect
+        }
+        // ★G-3fix：取消/失败时若已切到多轨（主轨正播 stem://），
+        //   必须回退到原曲——否则 buffer 已关 → 读端 EOF → 播放卡住所声。
+        val aborted = st is EdgeSeparationSession.State.Cancelled ||
+            st is EdgeSeparationSession.State.Failed
+        if (aborted && edgeSwitched) {
+            edgeSwitched = false
+            Log.i("AppShell", "edge session aborted (${st::class.simpleName}) → exitMultiTrack 回原曲")
+            playerVm.exitMultiTrack()
+            playerVm.play()
+            scope.launch {
+                snackbarHostState.showSnackbar(edgeAbortedMsg)
             }
         }
     }
@@ -181,7 +197,12 @@ fun AppShell(
                         playerVm.markStemsAvailable()
                         // ★显式 play（幂等）: 后台分离期间原曲在播, 不能用 togglePlayPause（会暂停）。
                         playerVm.play()
-                        current = AppDestination.PLAYER
+                        // ★#3：延迟 0.8s 再跳页——让用户看到“✅ 分离完成”，
+                        //   而不是从 79% 直接消失（观感像“卡住后突然没了”）。
+                        scope.launch {
+                            delay(JUMP_DELAY_MS)
+                            current = AppDestination.PLAYER
+                        }
                     }
                 },
                 onPlayStems4 = { files ->
@@ -198,7 +219,10 @@ fun AppShell(
                         )
                         playerVm.markStemsAvailable()
                         playerVm.play()
-                        current = AppDestination.PLAYER
+                        scope.launch {
+                            delay(JUMP_DELAY_MS)
+                            current = AppDestination.PLAYER
+                        }
                     }
                 },
             )
@@ -266,6 +290,13 @@ private fun glyphFor(dest: AppDestination): String = when (dest) {
     AppDestination.MIX -> "\u2637"        // ☷
     AppDestination.SETTINGS -> "\u2699"   // ⚙
 }
+
+/**
+ * ★#3：分离完成后延迟跳页的时长（ms）。
+ * 目的：让分离页上的“✅ 分离完成”与进度条收尾能被看到，
+ * 而不是从 79% 直接消失（用户会以为“卡住后突然没了”）。
+ */
+private const val JUMP_DELAY_MS = 800L
 
 @Composable
 private fun PlaceholderScreen(modifier: Modifier, title: String, note: String) {
