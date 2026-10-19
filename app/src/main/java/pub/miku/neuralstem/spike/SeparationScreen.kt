@@ -272,28 +272,42 @@ fun SeparationScreen(
             }
         }
 
-        // ==================== 4 轨：固定 2 档（不变）====================
+        // ==================== 4 轨：两档（可禁用，2026-10-20）====================
+        //
+        // ★标题**恒显示**（即使用户把两档都关了）——否则用户会以为“4 轨功能没了”。
+        //   两档全关 → 一行灰字指路去设置；灰字而非红字：用户自己的选择，不是错误。
+        val fourTiers = remember(settingsRepo) {
+            TierRegistry.FOUR_TIERS.filter { settingsRepo.fourTierEnabled(it.tier) }
+        }
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(
                 stringResource(R.string.sep_stem_four),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            FlowRow(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                TierRegistry.FOUR_TIERS.forEach { tc ->
-                    val opt = settingsRepo.tierOption(tc.stem, tc.tier) ?: tc.default()
-                    val rtf = benchRtf[opt.id]
-                    val realtime = rtf != null && rtf >= REALTIME_RTF
-                    Button(
-                        onClick = { startTier(tc) },
-                        enabled = hasSong && !busy && benchmarked,
-                    ) {
-                        val tierName = stringResource(tc.tier.labelRes)
-                        Text(if (realtime) "⚡ $tierName" else tierName)
+            if (fourTiers.isEmpty()) {
+                Text(
+                    stringResource(R.string.sep_four_all_disabled),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    fourTiers.forEach { tc ->
+                        val opt = settingsRepo.tierOption(tc.stem, tc.tier) ?: tc.default()
+                        val rtf = benchRtf[opt.id]
+                        val realtime = rtf != null && rtf >= REALTIME_RTF
+                        Button(
+                            onClick = { startTier(tc) },
+                            enabled = hasSong && !busy && benchmarked,
+                        ) {
+                            val tierName = stringResource(tc.tier.labelRes)
+                            Text(if (realtime) "⚡ $tierName" else tierName)
+                        }
                     }
                 }
             }

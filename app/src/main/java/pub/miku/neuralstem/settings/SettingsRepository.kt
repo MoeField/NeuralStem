@@ -235,6 +235,29 @@ class SettingsRepository(app: Application) {
         Log.i(TAG, "twoTierModel ${tier.name} = $id")
     }
 
+    // ============================ ★4 轨：档位禁用（2026-10-20）============================
+    //
+    // 原先 4 轨两档是**写死不可改**的（模型少、且禁用等于关功能）。后来发现这个“固定”
+    // 与模型库的**可删除**自相矛盾：删掉 Spleeter 4 轨 → 「快速」档静默消失，而策略页
+    // 仍写“2 档固定”。⇒ 索性让 4 轨也走“禁用”这条明路，语义自洽。
+    //
+    // ⚠️ **与 2 轨是两个独立的重载，key 也两套**：
+    //   - 2 轨：`twoTierEnabled_<SpeedTier>`（ULTRA/CRITICAL/SLOW/VERY_SLOW）
+    //   - 4 轨：`fourTierEnabled_<Tier>`     （FAST/QUALITY）
+    //   两者枚举不同、前缀不同，**不会串**。别把 4 轨的 `Tier` 当 `SpeedTier` 用。
+    //
+    // 默认 true（保持既有行为）；两档都关 → 分离页 4 轨区只留标题 + 灰字提示。
+
+    /** 4 轨某档是否启用（默认 true）。 */
+    fun fourTierEnabled(tier: Tier): Boolean =
+        prefs.getBoolean("fourTierEnabled_${tier.name}", true)
+
+    /** 设置 4 轨某档是否启用。 */
+    fun setFourTierEnabled(tier: Tier, enabled: Boolean) {
+        prefs.edit().putBoolean("fourTierEnabled_${tier.name}", enabled).apply()
+        Log.i(TAG, "fourTierEnabled ${tier.name} = $enabled")
+    }
+
     companion object {
         private const val TAG = "SettingsRepo"
         private const val PREFS = "settings"

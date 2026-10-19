@@ -139,6 +139,11 @@ private fun SettingsRoot(
     val totalBytes = remember { ModelCatalog.ALL.sumOf { it.totalBytes } }
     // 2 轨启用档数（读 prefs；进出本页时重算即可）
     val enabledTwo = remember { SpeedTier.ordered.count { SettingsRepository(ctx.applicationContext as Application).twoTierEnabled(it) } }
+    // ★4 轨启用档数（2026-10-20 放开禁用；与 2 轨对称展示）
+    val enabledFour = remember {
+        SettingsRepository(ctx.applicationContext as Application)
+            .let { repo -> TierRegistry.FOUR_TIERS.count { repo.fourTierEnabled(it.tier) } }
+    }
 
     Column(
         modifier = modifier
@@ -224,7 +229,7 @@ private fun SettingsRoot(
             subtitle = stringResource(
                 R.string.settings_page_policy_sub,
                 enabledTwo,
-                TierRegistry.FOUR_TIERS.size,
+                enabledFour,
             ),
             onClick = onOpenPolicy,
         )

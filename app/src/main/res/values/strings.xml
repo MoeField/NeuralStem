@@ -144,7 +144,7 @@
     <string name="settings_page_models">模型库</string>
     <string name="settings_page_models_sub">已装 %1$d/%2$d · 共 %3$s</string>
     <string name="settings_page_policy">分离策略</string>
-    <string name="settings_page_policy_sub">2 轨 %1$d 档启用 · 4 轨 %2$d 档固定</string>
+    <string name="settings_page_policy_sub">2 轨 %1$d 档启用 · 4 轨 %2$d 档启用</string>
     <string name="page_back">返回</string>
     <!-- 模型库：体积分节 -->
     <string name="models_group_header">%1$s · %2$d 个模型</string>
@@ -161,8 +161,9 @@
     <string name="policy_two_hint">关掉的档不会出现在分离页。簇内点选一个模型；只列出已安装的候选。</string>
     <string name="policy_tier_empty">本机该簇暂无已装模型</string>
     <string name="policy_tier_installed_label">已装</string>
-    <string name="policy_four_title">4 轨（固定，不参与禁用）</string>
-    <string name="policy_four_hint">4 轨只有两个固定档位，模型不随速度簇变化。</string>
+    <string name="policy_four_title">4 轨</string>
+    <string name="policy_four_hint">4 轨模型固定（Spleeter 4-stem / Demucs）。两档都关掉时，分离页不显示 4 轨按钮。</string>
+    <string name="sep_four_all_disabled">4 轨档位已全部禁用 → 设置 › 分离策略</string>
 
     <!-- 混音页（EQ + 分轨混音） -->
     <string name="mix_title">混音</string>

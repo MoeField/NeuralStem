@@ -34,7 +34,9 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import pub.miku.neuralstem.R
 import pub.miku.neuralstem.spike.DeviceBenchmark
+import pub.miku.neuralstem.spike.SepOption
 import pub.miku.neuralstem.spike.SpeedTier
+import pub.miku.neuralstem.spike.TierChoices
 import pub.miku.neuralstem.spike.TierRegistry
 
 /**
@@ -131,7 +133,13 @@ fun SeparationPolicyScreen(
 
             HorizontalDivider()
 
-            // ---------------- 4 轨：只读 ----------------
+            // ---------------- 4 轨：两档各自可禁用（2026-10-20 放开）----------------
+            //
+            // 原先只读。放开的理由：模型库可删 4 轨模型 → 删完「快速」档会静默消失，
+            // 而本页却写“2 档固定”。⇒ 给禁用一条明路，两个入口语义才一致。
+            //
+            // 两档全关 → 分离页 4 轨区**保留标题** + 灰字提示（不是整块消失，用户不会
+            // 以为自己记错了）。
             Text(stringResource(R.string.policy_four_title), style = MaterialTheme.typography.titleMedium)
             Text(
                 stringResource(R.string.policy_four_hint),
@@ -139,28 +147,55 @@ fun SeparationPolicyScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             TierRegistry.FOUR_TIERS.forEach { tc ->
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                    ),
-                ) {
-                    Column(
-                        modifier = Modifier.padding(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(2.dp),
-                    ) {
-                        Text(
-                            stringResource(tc.tier.labelRes),
-                            style = MaterialTheme.typography.titleSmall,
-                        )
-                        Text(
-                            tc.candidates.joinToString(" / ") { it.displayName },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
+                FourTierCard(tc = tc, repo = repo, app = app)
             }
+        }
+    }
+}
+
+/**
+ * 4 轨的一个档位：开关 + 当前使用的模型名（不可选，每档只有 1 个候选）。
+ *
+ * 模型名取自 [SettingsRepository.tierOption]（与分离页 `startTier` 同一取法），
+ * 未安装时附「未安装」——提醒用户“开关开着但跑不了”。
+ */
+@Composable
+private fun FourTierCard(
+    tc: TierChoices,
+    repo: SettingsRepository,
+    app: Application,
+) {
+    var enabled by remember(tc.tier) { mutableStateOf(repo.fourTierEnabled(tc.tier)) }
+    val opt = remember(tc) { repo.tierOption(tc.stem, tc.tier) ?: tc.default() }
+    val installed = opt is SepOption.Sherpa && opt.spec.isInstalled(app)
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    stringResource(tc.tier.labelRes),
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                Text(
+                    opt.displayName +
+                        if (installed) "" else stringResource(R.string.settings_model_not_installed),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Switch(
+                checked = enabled,
+                onCheckedChange = {
+                    enabled = it
+                    repo.setFourTierEnabled(tc.tier, it)
+                },
+            )
         }
     }
 }
