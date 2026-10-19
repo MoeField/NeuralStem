@@ -91,6 +91,7 @@ class SeparationService : Service() {
                     }
                     is SeparationRepository.State.Done,
                     is SeparationRepository.State.Done4,
+                    is SeparationRepository.State.EdgeDone,
                     is SeparationRepository.State.Failed,
                     is SeparationRepository.State.Cancelled,
                     is SeparationRepository.State.Idle -> {

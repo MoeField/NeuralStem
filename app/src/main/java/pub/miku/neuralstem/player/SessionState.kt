@@ -329,6 +329,19 @@ class SessionStateMachine(private val effects: Effects) {
     }
 
     /**
+     * ★G-3fix：边分离边播**正常完成**（无落盘文件）。
+     *
+     * 语义：任务结束、不再 busy；但不产生 [SeparationTask.Done2]（没有 stem 文件）。
+     * 回到 [SeparationTask.Idle] —— 此时多轨已在播（由 edge 自动切换完成）。
+     *
+     * 为何必须存在：`startEdge()` 跑完若不发终态，`SeparationTask` 会永久停在
+     * `Running(99)` → `busy=true` → UI 卡在“分离中 99%”且取消按钮不消失。
+     */
+    fun onSeparationEdgeDone() {
+        separation = SeparationTask.Idle
+    }
+
+    /**
      * **消费**一次分离完成结果（[SeparationTask.Done2]/[SeparationTask.Done4]）；无则返回 `null`。
      *
      * UI 只能经此拿到结果 → 天然“只响应 `Running→Done` 的**转换**、不响应遗留态”，

@@ -366,6 +366,9 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
                     )
                     is SeparationRepository.State.Failed ->
                         session.onSeparationFailed(s.message, s.cause)
+                    // ★G-3fix：edge 完成（无落盘文件）→ 必须退出 Running，否则 UI 永卡 99%。
+                    //   用 Cancelled 语义不合适（会弹“已取消”），故回到 Idle（“无进行中任务”）。
+                    is SeparationRepository.State.EdgeDone -> session.onSeparationEdgeDone()
                     SeparationRepository.State.Cancelled -> session.onSeparationCancelled()
                     SeparationRepository.State.Idle -> Unit
                 }
@@ -392,6 +395,9 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
                     SeparationRepository.State.Cancelled ->
                         _state.value = State.Error("分离已取消")
                     SeparationRepository.State.Idle -> Unit
+                    // ★G-3fix：edge 完成——不产生 stem 文件，旧 State 仅回到 Idle（不再 busy）。
+                    is SeparationRepository.State.EdgeDone ->
+                        _state.value = State.Idle
                     is SeparationRepository.State.Done4 -> {
                         // M4/S3：4-stem 结果不驱 2-stem 的 spike State；只记录。
                         // 正式四轨 UX 走 [separationTask]（Done4）。

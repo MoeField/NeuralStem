@@ -97,6 +97,22 @@ class SeparationRepository(private val app: Application) {
 
         data class Failed(val message: String, val cause: Throwable? = null) : State
         data object Cancelled : State
+
+        /**
+         * ★G-3fix：边分离边播**完成**（无落盘文件）。
+         *
+         * 为何不用 [Done]：edge 的输出只进 ring buffer（边算边播），**不写 wav 文件**；
+         * [Done] 必带 `vocalsFile/accompanimentFile`，语义不匹配。
+         *
+         * ⚠️ **曾经缺失此终态** → `startEdge()` 跑完后 `_state` 永远停在
+         * `Running(99)`（最后一块因 overlap 导致 done<total）⇒ UI 卡在“分离中 99%”
+         * 且 `busy` 永为 true（取消按钮不消失）。这是用户报的“卡 99%”的根因。
+         */
+        data class EdgeDone(
+            val inferTimeMs: Long,
+            val peakPssMb: Float,
+            val audioDurationMs: Long,
+        ) : State
     }
 
     private val _state = MutableStateFlow<State>(State.Idle)
@@ -197,7 +213,9 @@ class SeparationRepository(private val app: Application) {
                     )
                     try {
                         val schedule = SegmentedSeparator.defaultSchedule(frameSource.sampleRate)
-                        SegmentedSeparator(
+                        // ★G-3fix：推理计时起点（提前于 Separator 构造）。
+                        val t0 = System.currentTimeMillis()
+                        val stats = SegmentedSeparator(
                             reader = frameSource,
                             vocalsBuffer = session.vocalsBuffer!!,
                             accompBuffer = session.accompBuffer!!,
@@ -205,7 +223,11 @@ class SeparationRepository(private val app: Application) {
                             startFrame = startFrame,
                             chunkSchedule = schedule,
                             onProgress = { done, total ->
-                                val pct = if (total > 0) (done * 100 / total).coerceIn(0, 100) else 0
+                                // ★G-3fix：用浮点算再取整，避免最后一块因 overlap 导致
+                                //   done*100/total 少 1（永远到不了 100）。
+                                val pct = if (total > 0) {
+                                    ((done.toDouble() * 100.0) / total).toInt().coerceIn(0, 100)
+                                } else 0
                                 session.updateProgress(pct)
                                 _state.value = State.Running(done, total, 0L, currentPssMb())
                             },
@@ -213,10 +235,20 @@ class SeparationRepository(private val app: Application) {
                                 session.markFirstSegmentReady(1)
                             },
                         ).run()
+                        // ★G-3fix（关键）：**必须发终态**，否则 _state 永远停在 Running(99)。
+                        session.complete()
+                        val audioMs = frameSource.totalFrames.toLong() * 1000L /
+                            frameSource.sampleRate.coerceAtLeast(1)
+                        _state.value = State.EdgeDone(
+                            inferTimeMs = System.currentTimeMillis() - t0,
+                            peakPssMb = currentPssMb(),
+                            audioDurationMs = audioMs,
+                        )
+                        Log.i(TAG, "edge done: vFrames=${stats.vocalsFrames} aFrames=${stats.accompFrames} " +
+                            "chunks=${stats.chunks}")
                     } finally {
                         sep.release()
                     }
-                    session.complete()
                 } finally {
                     frameSource.close()
                 }

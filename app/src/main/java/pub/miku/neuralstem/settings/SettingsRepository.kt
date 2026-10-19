@@ -45,12 +45,17 @@ class SettingsRepository(app: Application) {
         }
 
     /**
-     * ★G-3：“边分离边播”开关（**默认关**）。
+     * ★G-3：“边分离边播”开关（**默认开**）。
+     *
      * 开启后：分离从当前播放位置起（不从头），首段就绪自动切到分离结果播放。
      * 仅 Spleeter 2-stem（快速档）生效。
+     *
+     * 为何默认开：G-3 坐标系 bug（`a756885`）已修复并在真机三位置验收；
+     * 不开时用户点「⚡ 快速」仍需等整首分离完成才能听，与“快速”的语义相悖。
+     * 保留设置项开关 → 若某些曲目触发问题，用户仍可关掉回退。
      */
     var edgeSeparationEnabled: Boolean
-        get() = prefs.getBoolean(KEY_EDGE_SEP, false)
+        get() = prefs.getBoolean(KEY_EDGE_SEP, true)
         set(value) {
             prefs.edit().putBoolean(KEY_EDGE_SEP, value).apply()
             Log.i(TAG, "edgeSeparationEnabled=$value")
