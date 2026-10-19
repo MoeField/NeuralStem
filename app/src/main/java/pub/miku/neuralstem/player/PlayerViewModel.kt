@@ -615,6 +615,32 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
         }
+        // ★G-3-ux2：边分离边播时，**实时**把分离器算出的包络接到 stemWaveforms。
+        //   否则波形只会在 loadMultiTrack 那一刻提取一次（那时文件几乎全是 0）。
+        viewModelScope.launch {
+            val session = EdgeSeparationSession.get()
+            while (isActive) {
+                delay(500)
+                if (!_state.value.isMultiTrack) continue
+                val v = session.snapshotEnvelope(0) ?: continue
+                val a = session.snapshotEnvelope(1) ?: continue
+                if (v.first.isEmpty()) continue
+                val sr = session.sampleRate.coerceAtLeast(1)
+                // ★关键：包络只覆盖“已分离到”的部分，所以 totalFrames 必须按**实际点数**算
+                //   （每点 20ms），否则 durationMs 会假装有整曲长 —— 绘制时会把
+                //   已分离的 60s 波形拉伸铺满整首，表现为“波形铺满但后半是直线”。
+                val fpp = (sr / session.envelopePointsPerSecond).coerceAtLeast(1)
+                val vFrames = (v.first.size.toLong() * fpp)
+                val aFrames = (a.first.size.toLong() * fpp)
+                val vWf = WaveformData(v.first, v.second, sr, vFrames)
+                val aWf = WaveformData(a.first, a.second, sr, aFrames)
+                if (_stemWaveforms.value.getOrNull(0) !== vWf || _stemWaveforms.value.getOrNull(1) !== aWf) {
+                    val cur = listOf<WaveformData?>(vWf, aWf)
+                    _stemWaveforms.value = cur
+                    _state.value = _state.value.copy(stemWaveforms = cur)
+                }
+            }
+        }
         // Task 2 / R3：把波形与封面流镜像到 UI state
         // （★ 9-24 之前**未收集** → 波形/封面永不显示，即历史“坑 55”）。
         viewModelScope.launch {

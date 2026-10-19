@@ -98,6 +98,82 @@ class EdgeSeparationSession private constructor() {
         if (frame > writtenUpToFrame) writtenUpToFrame = frame
     }
 
+    // ==================== ★G-3-ux2：边分离边播的**实时波形** ====================
+
+    /**
+     * 包络点密度（点/秒）。必须与 `WaveformExtractor.POINTS_PER_SECOND` 一致（20ms/点）。
+     */
+    val envelopePointsPerSecond: Int get() = 50
+
+    /**
+     * 两轨的包络累加器（[0]=vocals [1]=accompaniment）。
+     *
+     * 为何用可变数组 + 水位线，而不是 StateFlow<List>：
+     * 分离器高频（每块 ~1s）写入，UI 只在 draw 阶段读；
+     * 直接共享 FloatArray 可避免频繁重建列表/触发重组。
+     */
+    private val envMin = arrayOf(FloatArray(0), FloatArray(0))
+    private val envMax = arrayOf(FloatArray(0), FloatArray(0))
+
+    /** 各轨包络已填充到的点数（= 可安全读取的长度）。 */
+    @Volatile private var envMinPoints = 0
+    @Volatile private var envMaxPoints = 0
+
+    /**
+     * 写入一段包络（由 `SegmentedSeparator.onEnvelope` 调用）。
+     *
+     * @param stemIndex 0=vocals 1=accompaniment
+     * @param absFrame 本段在整曲中的绝对起始帧
+     * @param min / max 本段的包络点
+     * @param pointCount 点数
+     */
+    @Synchronized
+    fun appendEnvelope(stemIndex: Int, absFrame: Int, min: FloatArray, max: FloatArray, pointCount: Int) {
+        if (stemIndex !in 0..1 || pointCount <= 0) return
+        val fpp = (sampleRate / envelopePointsPerSecond).coerceAtLeast(1)
+        val p0 = absFrame / fpp
+        val need = p0 + pointCount
+        // 扩容（倍增，避免频繁分配）
+        if (envMin[stemIndex].size < need) {
+            var cap = maxOf(envMin[stemIndex].size, 1024)
+            while (cap < need) cap *= 2
+            envMin[stemIndex] = envMin[stemIndex].copyOf(cap)
+            envMax[stemIndex] = envMax[stemIndex].copyOf(cap)
+        }
+        System.arraycopy(min, 0, envMin[stemIndex], p0, pointCount)
+        System.arraycopy(max, 0, envMax[stemIndex], p0, pointCount)
+        val written = need
+        if (stemIndex == 0) {
+            if (written > envMinPoints) envMinPoints = written
+        } else {
+            if (written > envMaxPoints) envMaxPoints = written
+        }
+        // ★诊断：包络写入（看波形不更新时是否根本没进这里）
+        if (need % 200 < pointCount) {
+            Log.i(TAG, "envelope: stem=$stemIndex absFrame=$absFrame n=$pointCount → points=$need")
+        }
+    }
+
+    /** 取某轨到目前为止的包络（min/max 副本；未分离区为 0）。 */
+    @Synchronized
+    fun snapshotEnvelope(stemIndex: Int): Pair<FloatArray, FloatArray>? {
+        if (stemIndex !in 0..1) return null
+        val n = if (stemIndex == 0) envMinPoints else envMaxPoints
+        if (n <= 0) return null
+        val a = envMin[stemIndex]
+        val b = envMax[stemIndex]
+        val len = minOf(n, a.size, b.size)
+        return a.copyOf(len) to b.copyOf(len)
+    }
+
+    /** 清空包络（新会话开始时）。 */
+    @Synchronized
+    private fun resetEnvelopes() {
+        envMin[0] = FloatArray(0); envMax[0] = FloatArray(0)
+        envMin[1] = FloatArray(0); envMax[1] = FloatArray(0)
+        envMinPoints = 0; envMaxPoints = 0
+    }
+
     /** 是否首段已就绪。 */
     val firstSegmentReady: Boolean
         get() = _state.value is State.FirstSegmentReady ||
@@ -124,6 +200,7 @@ class EdgeSeparationSession private constructor() {
         this.totalFrames = totalFrames
         vocalsBuffer = StemPcmRingBuffer(channels, capacityFrames)
         accompBuffer = StemPcmRingBuffer(channels, capacityFrames)
+        resetEnvelopes()
         _state.value = State.Preparing
         Log.i(TAG, "begin: startFrame=$startFrame sr=$sampleRate ch=$channels cap=$capacityFrames")
     }
@@ -150,6 +227,7 @@ class EdgeSeparationSession private constructor() {
         this.vocalsFile = vocalsFile
         this.accompFile = accompFile
         writtenUpToFrame = 0
+        resetEnvelopes()
         _state.value = State.Preparing
         Log.i(TAG, "beginFiles: startFrame=$startFrame sr=$sampleRate ch=$channels " +
             "total=$totalFrames vf=${vocalsFile.name} af=${accompFile.name}")
