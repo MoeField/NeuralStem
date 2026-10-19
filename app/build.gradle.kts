@@ -32,6 +32,24 @@ android {
             }
         }
     }
+
+    /**
+     * ★ABI 拆包（CI/发布用）。
+     *
+     * sherpa AAR 带 arm64 + x86_64 两套 so（单 ABI ~30MB）：
+     * 合包 42MB；拆开后真机（arm64）包 ~26MB。
+     *
+     * `isUniversalApk = true` → 额外产一个合包，保证**本地开发仍能一包直装**
+     * （`app-universal-debug.apk`），不影响现有 adb 调试流程。
+     */
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a", "x86_64")
+            isUniversalApk = true
+        }
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11

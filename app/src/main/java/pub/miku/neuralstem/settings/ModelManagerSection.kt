@@ -61,17 +61,19 @@ fun ModelManagerSection(modifier: Modifier = Modifier) {
     // 当前下载任务
     var downloadJob by remember { mutableStateOf<Job?>(null) }
 
-    val st by downloader.state.collectAsStateInComposition()
+    // ★按包分开的状态（支持并发下载多个模型而不互相覆盖）
+    val statesMap by downloader.states.collectAsStateInComposition()
 
     // 下载完成 → 刷新已安装集合
-    LaunchedEffect(st) {
-        if (st is ModelDownloader.State.Done) {
-            installedIds = ModelCatalog.installed(filesDir).toSet()
-        }
-        if (st is ModelDownloader.State.Probing || st is ModelDownloader.State.Done) {
-            resolvedSource = downloader.lastProbedBaseUrl
-            resolvedSource?.let { repo.lastResolvedModelSource = it }
-        }
+    //
+    // ★为何不接受“有 Done 才刷新”：Done 是**瞬时态**，并发下载时另一个包
+    //   可能在 Done 之后才写完 → 只刷新一次会漏。
+    //   `ModelCatalog.installed()` 只是几次文件 stat，廉价 → 每次状态变化都重算。
+    LaunchedEffect(statesMap) {
+        val fresh = ModelCatalog.installed(filesDir).toSet()
+        if (fresh != installedIds) installedIds = fresh
+        resolvedSource = downloader.lastProbedBaseUrl
+        resolvedSource?.let { repo.lastResolvedModelSource = it }
     }
 
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -107,8 +109,11 @@ fun ModelManagerSection(modifier: Modifier = Modifier) {
 
         // ---- 各模型包 ----
         ModelCatalog.ALL.forEach { info ->
-            val installed = info.pack in installedIds
-            val downloading = (st as? ModelDownloader.State.Downloading)?.pack == info.pack
+            val packState = statesMap[info.pack] ?: ModelDownloader.State.Idle
+            val downloading = packState is ModelDownloader.State.Downloading
+            // 已安装 = 磁盘上完整，**或者”本次刚下载完”**（磁盘检查可能受刷新时机影响）。
+            val installed = info.pack in installedIds ||
+                packState is ModelDownloader.State.Done
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
@@ -128,7 +133,7 @@ fun ModelManagerSection(modifier: Modifier = Modifier) {
                     )
 
                     if (downloading) {
-                        val d = st as ModelDownloader.State.Downloading
+                        val d = packState as ModelDownloader.State.Downloading
                         LinearProgressIndicator(
                             progress = { d.percent / 100f },
                             modifier = Modifier.fillMaxWidth(),
@@ -177,14 +182,12 @@ fun ModelManagerSection(modifier: Modifier = Modifier) {
                         }
                     }
 
-                    (st as? ModelDownloader.State.Failed)?.let { f ->
-                        if (f.pack == info.pack) {
-                            Text(
-                                stringResource(R.string.settings_models_failed, f.message),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.error,
-                            )
-                        }
+                    (packState as? ModelDownloader.State.Failed)?.let { f ->
+                        Text(
+                            stringResource(R.string.settings_models_failed, f.message),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
                     }
                 }
             }
