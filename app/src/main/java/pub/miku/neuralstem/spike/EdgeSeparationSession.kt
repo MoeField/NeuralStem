@@ -45,6 +45,62 @@ class EdgeSeparationSession private constructor() {
     private val _state = MutableStateFlow<State>(State.Idle)
     val state: StateFlow<State> = _state.asStateFlow()
 
+    // ==================== ★边播闸门（Gate）====================
+    //
+    // ## 为何需要
+    // 文件模式下 stem 文件是**预分配的整曲长度**，未分离区是静音。
+    // 旧逻辑在“首段就绪”时就切轨 → 播 4s 后就掉进静音区 → 用户听到“放一小段就没声”。
+    // 闸门用 [writtenUpToFrame]（水位线）判断“当前播放位置到底有没有数据”。
+    //
+    // ## 为何与 [State] 分开
+    // [State] 回答“**分离算到哪**”（UI 进度），Gate 回答“**播放能不能走**”。
+    // 两者生命周期相同但含义正交；混在一个枚举里会让每个分支都要考虑无关维度。
+    //
+    // ## 滞环（hysteresis）
+    // 起播/恢复用 [LEAD_FRAMES]，暂停用 [SAFETY_FRAMES]，两者**不相等**：
+    // 单一阈值会让 play/pause 在边界上反复翻转（每 100ms 一次），比静音更难受。
+
+    /** 播放闸门状态。 */
+    sealed interface Gate {
+        /** 无会话。 */
+        data object Idle : Gate
+
+        /** 分离还没领先够（或刚 seek 到未分离区）→ **不要切轨 / 保持暂停**。 */
+        data object Buffering : Gate
+
+        /** 水位线领先够多 → 可以切轨、可以继续播。 */
+        data object Playable : Gate
+
+        /** 播放追上分离 → 已暂停等待（名字与 `StemTrace: read STARVED` 同义）。 */
+        data object Starved : Gate
+
+        /** 分离完成，水位线置满 → 可自由 seek。 */
+        data object Finished : Gate
+    }
+
+    private val _gate = MutableStateFlow<Gate>(Gate.Idle)
+    val gate: StateFlow<Gate> = _gate.asStateFlow()
+
+    /**
+     * 起播/恢复裕度：水位线需领先（播放位置 - startFrame）至少这么多帧。
+     * 15s @44.1k —— 与速度簇无关的保守值，真机可调。
+     */
+    val leadFrames: Int get() = LEAD_FRAMES
+
+    /**
+     * 暂停门槛：播放位置距水位线不足这么多帧 → 暂停。
+     * 比 [leadFrames] 小很多，避免抖动（见上方滞环说明）。
+     */
+    val safetyFrames: Int get() = SAFETY_FRAMES
+
+    /**
+     * 从 [startFrame] 起**已分离**的帧数（= 可安全播放的上界，相对 startFrame）。
+     *
+     * 注意下界为 0：`[0, startFrame)` 永远没数据（预分配静音，那段从未参与本次分离）。
+     */
+    val availableFrames: Int
+        get() = (writtenUpToFrame - startFrame).coerceAtLeast(0)
+
     /** 当前会话的 vocals 缓冲（无会话时为 null）。 */
     @Volatile var vocalsBuffer: StemPcmRingBuffer? = null
         private set
@@ -96,6 +152,82 @@ class EdgeSeparationSession private constructor() {
     /** 更新水位线（分离器每写完一块调一次）。只允许前进。 */
     fun updateWaterMark(frame: Int) {
         if (frame > writtenUpToFrame) writtenUpToFrame = frame
+        advanceGate()
+    }
+
+    // ==================== ★闸门：状态转移 ====================
+
+    /**
+     * 水位线前进后重算闸门（只处理 **Buffering → Playable**）。
+     *
+     * 为何只处理这一条：其余转移（Playable→Starved、Starved→Playable）
+     * 依赖**播放位置**，只能由播放侧主动报告（见 [onPlaybackTick]）。
+     * 分离线程不知道播到哪，硬要推断会引入双向依赖。
+     */
+    private fun advanceGate() {
+        if (_gate.value is Gate.Buffering && availableFrames >= LEAD_FRAMES) {
+            _gate.value = Gate.Playable
+            Log.i(TAG, "gate: Buffering → Playable (available=${availableFrames}f " +
+                "= ${availableFrames * 1000 / sampleRate.coerceAtLeast(1)}ms)")
+        }
+    }
+
+    /**
+     * ★播放侧心跳：每 ~100ms 调一次，携带**当前播放位置**（相对 startFrame 的帧号）。
+     *
+     * 滞环逻辑：
+     * - `Playable → Starved`：`playedFrames + SAFETY >= available`（快追上水位线了）
+     * - `Starved → Playable`：`available - playedFrames >= LEAD`（又领先够了）
+     *
+     * 在 `Finished` / `Buffering` / `Idle` 下一律不动作
+     * （`Buffering` 时播放器还没切到 stem，没有意义）。
+     *
+     * @param playedFrames 播放到的位置，**相对 [startFrame]**（可负 = 在起点之前，理论上不发生）
+     */
+    fun onPlaybackTick(playedFrames: Int) {
+        val avail: Int = availableFrames
+        when (_gate.value) {
+            is Gate.Playable -> {
+                if (playedFrames + SAFETY_FRAMES >= avail) {
+                    _gate.value = Gate.Starved
+                    Log.i(TAG, "gate: Playable → Starved (played=${playedFrames}f avail=${avail}f)")
+                }
+            }
+            is Gate.Starved -> {
+                if (avail - playedFrames >= LEAD_FRAMES) {
+                    _gate.value = Gate.Playable
+                    Log.i(TAG, "gate: Starved → Playable (played=${playedFrames}f avail=${avail}f)")
+                }
+            }
+            else -> Unit
+        }
+    }
+
+    /**
+     * ★seek 后立即重算（不能等 100ms 心跳——seek 是跳变，晚一个 tick 就是一段静音）。
+     *
+     * - 目标在水位线**之外** → 直接 `Starved`（没数据，只能等）
+     * - 目标在水位线**之内**且领先够 → `Playable`
+     * - 中间灰区 → **不动**（保持当前态，避免抖动）
+     */
+    fun onSeekTo(playedFrames: Int) {
+        if (_gate.value is Gate.Finished || _gate.value is Gate.Idle) return
+        val avail = availableFrames
+        when {
+            playedFrames + SAFETY_FRAMES >= avail -> {
+                if (_gate.value !is Gate.Starved) {
+                    _gate.value = Gate.Starved
+                    Log.i(TAG, "gate: seek → Starved (target=${playedFrames}f avail=${avail}f)")
+                }
+            }
+            avail - playedFrames >= LEAD_FRAMES -> {
+                if (_gate.value !is Gate.Playable) {
+                    _gate.value = Gate.Playable
+                    Log.i(TAG, "gate: seek → Playable (target=${playedFrames}f avail=${avail}f)")
+                }
+            }
+            else -> Unit
+        }
     }
 
     // ==================== ★G-3-ux2：边分离边播的**实时波形** ====================
@@ -202,6 +334,9 @@ class EdgeSeparationSession private constructor() {
         accompBuffer = StemPcmRingBuffer(channels, capacityFrames)
         resetEnvelopes()
         _state.value = State.Preparing
+        // ★闸门：ring buffer 模式下数据不足会**阻塞等待**（不是静音），
+        //   不需要裕度 → 直接 Playable（保持旧行为）。
+        _gate.value = Gate.Playable
         Log.i(TAG, "begin: startFrame=$startFrame sr=$sampleRate ch=$channels cap=$capacityFrames")
     }
 
@@ -229,6 +364,8 @@ class EdgeSeparationSession private constructor() {
         writtenUpToFrame = 0
         resetEnvelopes()
         _state.value = State.Preparing
+        // ★闸门：新会话从 Buffering 开始（等水位线领先够才允许切轨）。
+        _gate.value = Gate.Buffering
         Log.i(TAG, "beginFiles: startFrame=$startFrame sr=$sampleRate ch=$channels " +
             "total=$totalFrames vf=${vocalsFile.name} af=${accompFile.name}")
     }
@@ -257,6 +394,8 @@ class EdgeSeparationSession private constructor() {
         // ★文件模式：水位线置满 → 全曲可播可 seek。
         if (vocalsFile != null && totalFrames > 0) writtenUpToFrame = totalFrames
         _state.value = State.Done
+        // ★闸门：分离完成 → 解除一切限制（任意 seek 合法）。
+        _gate.value = Gate.Finished
         // ★诊断：buffer 引用仍保留（非 null），播放器可读到 EOF。
         Log.i(
             TAG,
@@ -271,6 +410,8 @@ class EdgeSeparationSession private constructor() {
         vocalsBuffer?.close()
         accompBuffer?.close()
         _state.value = State.Failed(message)
+        // ★闸门：会话失效 → 回 Idle（播放侧据此停止闸门监控）。
+        _gate.value = Gate.Idle
         Log.w(TAG, "failed: $message (buffers closed, refs kept)")
     }
 
@@ -284,6 +425,8 @@ class EdgeSeparationSession private constructor() {
         // ★文件模式：保留文件引用（供上层清缓存时参考），但清空水位线。
         //   文件本身不删（若已写入部分数据，可能对用户仍有价值；由缓存清理统一管理）。
         writtenUpToFrame = 0
+        // ★闸门：中止 → Idle。
+        _gate.value = Gate.Idle
         // ★诊断：buffer 置 null —— 若播放器此时仍持 stem:// uri，下一次 open 会抛 IOException。
         Log.i(TAG, "abort: buffers→null (had=$had) fileMode=${vocalsFile != null} state=${_state.value}")
         if (had) {
@@ -296,6 +439,20 @@ class EdgeSeparationSession private constructor() {
 
     companion object {
         private const val TAG = "EdgeSession"
+
+        /** 基于 44.1k 的帧数常量（各采样率下按毫秒换算即可，精度足够）。 */
+        private const val SR_REF = 44_100
+
+        /**
+         * 起播/恢复裕度：水位线需领先播放位置 15s。
+         *
+         * 为何是 15s：首块的块长是 4s→8s→16s→30s 递增，15s 足以跨过两次切块
+         * （>4+8），真机上分离远快于播放时一次就吃掉；模型慢时最多多等一轮。
+         */
+        private const val LEAD_FRAMES = 15 * SR_REF
+
+        /** 暂停门槛 2s：远小于 [LEAD_FRAMES]，构成滞环，避免 play/pause 抖动。 */
+        private const val SAFETY_FRAMES = 2 * SR_REF
 
         @Volatile
         private var instance: EdgeSeparationSession? = null

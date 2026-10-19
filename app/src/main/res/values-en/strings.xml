@@ -67,6 +67,13 @@
     <string name="sep_running_playable">Playing · separating %1$d%% in background</string>
     <string name="sep_edge_switched">Switched to separated stems, resuming from current position</string>
     <string name="sep_edge_aborted">Separation aborted — back to original track</string>
+    <!-- ★gate: watermark not far enough ahead yet -->
+    <string name="sep_edge_buffering">Buffering separation result…</string>
+    <!-- ★gate: playback caught up with separation -->
+    <string name="sep_edge_starved">Separation can’t keep up — paused</string>
+    <string name="sep_edge_starved_paused">Separation can’t keep up (paused) · separating %1$d%%</string>
+    <!-- ★gate: user seeked before the separation start point -->
+    <string name="sep_edge_before_start">This part was not separated (starts at %1$s) · paused</string>
     <string name="sep_done_cache">✅ Cache hit (no re-inference)</string>
     <string name="sep_done">✅ Separation done</string>
     <string name="sep_done4_cache">✅ 4-stem cache hit</string>

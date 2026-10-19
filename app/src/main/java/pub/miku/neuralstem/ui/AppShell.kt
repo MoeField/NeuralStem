@@ -102,10 +102,14 @@ fun AppShell(
     //   观察进程单例会话状态；仅在首次转到“首段就绪”时触发一次。
     val edgeSession = remember { EdgeSeparationSession.get() }
     val edgeState by edgeSession.state.collectAsState()
+    // ★闸门（2026-10-20）：切轨条件从“首段就绪”改为“水位线领先够”。
+    //   旧逻辑在首块产出（~4s）就切轨 → 播 4s 就掉进预分配静音区（用户实报“放一小段没声”）。
+    val edgeGate by edgeSession.gate.collectAsState()
     var edgeSwitched by remember { mutableStateOf(false) }
     // ★G-3ux：Snackbar 文案在 Composable 上下文取（协程内不能用 stringResource）。
     val edgeSwitchedMsg = stringResource(R.string.sep_edge_switched)
     val edgeAbortedMsg = stringResource(R.string.sep_edge_aborted)
+    val edgeBufferingMsg = stringResource(R.string.sep_edge_buffering)
 
     // ★G-3fix：分离完成（EdgeDone）→ 若为旧“半段文件”模式则切到文件播放。
     //   新版（完整曲长文件）在首段就绪时就已经切过去，此处无需再动。
@@ -126,12 +130,25 @@ fun AppShell(
         }
     }
 
-    LaunchedEffect(edgeState) {
+    // ★缓冲提示（闸门版）：分离在跑、但水位线还没领先够 → 告诉用户“在缓冲”，
+    //   而不是傻等（用户不知道为何还没切到分离结果）。
+    LaunchedEffect(edgeGate) {
+        if (edgeGate is EdgeSeparationSession.Gate.Buffering && !edgeSwitched) {
+            scope.launch {
+                snackbarHostState.showSnackbar(edgeBufferingMsg)
+            }
+        }
+    }
+
+    LaunchedEffect(edgeState, edgeGate) {
         val st = edgeState
+        val gate = edgeGate
         if (st is EdgeSeparationSession.State.Preparing) edgeSwitched = false
-        val ready = st is EdgeSeparationSession.State.FirstSegmentReady ||
-            st is EdgeSeparationSession.State.Running ||
-            st is EdgeSeparationSession.State.Done
+        // ★切轨条件 = **闸门**（不是分离进度）：
+        //   Playable = 水位线已领先 startFrame 至少 LEAD_FRAMES→ 现在切过去能连续出声；
+        //   Finished = 分离已跑完，整曲都有数据 → 自然也可切。
+        val ready = gate is EdgeSeparationSession.Gate.Playable ||
+            gate is EdgeSeparationSession.Gate.Finished
         if (ready && !edgeSwitched) {
             edgeSwitched = true
             val sr = edgeSession.sampleRate.coerceAtLeast(1)
@@ -144,8 +161,10 @@ fun AppShell(
                 //   - 不需要 seek 补偿（位置天然对齐）；
                 //   - 不会“跳回起点”；
                 //   - 波形与文件时长一致。
-                //   水位线只用于“是否该暂停等待”，不影响播放起点。
-                Log.i("AppShell", "edge first segment ready → 文件模式播 ${vf.name} @${posMs}ms")
+                //
+                // ★闸门（2026-10-20）：此时水位线已领先 startFrame 至少 LEAD_FRAMES，
+                //   所以从这里起播能连续出声，不会撞上未分离的静音区。
+                Log.i("AppShell", "edge gate=${edgeGate} → 文件模式播 ${vf.name} @${posMs}ms")
                 playerVm.loadMultiTrack(
                     listOf(
                         Triple("vocals", "人声", vf),
@@ -157,7 +176,7 @@ fun AppShell(
                 playerVm.play()
             } else {
                 // 回退路径（旧 ring buffer 模式）：保持原有行为。
-                Log.i("AppShell", "edge first segment ready → 流式(ring buffer) @${posMs}ms")
+                Log.i("AppShell", "edge gate=${edgeGate} → 流式(ring buffer) @${posMs}ms")
                 playerVm.loadEdgeMultiTrack(posMs)
             }
             // ★G-3ux：告知用户“已切到分离结果，可从当前位置继续”——

@@ -35,6 +35,7 @@ import kotlin.math.abs
 import pub.miku.neuralstem.playlist.PlaylistStore
 import pub.miku.neuralstem.settings.SettingsRepository
 import pub.miku.neuralstem.spike.EdgeSeparationSession
+import pub.miku.neuralstem.spike.SeparationRepository
 
 /**
  * Task 1 基础播放器(guide F0.1–F0.4, N3)。
@@ -183,6 +184,32 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
      */
     @Volatile
     private var edgeSeekMs: Long? = null
+
+    /**
+     * ★闸门（2026-10-20）：边播闸门的本地镜像。
+     *
+     * ## 为何 VM 自己存一份
+     * [EdgeSeparationSession] 在 `spike` 包，PlaybackService 在 `player` 包，
+     * 两边都能拿到（同进程单例），但**媒体控制只能从 VM 发**
+     * （`mediaController` 在 VM 里）。所以闸门的“暂停/恢复”动作放 VM，
+     * 由 100ms 进度轮询驱动（见 [edgeGateTick]）。
+     */
+    private val edgeSession get() = EdgeSeparationSession.get()
+
+    /**
+     * ★闸门：用户是否在“被闸门暂停/等待”期间**主动**点了暂停。
+     *
+     * ## 为何必需
+     * 水位线追上后闸门会自动 `play()`。但若用户在这期间手动暂停了，
+     * 自动恢复就成了“我按了暂停它自己又响了” —— 典型幽灵 bug，且极难复现。
+     * ⇒ 用户主动暂停会置位本标志；任何“用户意图播放”的操作（点播放/seek）清除它。
+     */
+    @Volatile
+    private var userPausedDuringEdge: Boolean = false
+
+    /** 上一次由**闸门**发出的暂停（避免重复下发 pause → 与用户操作打架）。 */
+    @Volatile
+    private var gatePausedPlayer: Boolean = false
 
     // ============================ ★T-5：进度记忆（歌单“回到上次位置继续播”）============================
     /** 当前队列所属歌单 id（null = 非歌单来源，如单曲导入 → 不记进度）。playQueue 设置。 */
@@ -704,6 +731,8 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                     //   此时沿用旧的 duration。
                     val shownDur = if (dur > 0) dur else _progress.value.durationMs
                     _progress.value = Progress(pos, shownDur)
+                    // ★闸门（2026-10-20）：边播期间每 tick 报告播放位置，由 Gate 决定暂停/恢复。
+                    edgeGateTick(pos)
                     // ★T-5：进度记忆——**节流落库**（每 ≥PROGRESS_SAVE_INTERVAL_MS 或曲目变化）。
                     //   仅在队列来自歌单（currentListId!=null）且有当前曲时记。
                     recordProgressThrottled(pos)
@@ -912,11 +941,20 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         // M3/P2(v2):session 的 player = singlePlayer（多轨时它是主轨）；
         // Service 在其 play/pause 时同步跟随轨。
         val p = mediaController ?: return
-        if (p.isPlaying) p.pause() else p.play()
+        if (p.isPlaying || p.playWhenReady) {
+            // ★闸门：用户**主动**暂停 → 记下来，水位线追上后也不自动恢复。
+            userPausedDuringEdge = true
+            gatePausedPlayer = false
+            p.pause()
+        } else {
+            userPausedDuringEdge = false
+            p.play()
+        }
     }
 
     /** 显式播放（幂等）。用于“切多轨后确保在播”。 */
     fun play() {
+        userPausedDuringEdge = false
         mediaController?.play()
     }
 
@@ -946,6 +984,79 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         )
         _progress.value = _progress.value.copy(positionMs = clamped)
         p.seekTo(clamped)
+        // ★闸门：seek 是**位置跳变**，不能等到下个 100ms tick 才反应（那会漏一段静音）。
+        onSeekGate(clamped)
+    }
+
+    // ==================== ★闸门（2026-10-20）：边播期间“播到哪 vs 分离到哪” ====================
+
+    /**
+     * 每 ~100ms 由进度轮询调用：报告当前位置，根据 [EdgeSeparationSession.Gate] 暂停/恢复。
+     *
+     * ## 为何放 VM 而不是 Service
+     * 闸门需要“当前播放位置 + 水位线”两方数据。水位线在进程单例（两边都能读），
+     * 但**控播放（pause/play）只能通过 `mediaController`** —— 它属于 VM。
+     * 放进 Service 要额外开一条双向通道，收益不抵复杂度。
+     *
+     * ## 代价
+     * 最多 100ms 的滞后。但 SAFETY_FRAMES 是 2s，余量充足，不会漏出静音。
+     */
+    private fun edgeGateTick(positionMs: Long) {
+        val s = edgeSession
+        val gate = s.gate.value
+        if (gate is EdgeSeparationSession.Gate.Idle ||
+            gate is EdgeSeparationSession.Gate.Buffering ||
+            gate is EdgeSeparationSession.Gate.Finished
+        ) {
+            return
+        }
+        val sr = s.sampleRate.coerceAtLeast(1)
+        val startMs = s.startFrame.toLong() * 1000L / sr
+        val playedFrames = ((positionMs - startMs) * sr / 1000L).toInt()
+        s.onPlaybackTick(playedFrames)
+
+        val p = mediaController ?: return
+        when (s.gate.value) {
+            is EdgeSeparationSession.Gate.Starved -> {
+                if (!gatePausedPlayer && p.playWhenReady) {
+                    gatePausedPlayer = true
+                    p.pause()
+                    Log.i(TAG, "gate: 播放追上分离 → 暂停 @${positionMs}ms " +
+                        "(played=${playedFrames}f avail=${s.availableFrames}f)")
+                }
+            }
+            is EdgeSeparationSession.Gate.Playable -> {
+                if (gatePausedPlayer) {
+                    gatePausedPlayer = false
+                    // ★只在不处于“用户主动暂停”时才恢复（否则是幽灵播放）。
+                    if (!userPausedDuringEdge) {
+                        p.play()
+                        Log.i(TAG, "gate: 水位线追上来 → 恢复播放 @${positionMs}ms")
+                    } else {
+                        Log.i(TAG, "gate: 可恢复了，但用户已手动暂停 → 不自动播放")
+                    }
+                }
+            }
+            else -> Unit
+        }
+    }
+
+    /** seek 后的闸门重算（同步，不等 tick）。 */
+    private fun onSeekGate(positionMs: Long) {
+        val s = edgeSession
+        val gate = s.gate.value
+        if (gate is EdgeSeparationSession.Gate.Idle || gate is EdgeSeparationSession.Gate.Finished) return
+        val sr = s.sampleRate.coerceAtLeast(1)
+        val startMs = s.startFrame.toLong() * 1000L / sr
+        val playedFrames = ((positionMs - startMs) * sr / 1000L).toInt()
+        s.onSeekTo(playedFrames)
+        // 用户 seek = 明确的“我要听这里”意图 → 清除手动暂停标记。
+        userPausedDuringEdge = false
+        if (s.gate.value is EdgeSeparationSession.Gate.Starved) {
+            gatePausedPlayer = true
+            mediaController?.pause()
+            Log.i(TAG, "gate: seek 到未分离区 → 暂停 @${positionMs}ms")
+        }
     }
 
     // ---------------- Task 4.4 / M3-P2:多轨播放（控制权在 PlaybackService） ----------------
@@ -1224,6 +1335,14 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             val u = originalUri
             val p = mediaController
             Log.i(TAG, "toggleSeparation(false): 回原曲 @${resumeMs}ms")
+            // ★闸门（2026-10-20）：关开关 = “我不玩了” → **停掉 edge 分离任务**。
+            //   不停会在后台白算到曲尾（耗电/发热），且下次开开关时
+            //   lastStems 会指回那个“半满”的 stem 文件 → 又碰到静音问题。
+            //   仅当处于 edge 会话时才取消（普通预分离不受影响）。
+            if (edgeSession.gate.value !is EdgeSeparationSession.Gate.Idle) {
+                Log.i(TAG, "toggleSeparation(false): 取消 edge 任务 (gate=${edgeSession.gate.value})")
+                SeparationRepository.get(getApplication()).cancel()
+            }
             // ★R-b：回原曲 = resetStems=false（**保留** lastStems，开关再开可恢复）
             if (u != null && p != null) {
                 runCatching {
@@ -1239,6 +1358,9 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     fun exitMultiTrack() {
         sendMtCommand(MultiTrackSession.CMD_EXIT)
         isMultiTrackLoaded = false
+        // ★闸门：退出多轨/回原曲 → 播放侧不再受闸门管（原曲是文件，不是 stem）。
+        gatePausedPlayer = false
+        userPausedDuringEdge = false
         // ★3b：状态机同步回单轨（无副作用）——`isMultiTrack` 由 [withDerived] 派生，
         //   不再手动 copy（原写法：状态机仍停在 MultiTrack，仅 UI 布尔变了 → 双源分叉）。
         session.syncMode(SessionMode.Single)
