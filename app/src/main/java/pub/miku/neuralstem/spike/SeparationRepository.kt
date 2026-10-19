@@ -34,7 +34,29 @@ class SeparationRepository(private val app: Application) {
     /** 分离进度/结果状态 */
     sealed interface State {
         data object Idle : State
-        data object Preparing : State
+
+        /**
+         * ★准备阶段（可长达 10+ 秒：解码整首音频 + 加载模型）。
+         * 拆出 [phase] 让 UI 能告诉用户“在干什么”，而不是只显示静态的“准备中…”。
+         */
+        data class Preparing(val phase: PrepPhase = PrepPhase.START) : State
+
+        /**
+         * ★准备阶段的子步骤（用于 UI 文案）。
+         *
+         * 背景：实测从点「快速」到首块推理开始要 **13 秒**（主要是解码 150s 的 mp3），
+         * 期间 UI 只显示静态“准备中…”→ 用户以为卡死。有了子步骤至少能看出“在动”。
+         */
+        enum class PrepPhase {
+            /** 刚启动。 */
+            START,
+            /** 解码/重采样输入（mp3/flac 需先解成 PCM，通常是最耗时的一步）。 */
+            DECODING,
+            /** 加载分离模型（~0.4s）。 */
+            LOADING_MODEL,
+            /** 模型就绪，即将开始推理。 */
+            MODEL_READY,
+        }
 
         data class Running(
             val doneFrames: Int,
@@ -110,7 +132,7 @@ class SeparationRepository(private val app: Application) {
         SeparationService.start(app)
         job = scope.launch {
             try {
-                _state.value = State.Preparing
+                _state.value = State.Preparing(State.PrepPhase.START)
 
                 val engineTag = engineLabel(engine, uvrModelName)
                 val outDir = File(app.filesDir, "stems-cache/${contentHash(source)}-$engineTag")
@@ -157,7 +179,7 @@ class SeparationRepository(private val app: Application) {
         val session = EdgeSeparationSession.get()
         job = scope.launch {
             try {
-                _state.value = State.Preparing
+                _state.value = State.Preparing(State.PrepPhase.DECODING)
                 // 1) 解码/重采样输入
                 val frameSource = SeparationInput.open(app, source)
                 try {
@@ -166,6 +188,7 @@ class SeparationRepository(private val app: Application) {
                     // 2) 初始化会话 buffers（传 totalFrames → 合成 WAV 头能算出正确时长）
                     session.begin(startFrame, frameSource.sampleRate, frameSource.channels, frameSource.totalFrames)
                     // 3) 定位模型（仅 Spleeter 2-stem）
+                    _state.value = State.Preparing(State.PrepPhase.LOADING_MODEL)
                     val (vocalsPath, accompPath) = resolveModels(SherpaSourceSeparation.MODE_SPLEETER, uvrModelName)
                     val sep = SherpaSourceSeparation.create(
                         vocalsPath, accompPath,
@@ -233,7 +256,7 @@ class SeparationRepository(private val app: Application) {
         SeparationService.start(app)   // ★G-4 升前台
         job = scope.launch {
             try {
-                _state.value = State.Preparing
+                _state.value = State.Preparing(State.PrepPhase.START)
                 val dir = modelDir ?: File(app.filesDir, "spleeter4")
                 val outDir = File(app.filesDir, "stems-cache/${contentHash(source)}-spleeter4")
 
@@ -352,7 +375,7 @@ class SeparationRepository(private val app: Application) {
         SeparationService.start(app)   // ★G-4 升前台
         job = scope.launch {
             try {
-                _state.value = State.Preparing
+                _state.value = State.Preparing(State.PrepPhase.START)
                 val mdl = modelFile ?: File(app.filesDir, "demucs/htdemucs_embedded.onnx")
                 val outDir = File(app.filesDir, "stems-cache/${contentHash(source)}-demucs")
 
@@ -491,9 +514,11 @@ class SeparationRepository(private val app: Application) {
         val started = System.currentTimeMillis()
 
         // 1) 准备输入(解码 / 重采样 / 补声道)
+        _state.value = State.Preparing(State.PrepPhase.DECODING)
         val frameSource = SeparationInput.open(app, source)
         try {
             // 2) 定位模型
+            _state.value = State.Preparing(State.PrepPhase.LOADING_MODEL)
             val (vocalsPath, accompPath) = resolveModels(engine, uvrModelName)
 
             // 2b) 阶段 M2 任务 A:取模型元信息(决定是否需要交换两轨——Inst 系反标签)
@@ -514,6 +539,7 @@ class SeparationRepository(private val app: Application) {
             )
             val loadMs = System.currentTimeMillis() - t0
             Log.i(TAG, "engine ready in ${loadMs}ms")
+            _state.value = State.Preparing(State.PrepPhase.MODEL_READY)
 
             // 4) 流式分离
             outDir.mkdirs()

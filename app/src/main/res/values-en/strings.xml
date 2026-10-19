@@ -47,6 +47,10 @@
     <string name="repeat_loop_all">Loop playlist</string>
     <string name="repeat_loop_one">Repeat one</string>
     <string name="sep_preparing">Preparing…</string>
+    <!-- ★Prep sub-phases: measured ~13s from tap to first chunk (mostly decoding) -->
+    <string name="sep_prep_decoding">Preparing · decoding audio…</string>
+    <string name="sep_prep_loading_model">Preparing · loading model…</string>
+    <string name="sep_prep_model_ready">Preparing · starting…</string>
     <string name="sep_running_pct">Separating %1$d%%</string>
     <!-- ★G-3ux: edge separation — playable while separating in background -->
     <string name="sep_running_playable">Playing · separating %1$d%% in background</string>

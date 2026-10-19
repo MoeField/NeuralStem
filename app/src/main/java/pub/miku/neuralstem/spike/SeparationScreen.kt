@@ -263,7 +263,16 @@ fun SeparationScreen(
 
         // ---- 进度 / 结果（★3a-2：**单一真源** separationTask；不再并列读 spikeState + repoState）----
         when (val t = separationTask) {
-            is SeparationTask.Preparing -> Text(stringResource(R.string.sep_preparing))
+            is SeparationTask.Preparing -> Text(
+                // ★准备子阶段：实测点「快速」到首块推理要 ~13s（主要解码）——
+                //   细分成“解码音频 / 加载模型 / 即将开始”，避免用户以为卡死。
+                when (t.phase) {
+                    SeparationTask.PrepPhase.DECODING -> stringResource(R.string.sep_prep_decoding)
+                    SeparationTask.PrepPhase.LOADING_MODEL -> stringResource(R.string.sep_prep_loading_model)
+                    SeparationTask.PrepPhase.MODEL_READY -> stringResource(R.string.sep_prep_model_ready)
+                    SeparationTask.PrepPhase.START -> stringResource(R.string.sep_preparing)
+                },
+            )
             is SeparationTask.Running -> {
                 LinearProgressIndicator(
                     progress = { t.percent / 100f },

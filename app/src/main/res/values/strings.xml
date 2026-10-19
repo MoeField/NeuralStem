@@ -47,6 +47,10 @@
     <string name="repeat_loop_all">循环歌单</string>
     <string name="repeat_loop_one">单曲循环</string>
     <string name="sep_preparing">准备中…</string>
+    <!-- ★准备子阶段：实测点“快速”到首块推理要 ~13s（主要解码），细分让用户知道在干什么 -->
+    <string name="sep_prep_decoding">准备中 · 解码音频…</string>
+    <string name="sep_prep_loading_model">准备中 · 加载模型…</string>
+    <string name="sep_prep_model_ready">准备中 · 即将开始…</string>
     <string name="sep_running_pct">分离中 %1$d%%</string>
     <!-- ★G-3ux：边分离边播——已可听但仍在后台分离 -->
     <string name="sep_running_playable">已可播放 · 后台分离中 %1$d%%</string>
