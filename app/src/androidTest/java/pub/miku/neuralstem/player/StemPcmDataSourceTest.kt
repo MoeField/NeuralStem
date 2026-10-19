@@ -105,6 +105,52 @@ class StemPcmDataSourceTest {
         ds.close()
     }
 
+    // ==================== ★G-3-fix：startFrame 坐标系（回归测试） ====================
+    //
+    // 背景（真机实证 bug）：分离从“播放当前位置”起（startFrame>0），ring buffer 第 0 帧
+    // = 原曲第 startFrame 帧。但 ExoPlayer 的 DataSpec.position 是**原曲绝对字节坐标**。
+    // 修复前：open(pos=startFrame*2+44) 把 cursor 推到 buffer 末尾之外 → 永久 STARVED → 卡死。
+    // 这两个用例锁死修复后的行为。
+
+    @Test
+    fun openAtStartFramePositionStaysAtBufferBegin() {
+        // buffer 内含从原曲第 100 帧起的 10 帧（值 0..900）
+        val rb = makeBuffer(IntArray(10) { it * 100 })
+        val startFrame = 100
+        val totalFrames = 1000
+        val ds = StemPcmDataSource.Factory(
+            rb, sampleRate, channels, totalFrames, startFrame,
+        ).createDataSource()
+        // ExoPlayer seek 到“分离起点”：pos = 头 + startFrame*2（单声道 2 字节/帧）
+        val pos = StemPcmDataSource.WAV_HEADER_SIZE + startFrame.toLong() * 2
+        ds.open(DataSpec.Builder().setUri(uri).setPosition(pos).build())
+        val tmp = ByteArray(2)
+        val n = ds.read(tmp, 0, 2)
+        ds.close()
+        // 修复后：应读到 buffer 第 0 帧（值 0）；修复前会是 STARVED(0) 或错误帧。
+        assertEquals(2, n)
+        assertEquals(0, readS16(tmp, 0))
+    }
+
+    @Test
+    fun headerDeclaresFullTrackLengthRegardlessOfStartFrame() {
+        val rb = makeBuffer(IntArray(4) { 0 })
+        val startFrame = 500
+        val totalFrames = 2000
+        val ds = StemPcmDataSource.Factory(
+            rb, sampleRate, channels, totalFrames, startFrame,
+        ).createDataSource()
+        ds.open(DataSpec.Builder().setUri(uri).build())
+        val hdr = ByteArray(StemPcmDataSource.WAV_HEADER_SIZE)
+        ds.read(hdr, 0, StemPcmDataSource.WAV_HEADER_SIZE)
+        ds.close()
+        // data size 应为整曲：2000 帧 × 1ch × 2B = 4000
+        val dataSize = (hdr[40].toInt() and 0xFF) or ((hdr[41].toInt() and 0xFF) shl 8) or
+            ((hdr[42].toInt() and 0xFF) shl 16) or ((hdr[43].toInt() and 0xFF) shl 24)
+        assertEquals(4000, dataSize)
+    }
+
+
     private fun readS16(b: ByteArray, off: Int): Int {
         val lo = b[off].toInt() and 0xFF
         val hi = b[off + 1].toInt()
