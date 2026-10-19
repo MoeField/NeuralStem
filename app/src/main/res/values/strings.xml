@@ -36,6 +36,16 @@
     <string name="sep_gate_hint">⚠ 首次使用需先检测设备性能（设置页 → “现在检测”），才能选用分离档位。</string>
     <string name="sep_stem_two">2 轨（人声+伴奏）</string>
     <string name="sep_stem_four">4 轨（人声/鼓/贝斯/其他）</string>
+    <!-- 分离档位名（原先硬编码在 TierRegistry/Tier 枚举）-->
+    <string name="tier_fast">快速</string>
+    <string name="tier_balance">均衡</string>
+    <string name="tier_quality">质量</string>
+    <string name="stem_2">2 轨</string>
+    <string name="stem_4">4 轨</string>
+    <!-- 播放模式（原先硬编码在 SettingsRepository.RepeatMode）-->
+    <string name="repeat_sequential">顺序</string>
+    <string name="repeat_loop_all">循环歌单</string>
+    <string name="repeat_loop_one">单曲循环</string>
     <string name="sep_preparing">准备中…</string>
     <string name="sep_running_pct">分离中 %1$d%%</string>
     <string name="sep_done_cache">✅ 命中缓存（未重新推理）</string>

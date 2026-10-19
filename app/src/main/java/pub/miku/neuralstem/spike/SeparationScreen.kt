@@ -174,6 +174,7 @@ fun SeparationScreen(
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
                     stringResource(if (stem == StemCount.TWO) R.string.sep_stem_two else R.string.sep_stem_four),
+                    // （labelRes 已提供，但此处沿用更具体的 sep_stem_* 文案）
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -191,7 +192,10 @@ fun SeparationScreen(
                         Button(
                             onClick = { startTier(tc) },
                             enabled = hasSong && !busy && benchmarked,
-                        ) { Text(if (realtime) "⚡ ${tc.tier.label}" else tc.tier.label) }
+                        ) {
+                            val tierName = stringResource(tc.tier.labelRes)
+                            Text(if (realtime) "⚡ $tierName" else tierName)
+                        }
                     }
                 }
             }

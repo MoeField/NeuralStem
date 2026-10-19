@@ -1,5 +1,8 @@
 package pub.miku.neuralstem.spike
 
+import androidx.annotation.StringRes
+import pub.miku.neuralstem.R
+
 /**
  * ★分离「档位」注册表（分离页按钮 = 档位；每档候选模型在设置里选）。
  *
@@ -20,16 +23,16 @@ package pub.miku.neuralstem.spike
  */
 
 /** 轨数（UI 行）。 */
-enum class StemCount(val label: String,val count: Int) {
-    TWO("2 轨", 2),
-    FOUR("4 轨", 4),
+enum class StemCount(@StringRes val labelRes: Int, val count: Int) {
+    TWO(R.string.stem_2, 2),
+    FOUR(R.string.stem_4, 4),
 }
 
 /** 档位（UI 按钮）。 */
-enum class Tier(val label: String) {
-    FAST("快速"),
-    BALANCE("均衡"),
-    QUALITY("质量"),
+enum class Tier(@StringRes val labelRes: Int) {
+    FAST(R.string.tier_fast),
+    BALANCE(R.string.tier_balance),
+    QUALITY(R.string.tier_quality),
 }
 
 /**

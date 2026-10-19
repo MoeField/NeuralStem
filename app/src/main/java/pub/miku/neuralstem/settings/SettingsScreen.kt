@@ -361,7 +361,7 @@ private fun TierModelSetting() {
             var selected by remember { mutableStateOf(repo.tierModelId(tc.stem, tc.tier)) }
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
-                    "${tc.stem.label} · ${tc.tier.label}",
+                    "${stringResource(tc.stem.labelRes)} · ${stringResource(tc.tier.labelRes)}",
                     style = MaterialTheme.typography.titleSmall,
                 )
                 // 候选以 FilterChip 单选呈现（零新增依赖；与分离页风格一致）
