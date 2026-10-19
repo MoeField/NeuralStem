@@ -75,7 +75,12 @@ class SpikeActivity : ComponentActivity() {
                 DeviceBenchmark.Mode.SHORT
             }
             lifecycleScope.launch {
-                val r = DeviceBenchmark(application).run(mode)
+                // ★--ez bench_all true：连**实验模型**（13 个）一起测 → 全 18 模型分级。
+                //   默认只测已注册的（ALL）——设置页/档位用的就是这批。
+                val all = intent.getBooleanExtra("bench_all", false)
+                val models = if (all) ModelRegistry.BENCHMARKABLE else ModelRegistry.ALL
+                Log.i("DevBench", "bench start: ${models.size} 个模型（all=$all, mode=$mode）")
+                val r = DeviceBenchmark(application).run(mode, models = models)
                 val summary = r.entries.joinToString { e -> e.key + "=" + e.value.rtf }
                 Log.i("DevBench", "BENCH_DONE " + summary)
             }
