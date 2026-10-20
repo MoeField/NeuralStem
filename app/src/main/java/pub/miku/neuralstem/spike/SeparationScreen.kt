@@ -88,6 +88,13 @@ fun SeparationScreen(
      */
     edgeStarved: Boolean = false,
     /**
+     * ★两阶段（2026-10-20）：阶段 1 已完成、正在回头补前段（0..100）；null = 没在补。
+     *
+     * 补前段期间 `separationTask` 仍是 `Preparing`，但**正向那段已可完整播放** →
+     * UI 要显示“已可完整播放 · 正在补前段”而不是“准备中”（误导）。
+     */
+    backfillPercent: Int? = null,
+    /**
      * ★G-3ux：自动开始分离的触发 token。
      *
      * 使用递增整数而非布尔：同一值不重复触发，新值（+1）才触发 →
@@ -421,16 +428,29 @@ fun SeparationScreen(
 
         // ---- 进度 / 结果（★3a-2：**单一真源** separationTask；不再并列读 spikeState + repoState）----
         when (val t = separationTask) {
-            is SeparationTask.Preparing -> Text(
-                // ★准备子阶段：实测点「快速」到首块推理要 ~13s（主要解码）——
-                //   细分成“解码音频 / 加载模型 / 即将开始”，避免用户以为卡死。
-                when (t.phase) {
-                    SeparationTask.PrepPhase.DECODING -> stringResource(R.string.sep_prep_decoding)
-                    SeparationTask.PrepPhase.LOADING_MODEL -> stringResource(R.string.sep_prep_loading_model)
-                    SeparationTask.PrepPhase.MODEL_READY -> stringResource(R.string.sep_prep_model_ready)
-                    SeparationTask.PrepPhase.START -> stringResource(R.string.sep_preparing)
-                },
-            )
+            is SeparationTask.Preparing -> {
+                // ★两阶段（2026-10-20）：补前段时 `_state` 也是 Preparing，
+                //   但那时**已可完整播放正向那段** → 不能显示“准备中”（误导）。
+                if (backfillPercent != null) {
+                    LinearProgressIndicator(
+                        progress = { backfillPercent / 100f },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Text(
+                        stringResource(R.string.sep_backfilling, backfillPercent),
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                } else {
+                    Text(
+                        when (t.phase) {
+                            SeparationTask.PrepPhase.DECODING -> stringResource(R.string.sep_prep_decoding)
+                            SeparationTask.PrepPhase.LOADING_MODEL -> stringResource(R.string.sep_prep_loading_model)
+                            SeparationTask.PrepPhase.MODEL_READY -> stringResource(R.string.sep_prep_model_ready)
+                            SeparationTask.PrepPhase.START -> stringResource(R.string.sep_preparing)
+                        },
+                    )
+                }
+            }
             is SeparationTask.Running -> {
                 LinearProgressIndicator(
                     progress = { t.percent / 100f },

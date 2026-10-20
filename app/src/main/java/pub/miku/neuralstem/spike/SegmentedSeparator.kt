@@ -35,6 +35,15 @@ class SegmentedSeparator(
     private val onWrite: (vocals: FloatArray, accomp: FloatArray, frames: Int, absFrame: Int) -> Unit,
     /** 从该绝对帧开始分离（含）。默认 0。 */
     private val startFrame: Int = 0,
+    /**
+     * ★两阶段补算（2026-10-20）：**分离到该绝对帧就停（不含）**。
+     *
+     * 用途：阶段 1 已算完 [startFrame, 曲尾)，阶段 2 要补 [0, startFrame)。
+     * 若无此参数，阶段 2 会从 0 一路算到曲尾 → **重复计算阶段 1 的区间**。
+     *
+     * 默认 -1 = 不限制（算到曲尾，旧行为）。
+     */
+    private val endFrame: Int = -1,
     /** 重叠帧数，默认 0.5s @44.1kHz（G-3 决策 D-F）。 */
     private val overlapFrames: Int = DEFAULT_OVERLAP_FRAMES,
     /** 变长递增块序列（帧）。非空时使用；空则用 [chunkFrames]。 */
@@ -81,8 +90,11 @@ class SegmentedSeparator(
         val sampleRate = reader.sampleRate
         val totalFrames = reader.totalFrames
         val from = startFrame.coerceIn(0, totalFrames)
+        // ★两阶段：endFrame 限制本轮分离的上界（阶段 2 补 [0, startFrame) 时用）。
+        //   -1 / 超出范围 = 算到曲尾（旧行为）。
+        val to = if (endFrame < 0) totalFrames else endFrame.coerceIn(from, totalFrames)
 
-        val plan = buildPlan(from, totalFrames)
+        val plan = buildPlan(from, to)
         require(overlapFrames > StreamingSeparator.MAX_DROPPED_FRAMES_PER_CALL) {
             "overlapFrames($overlapFrames) 必须 > ${StreamingSeparator.MAX_DROPPED_FRAMES_PER_CALL}"
         }
@@ -191,7 +203,10 @@ class SegmentedSeparator(
                 pendFrames = count
             }
 
-            onProgress?.invoke(c.start + lFrames, totalFrames)
+            // ★两阶段：进度分母用本轮的**上界** to（不是整曲 totalFrames）。
+            //   否则阶段 2（补 [0, startFrame)）的 done 永远追不上 totalFrames，
+            //   进度条会卡在某个百分比。
+            onProgress?.invoke(c.start + lFrames, to)
             if (!firstEmitted) {
                 firstEmitted = true
                 onFirstSegmentReady?.invoke()

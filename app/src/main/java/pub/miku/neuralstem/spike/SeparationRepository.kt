@@ -2,6 +2,7 @@ package pub.miku.neuralstem.spike
 
 import android.app.Application
 import android.os.Debug
+import android.os.SystemClock
 import android.util.Log
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -216,8 +217,34 @@ class SeparationRepository(private val app: Application) {
                     val vFile = File(outDir, "vocals.wav")
                     val aFile = File(outDir, "accompaniment.wav")
                     outDir.mkdirs()
-                    val vRw = RandomAccessWavWriter(vFile, frameSource.channels, frameSource.sampleRate, frameSource.totalFrames)
-                    val aRw = RandomAccessWavWriter(aFile, frameSource.channels, frameSource.sampleRate, frameSource.totalFrames)
+
+                    // ★续算（2026-10-20）：若已有**部分** manifest，复用文件并补齐缺口。
+                    //
+                    // 为何必须复用：RandomAccessWavWriter 构造时会 setLength()，
+                    // 重新创建会把**已分离的数据抹成 0**。
+                    val existing = RangeManifest.load(
+                        outDir,
+                        expectTotalFrames = frameSource.totalFrames,
+                        expectModelId = ModelRegistry.SPLEETER.id,
+                    )
+                    val resumable = existing != null && !existing.complete &&
+                        vFile.exists() && aFile.exists()
+                    if (resumable) {
+                        Log.i(
+                            TAG,
+                            "edge 续算：已有 ${existing!!.coveredFrames}/${existing.totalFrames} 帧 " +
+                                "(${(existing.coveredFraction * 100).toInt()}%)，缺 ${existing.missingRanges().size} 段",
+                        )
+                    }
+
+                    val vRw = RandomAccessWavWriter(
+                        vFile, frameSource.channels, frameSource.sampleRate,
+                        frameSource.totalFrames, reuseExisting = resumable,
+                    )
+                    val aRw = RandomAccessWavWriter(
+                        aFile, frameSource.channels, frameSource.sampleRate,
+                        frameSource.totalFrames, reuseExisting = resumable,
+                    )
 
                     // 会话进入文件模式（播放器据此读文件 + 看水位线）。
                     session.beginFiles(
@@ -227,6 +254,8 @@ class SeparationRepository(private val app: Application) {
                         totalFrames = frameSource.totalFrames,
                         vocalsFile = vFile,
                         accompFile = aFile,
+                        // ★绑定源 uri：切歌后旧会话不得自动切多轨
+                        sourceUri = source.absolutePath,
                     )
                     Log.i(TAG, "edge(file): 完整曲长文件 ${outDir.absolutePath} " +
                         "total=${frameSource.totalFrames} from frame=$startFrame")
@@ -243,39 +272,155 @@ class SeparationRepository(private val app: Application) {
                         try {
                             val schedule = SegmentedSeparator.defaultSchedule(frameSource.sampleRate)
                             val t0 = System.currentTimeMillis()
-                            val stats = SegmentedSeparator(
-                                reader = frameSource,
-                                separator = sep::separate,
-                                onWrite = { v, a, frames, absFrame ->
-                                    // ★按绝对帧位置写入完整曲长文件（未写区保持静音）。
-                                    vRw.writeAt(v, 0, frames, absFrame)
-                                    aRw.writeAt(a, 0, frames, absFrame)
-                                    // 水位线 = 分离进度末端（供播放器判断可播范围）。
-                                    session.updateWaterMark(absFrame + frames)
-                                },
-                                startFrame = startFrame,
-                                chunkSchedule = schedule,
-                                onProgress = { done, total ->
-                                    val pct = if (total > 0) {
-                                        ((done.toDouble() * 100.0) / total).toInt().coerceIn(0, 100)
-                                    } else 0
-                                    session.updateProgress(pct)
-                                    _state.value = State.Running(done, total, 0L, currentPssMb())
-                                },
-                                onFirstSegmentReady = {
-                                    session.markFirstSegmentReady(1)
-                                },
-                                // ★G-3-ux2：实时波形——分离时顺手算包络（零额外解码）。
-                                onEnvelope = { stemIndex, absFrame, mn, mx, n ->
-                                    session.appendEnvelope(stemIndex, absFrame, mn, mx, n)
-                                },
-                                isCancelled = { thisJob?.isActive == false },
-                            ).run()
+
+                            // ==================== ★两阶段分离（2026-10-20）====================
+                            //
+                            // 阶段 1（正向）：分离 [startFrame, 曲尾) → 用户立刻能听
+                            // 阶段 2（补齐）：分离 [0, startFrame)    → 回头补前段
+                            //
+                            // 为何必须两阶段：旧方案只算 [startFrame, 曲尾)，
+                            // 用户从 1:30 点「极快」→ 曲头 1:30 永远是预分配静音，
+                            // 连分离完成后往回拖也没声（整首歌的分离结果基本作废）。
+                            //
+                            // 两阶段共用**同一个 stem 文件**（随机写按绝对帧定位），
+                            // 但**不能并行**：Sherpa engine 实例不是线程安全的。
+                            val totalFrames = frameSource.totalFrames
+
+                            // ★manifest：记录“哪些区间真的有数据”。
+                            //   文件的 length 永远是完整的（预分配）→ 不能靠它判断。
+                            //
+                            // ★续算：从已有的 ranges 开始（不能归零，否则会把已分离的忘了）。
+                            var manifest = existing?.copy(edgeStartFrame = startFrame)
+                                ?: RangeManifest(
+                                    totalFrames = totalFrames,
+                                    sampleRate = frameSource.sampleRate,
+                                    ranges = emptyList(),
+                                    edgeStartFrame = startFrame,
+                                    modelId = ModelRegistry.SPLEETER.id,
+                                )
+                            var lastManifestSave = 0L
+
+                            /** 每写完一块：落区间 + 定期刷盘 + 存 manifest。 */
+                            fun onBlockWritten(frames: Int, absFrame: Int) {
+                                manifest = manifest.plus(absFrame, absFrame + frames)
+                                val now = SystemClock.elapsedRealtime()
+                                if (now - lastManifestSave >= MANIFEST_SAVE_INTERVAL_MS) {
+                                    // ★顺序不能反：先刷音频数据，再写 manifest。
+                                    //   否则 manifest 声称“写到 X”但音频还在页缓存，
+                                    //   进程一死就成空洞。
+                                    vRw.flush(); aRw.flush()
+                                    manifest.save(outDir)
+                                    lastManifestSave = now
+                                }
+                            }
+
+                            // ---- 阶段 1：正向 [startFrame, 曲尾) ----
+                            //
+                            // ★续算时跳过：若已有 manifest 已覆盖 [startFrame, 曲尾)（例如上次
+                            //   阶段 1 已跑完、阶段 2 被中断），就不必重算。
+                            //   判定用“起点是否已在某个 range 内”：连续分离总是从一块的起点开始，
+                            //   所以只要 startFrame 已被覆盖，就说明正向那段已完成。
+                            val skipForward = resumable && existing!!.contains(
+                                startFrame.coerceAtMost(totalFrames - 1).coerceAtLeast(0),
+                            )
+
+                            val stats1 = if (skipForward) {
+                                Log.i(TAG, "edge 续算：阶段1 已覆盖 startFrame=$startFrame → 跳过")
+                                null
+                            } else {
+                                SegmentedSeparator(
+                                    reader = frameSource,
+                                    separator = sep::separate,
+                                    onWrite = { v, a, frames, absFrame ->
+                                        vRw.writeAt(v, 0, frames, absFrame)
+                                        aRw.writeAt(a, 0, frames, absFrame)
+                                        session.updateWaterMark(absFrame + frames)
+                                        onBlockWritten(frames, absFrame)
+                                    },
+                                    startFrame = startFrame,
+                                    chunkSchedule = schedule,
+                                    onProgress = { done, total ->
+                                        val pct = if (total > 0) {
+                                            ((done.toDouble() * 100.0) / total).toInt().coerceIn(0, 100)
+                                        } else 0
+                                        session.updateProgress(pct)
+                                        _state.value = State.Running(done, total, 0L, currentPssMb())
+                                    },
+                                    onFirstSegmentReady = {
+                                        session.markFirstSegmentReady(1)
+                                    },
+                                    onEnvelope = { stemIndex, absFrame, mn, mx, n ->
+                                        session.appendEnvelope(stemIndex, absFrame, mn, mx, n)
+                                    },
+                                    isCancelled = { thisJob?.isActive == false },
+                                ).run()
+                            }
+
+                            // 阶段 1 结束：刷盘 + 更新 manifest
+                            vRw.flush(); aRw.flush()
+                            manifest.save(outDir)
+                            Log.i(
+                                TAG,
+                                "edge 阶段1 ${if (skipForward) "跳过" else "完成(${stats1?.chunks} 块)"}: " +
+                                    "覆盖 ${manifest.coveredFrames}/$totalFrames 帧 " +
+                                    "(${(manifest.coveredFraction * 100).toInt()}%)",
+                            )
+
+                            // ---- 阶段 2：回头补 [0, startFrame) ----
+                            // ★续算时跳过：若 0 帧已被覆盖，说明前段已补完。
+                            val needBackfill = startFrame > 0 &&
+                                thisJob?.isActive != false &&
+                                !(resumable && existing!!.contains(0))
+
+                            if (needBackfill) {
+                                session.enterBackfill()
+                                _state.value = State.Preparing(State.PrepPhase.START)
+                                Log.i(TAG, "edge 阶段2 开始: 补 [0, $startFrame) 帧")
+
+                                SegmentedSeparator(
+                                    reader = frameSource,
+                                    separator = sep::separate,
+                                    onWrite = { v, a, frames, absFrame ->
+                                        vRw.writeAt(v, 0, frames, absFrame)
+                                        aRw.writeAt(a, 0, frames, absFrame)
+                                        // 注：水印不更新 —— 阶段 2 填的是**前面**，
+                                        //   “连续可播到哪”由 manifest 说了算。
+                                        onBlockWritten(frames, absFrame)
+                                    },
+                                    startFrame = 0,
+                                    // 必须在 startFrame 处停住，否则会重复算阶段 1 的区间。
+                                    //
+                                    // 为何要 +overlap：块之间用 0.5s 交叉淡化拼接，
+                                    //   最后一块的**尾部 overlap 区**不会写进 onWrite（要靠下一块合并）。
+                                    //   若严格停在 startFrame，会在 [startFrame-overlap, startFrame)
+                                    //   留下空洞（真机实测就是 900 帧的洞）。
+                                    //   多算一个 overlap 后两块区间自然重叠，manifest 合并即可。
+                                    endFrame = (startFrame + SegmentedSeparator.DEFAULT_OVERLAP_FRAMES)
+                                        .coerceAtMost(totalFrames),
+                                    chunkSchedule = schedule,
+                                    onProgress = { done, total ->
+                                        session.updateBackfillProgress(
+                                            if (total > 0) ((done * 100) / total).coerceIn(0, 100) else 0,
+                                        )
+                                    },
+                                    // 阶段 2 不产生“新可播区域”的 Gate 语义 → 不调 markFirstSegmentReady
+                                    isCancelled = { thisJob?.isActive == false },
+                                ).run()
+
+                                vRw.flush(); aRw.flush()
+                                manifest.save(outDir)
+                                Log.i(
+                                    TAG,
+                                    "edge 阶段2 完成: 覆盖 ${manifest.coveredFrames}/$totalFrames 帧 " +
+                                        "complete=${manifest.complete}",
+                                )
+                            }
+
                             // 刷盘 + 关闭（头部长度已在构造时写死，无需回填）。
                             vRw.close()
                             aRw.close()
                             session.complete()
-                            val audioMs = frameSource.totalFrames.toLong() * 1000L /
+                            val audioMs = totalFrames.toLong() * 1000L /
                                 frameSource.sampleRate.coerceAtLeast(1)
                             _state.value = State.EdgeDone(
                                 inferTimeMs = System.currentTimeMillis() - t0,
@@ -286,9 +431,12 @@ class SeparationRepository(private val app: Application) {
                                 startFrame = startFrame,
                                 sampleRate = frameSource.sampleRate,
                             )
-                            Log.i(TAG, "edge done(file): vFrames=${stats.vocalsFrames} " +
-                                "aFrames=${stats.accompFrames} chunks=${stats.chunks} " +
-                                "total=${stats.totalFrames}")
+                            Log.i(
+                                TAG,
+                                "edge done(file): vFrames=${stats1?.vocalsFrames} " +
+                                    "chunks=${stats1?.chunks} total=$totalFrames " +
+                                    "complete=${manifest.complete}",
+                            )
                         } finally {
                             sep.release()
                         }
@@ -775,6 +923,16 @@ class SeparationRepository(private val app: Application) {
 
     companion object {
         private const val TAG = "SepRepo"
+
+        /**
+         * ★manifest 落盘间隔（2026-10-20）：每 2s 一次。
+         *
+         * 权衡：
+         * - 越短 → 杀进程后丢得越少，但 `fd.sync()` 是阻塞调用，太频繁会拖慢分离
+         * - 2s 意味着**最多丢 2 秒**分离结果（重跑那 2s 即可）
+         */
+        private const val MANIFEST_SAVE_INTERVAL_MS = 2_000L
+
         const val NUM_THREADS = 4
 
         /** Demucs 默认线程数。

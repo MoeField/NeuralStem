@@ -119,6 +119,15 @@ class EdgeSeparationSession private constructor() {
     @Volatile var startFrame: Int = 0
         private set
 
+    /**
+     * ★本次会话对应的源音频 uri（2026-10-20）。
+     *
+     * 用途：切歌后旧会话不得触发自动切多轨（否则会把用户切回旧歌）。
+     * null = 未知/旧调用方（则不校验，保持旧行为）。
+     */
+    @Volatile var sourceUri: String? = null
+        private set
+
     /** 整段音频总帧数（用于合成 WAV 头的预测长度）；0=未知。 */
     @Volatile var totalFrames: Int = 0
         private set
@@ -378,6 +387,14 @@ class EdgeSeparationSession private constructor() {
         totalFrames: Int,
         vocalsFile: File,
         accompFile: File,
+        /**
+         * ★2026-10-20：本次会话对应的**源音频 uri**。
+         *
+         * 为何需要：`AppShell` 观察到 Gate == Playable 就自动切多轨，
+         * 但**不看会话属于哪首歌** → 用户切歌后，旧会话跑完会把他**切回旧歌**。
+         * 有了这个字段，切轨前能校验“会话是不是当前曲的”。
+         */
+        sourceUri: String? = null,
     ) {
         abort()
         this.startFrame = startFrame.coerceAtLeast(0)
@@ -386,6 +403,7 @@ class EdgeSeparationSession private constructor() {
         this.totalFrames = totalFrames
         this.vocalsFile = vocalsFile
         this.accompFile = accompFile
+        this.sourceUri = sourceUri
         writtenUpToFrame = 0
         resetEnvelopes()
         _state.value = State.Preparing
@@ -412,10 +430,48 @@ class EdgeSeparationSession private constructor() {
         }
     }
 
+    // ==================== ★两阶段：补齐前段（2026-10-20）====================
+
+    /** 是否正在补前段。 */
+    private val _inBackfill = MutableStateFlow(false)
+    val inBackfill: StateFlow<Boolean> = _inBackfill.asStateFlow()
+
+    /** 补前段进度（0..100；仅在 [inBackfill] 时有意义）。 */
+    private val _backfillPercent = MutableStateFlow(0)
+    val backfillPercent: StateFlow<Int> = _backfillPercent.asStateFlow()
+
+    /**
+     * 阶段 1（正向 [起点,曲尾)）完成后，进入**阶段 2：补 [0, 起点)**。
+     *
+     * ## 对 Gate 的影响
+     * **无影响**。阶段 2 只是把前面的空洞填上，不产生“新的可播边界”
+     *（可播范围由 manifest 决定）。因此 [Gate] 保持 `Finished` 或 `Playable` 不变。
+     *
+     * ## 对 UI 的影响
+     * 分离页从「分离中 N%」切换为「已可完整播放 · 正在补前段 M%」。
+     */
+    fun enterBackfill() {
+        _backfillPercent.value = 0
+        _inBackfill.value = true
+        Log.i(TAG, "backfill: 开始补前段")
+    }
+
+    /** 更新补齐进度（0..100）。 */
+    fun updateBackfillProgress(percent: Int) {
+        _backfillPercent.value = percent.coerceIn(0, 100)
+    }
+
+    /** 结束补齐（完成/取消）。 */
+    fun exitBackfill() {
+        _inBackfill.value = false
+        _backfillPercent.value = 0
+    }
+
     /** 分离完成（buffers 关闭 → 读端 EOF；但 buffer 引用保留供播放读到末尾）。 */
     fun complete() {
         vocalsBuffer?.close()
         accompBuffer?.close()
+        exitBackfill()
         // ★文件模式：水位线置满 → 全曲可播可 seek。
         if (vocalsFile != null && totalFrames > 0) writtenUpToFrame = totalFrames
         _state.value = State.Done
@@ -434,6 +490,7 @@ class EdgeSeparationSession private constructor() {
     fun fail(message: String) {
         vocalsBuffer?.close()
         accompBuffer?.close()
+        exitBackfill()
         _state.value = State.Failed(message)
         // ★闸门：会话失效 → 回 Idle（播放侧据此停止闸门监控）。
         _gate.value = Gate.Idle
@@ -453,6 +510,8 @@ class EdgeSeparationSession private constructor() {
         // ★闸门：中止 → Idle。
         _gate.value = Gate.Idle
         seekInGrayZone = false
+        exitBackfill()
+        sourceUri = null
         // ★诊断：buffer 置 null —— 若播放器此时仍持 stem:// uri，下一次 open 会抛 IOException。
         Log.i(TAG, "abort: buffers→null (had=$had) fileMode=${vocalsFile != null} state=${_state.value}")
         if (had) {
