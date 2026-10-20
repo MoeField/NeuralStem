@@ -48,6 +48,51 @@ enum class ModelPack(val id: String) {
 
     /** UVR Main —— 通用，64MB，0.34×。 */
     UVR_MAIN("uvr-main"),
+
+    // ==================== ★实验模型（2026-10-20 开放下载）====================
+    //
+    // ## 为何现在才开放
+    // 之前这 13 个只能靠 adb push：它们的 stem 顺序（人声/伴奏是否对调）
+    // **只按名字猜过，没实测**。直接给下载入口 = 把未验证风险变成默认可达路径
+    //（用户选到就会听到对调的两轨，而且很难分辨是 bug 还是模型本身就这样）。
+    //
+    // 2026-10-20 用 `StemOrderProbe` 对 13 个全部做了 NCC 实证
+    //（见 `doc/stem_order_evidence.md`）：
+    //   - 9 个 ACCOMP_FIRST（margin 0.44，铁证）→ 已修正【KARA_2 原名猜错】
+    //   - 3 个 VOCALS_FIRST（margin 0.41，铁证）
+    //   - **Crowd_HQ_1 判不了**（margin 0.096 < 0.10）→ **不收录**（见下方注释）
+    //
+    // ⇒ 现在收录 **12 个**，与 `ModelRegistry.EXPERIMENTAL` 中“已实证”的那批一一对应。
+
+    /** UVR Inst_1 —— 乐器导向，64MB。 */
+    UVR_INST_1("uvr-inst-1"),
+    /** UVR Inst_2 —— 乐器导向，64MB。 */
+    UVR_INST_2("uvr-inst-2"),
+    /** UVR Inst_3 —— 乐器导向，64MB。 */
+    UVR_INST_3("uvr-inst-3"),
+    /** UVR Inst_HQ_1 —— 乐器导向，64MB。 */
+    UVR_INST_HQ_1("uvr-inst-hq1"),
+    /** UVR Inst_HQ_2 —— 乐器导向，64MB。 */
+    UVR_INST_HQ_2("uvr-inst-hq2"),
+    /** UVR Inst_HQ_4 —— 乐器导向，56MB（比 HQ_3 快 20%）。 */
+    UVR_INST_HQ_4("uvr-inst-hq4"),
+    /** UVR Inst_HQ_5 —— 乐器导向，56MB。 */
+    UVR_INST_HQ_5("uvr-inst-hq5"),
+    /** UVR Inst_Main —— 乐器导向，50MB。 */
+    UVR_INST_MAIN("uvr-inst-main"),
+
+    /** UVR KARA_2 —— 卡拉OK，50MB。★实测 stem 顺序与 Inst 系一致（需交换）。 */
+    UVR_KARA_2("uvr-kara-2"),
+
+    /** UVR 1_9703 —— 通用，28MB，实测 1.0×。 */
+    UVR_9703("uvr-9703"),
+    /** UVR 2_9682 —— 通用，28MB，实测 1.0×。 */
+    UVR_9682("uvr-9682"),
+    /** UVR 3_9662 —— 通用，28MB，实测 1.0×。 */
+    UVR_9662("uvr-9662"),
+
+    // 注：UVR Crowd_HQ_1（合唱模型）**不收录** —— NCC 判据失效
+    //（same=0.302 / swap=0.398，margin 0.096 < 0.10），无法确认 stem 顺序。
 }
 
 /** 一个待下载的文件。 */
@@ -240,6 +285,73 @@ object ModelCatalog {
                 ModelPack.UVR_MAIN, "UVR Main（通用）",
                 "$GH_UVR_BASE/UVR_MDXNET_Main.onnx", UVR_LARGE_BYTES, "实测 0.34×，4 分钟歌约 12 分钟",
             ),
+        ) + experimentalPacks()
+    }
+
+    // ==================== ★实验模型（2026-10-20 开放下载）====================
+
+    /**
+     * 12 个已通过 NCC 实证的实验模型（见 `doc/stem_order_evidence.md`）。
+     *
+     * ## 为何单独一个函数
+     * 它们与“正式 5 个”的区别不在来源（同为 k2-fsa 转发），而在于：
+     * **stem 顺序是实测过的，但音质未做主观评估**，且同质化严重
+     *（8 个 Inst 系彼此差异很小）。用单独函数 + 单独分组，便于以后收敛。
+     *
+     * ## 不收录 Crowd_HQ_1
+     * 该模型 NCC 无法判定（same=0.302 / swap=0.398，margin 0.096），
+     * 贸然收录可能让用户听到对调的两轨。
+     *
+     * ## 体积常量
+     * 全部为**真机 `ls -l` 读回的真实字节数**（不是抹零估值）——
+     * 否则 `isInstalled()` 的 ±64KB 容差判定会永远失败（坑 69）。
+     */
+    private fun experimentalPacks(): List<ModelPackInfo> {
+        fun exp(
+            p: ModelPack,
+            title: String,
+            file: String,
+            bytes: Long,
+            speedNote: String,
+        ) = ModelPackInfo(
+            pack = p,
+            displayName = "【实验】$title",
+            license = "未统一声明",
+            licenseNote = "模型由 **k2-fsa（sherpa-onnx 作者）** 在官方 GitHub Release 转发。" +
+                "⚠️ **上游 UVR/MDX-Net 权重多数未显式声明许可**" +
+                "（部分源自 Sony MDX 研究发布，常带研究/非商业限制）—— **仅供个人学习研究**，" +
+                "商用请自行联系模型作者或改用 Spleeter。" +
+                "\n\n**实验性质**：stem 顺序已用 NCC 实证（2026-10-20），但音质未做主观评估；" +
+                "与正式模型存在音质重叠，不建议作为长期首选。" +
+                "\n\n速度（$speedNote）。",
+            sourceUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/tag/source-separation-models",
+            files = listOf(
+                ModelFile(
+                    remotePath = "$GH_UVR_BASE/$file",
+                    targetSubdir = "uvr",
+                    fileName = file,
+                    expectedBytes = bytes,
+                ),
+            ),
+        )
+
+        return listOf(
+            // ---- Inst 系：64MB（≈0.35×）----
+            exp(ModelPack.UVR_INST_1, "UVR Inst_1", "UVR-MDX-NET-Inst_1.onnx", 66_759_519L, "实测 ~0.35×"),
+            exp(ModelPack.UVR_INST_2, "UVR Inst_2", "UVR-MDX-NET-Inst_2.onnx", 66_759_519L, "实测 ~0.35×"),
+            exp(ModelPack.UVR_INST_3, "UVR Inst_3", "UVR-MDX-NET-Inst_3.onnx", 66_759_519L, "实测 ~0.35×"),
+            exp(ModelPack.UVR_INST_HQ_1, "UVR Inst_HQ_1", "UVR-MDX-NET-Inst_HQ_1.onnx", 66_759_522L, "实测 ~0.35×"),
+            exp(ModelPack.UVR_INST_HQ_2, "UVR Inst_HQ_2", "UVR-MDX-NET-Inst_HQ_2.onnx", 66_759_522L, "实测 ~0.35×"),
+            // ---- Inst 系：56MB（≈0.41×，比 HQ_3 快 20%）----
+            exp(ModelPack.UVR_INST_HQ_4, "UVR Inst_HQ_4", "UVR-MDX-NET-Inst_HQ_4.onnx", 59_074_650L, "实测 ~0.41×"),
+            exp(ModelPack.UVR_INST_HQ_5, "UVR Inst_HQ_5", "UVR-MDX-NET-Inst_HQ_5.onnx", 59_074_650L, "实测 ~0.41×"),
+            // ---- Inst 系：50MB（≈0.52×）----
+            exp(ModelPack.UVR_INST_MAIN, "UVR Inst_Main", "UVR-MDX-NET-Inst_Main.onnx", 52_787_034L, "实测 ~0.52×"),
+            exp(ModelPack.UVR_KARA_2, "UVR KARA_2", "UVR_MDXNET_KARA_2.onnx", 52_787_030L, "实测 ~0.52×"),
+            // ---- 28MB 系（≈1.0×，UVR 里最快）----
+            exp(ModelPack.UVR_9703, "UVR 1_9703", "UVR_MDXNET_1_9703.onnx", 29_704_740L, "实测 ~1.00×"),
+            exp(ModelPack.UVR_9682, "UVR 2_9682", "UVR_MDXNET_2_9682.onnx", 29_704_740L, "实测 ~1.00×"),
+            exp(ModelPack.UVR_9662, "UVR 3_9662", "UVR_MDXNET_3_9662.onnx", 29_704_740L, "实测 ~1.00×"),
         )
     }
 
