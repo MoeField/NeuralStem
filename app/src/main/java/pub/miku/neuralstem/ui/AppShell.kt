@@ -7,7 +7,6 @@ import android.util.Log
 import androidx.annotation.StringRes
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -520,14 +519,3 @@ private fun glyphFor(dest: AppDestination): String = when (dest) {
  * 而不是从 79% 直接消失（用户会以为“卡住后突然没了”）。
  */
 private const val JUMP_DELAY_MS = 800L
-
-@Composable
-private fun PlaceholderScreen(modifier: Modifier, title: String, note: String) {
-    Column(
-        modifier = modifier.padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Text(title, style = MaterialTheme.typography.headlineSmall)
-        Text(note, style = MaterialTheme.typography.bodyMedium)
-    }
-}

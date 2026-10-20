@@ -19,10 +19,8 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -41,7 +39,6 @@ import kotlinx.coroutines.launch
 import pub.miku.neuralstem.R
 import pub.miku.neuralstem.spike.DeviceBenchmark
 import pub.miku.neuralstem.spike.ModelRegistry
-import pub.miku.neuralstem.spike.SpeedTier
 import java.io.File
 
 /**
@@ -478,14 +475,3 @@ private fun modelRtfText(info: ModelPackInfo, rtf: Map<String, Float>): String {
     val v = id?.let { rtf[it] } ?: return ""
     return "%.2f×".format(v)
 }
-
-/** 供设置页入口行显示副标题：`已装 x/y · 共 z` 的数据源。 */
-internal fun installedSummary(filesDir: File): Triple<Int, Int, String> {
-    val installed = ModelCatalog.installed(filesDir).size
-    val total = ModelCatalog.ALL.size
-    return Triple(installed, total, ModelCatalog.humanSize(ModelCatalog.ALL.sumOf { it.totalBytes }))
-}
-
-/** 供设置页入口行显示副标题：`2 轨 n 档启用 · 4 轨 m 档固定`。 */
-internal fun policySummary(enabledTwo: Int): Triple<Int, Int, Int> =
-    Triple(enabledTwo, SpeedTier.ordered.size, 2)

@@ -132,20 +132,11 @@
     <string name="settings_speed_range_hint">X 同时决定速度滑块的上下限（下限 = 1/X）。默认 1.4 → [0.71, 1.40]。</string>
     <!-- ★G-3 边分离边播 -->
     <string name="settings_edge_sep">边分离边播</string>
-    <string name="settings_edge_sep_hint">开启后，选「2 轨·快速」档将从**当前播放位置**开始分离，首段就绪即自动切到分离结果（不必等整首）。仅对 2 轨·快速档生效。</string>
+    <string name="settings_edge_sep_hint">开启后，选「2 轨·极快」档将从**当前播放位置**开始分离。分离领先播放约 15 秒时自动切到分离结果，之后边听边分离（转盘外环上的黄色刻度 = 分离进度）。若分离跟不上播放，会自动暂停等待（不会放静音）。仅对 2 轨·极快档生效。</string>
     <string name="settings_prompt_title">首次使用需检测设备性能</string>
     <string name="settings_prompt_body">为只把「实时可用」的模型作为默认，首次使用需检测本机运行各分离模型的速度。\n检测很快(数秒)，期间请勿退出。检测完成前无法使用分离功能。</string>
     <string name="settings_prompt_run">现在检测</string>
-    <string name="settings_tier_models">分离档位模型</string>
-    <string name="settings_tier_models_hint">单模型档（快速 / 4轨）无需选择；下面只列出有多候选的档。</string>
     <string name="settings_model_not_installed">  ·  未安装</string>
-    <string name="settings_model_row">%1$dMB · %2$s · 实测 %3$s</string>
-    <string name="settings_tier_realtime">⚡ 实时可用</string>
-    <string name="settings_tier_slow">⏱ 较慢</string>
-    <string name="settings_tier_veryslow">🐢 很慢</string>
-    <string name="settings_tier_realtime_hint">默认引擎只能从本档选择。</string>
-    <string name="settings_tier_slow_hint">较慢：长篇会等一会儿。</string>
-    <string name="settings_tier_veryslow_hint">很慢：需等待，不建议作为默认。</string>
 
     <!-- ★Step4：设置页的两个二级页入口 + 模型库 + 分离策略 -->
     <string name="settings_page_models">模型库</string>
