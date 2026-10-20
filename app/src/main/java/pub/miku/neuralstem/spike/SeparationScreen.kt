@@ -341,8 +341,11 @@ fun SeparationScreen(
         //   返回未装的候选）。现在未安装的档不显示按钮，并汇总提示“去模型库下载”。
         val fourEnabled = TierRegistry.FOUR_TIERS.filter { settingsRepo.fourTierEnabled(it.tier) }
         val fourTiers = fourEnabled.filter { tc ->
+            // ★用 SepOption.isInstalled（2026-10-20 修）：
+            //   之前写 `(opt as? SepOption.Sherpa)?.spec?.isInstalled(app) == true`，
+            //   而 Spleeter4 / Demucs 不是 Sherpa → 恒 false → 装好了也不出按钮。
             val opt = settingsRepo.tierOption(tc.stem, tc.tier) ?: tc.default()
-            (opt as? SepOption.Sherpa)?.spec?.isInstalled(app) == true
+            opt.isInstalled(app)
         }
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(
