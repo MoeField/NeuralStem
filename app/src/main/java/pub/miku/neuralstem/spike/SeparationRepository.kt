@@ -218,23 +218,37 @@ class SeparationRepository(private val app: Application) {
                     val aFile = File(outDir, "accompaniment.wav")
                     outDir.mkdirs()
 
-                    // ★续算（2026-10-20）：若已有**部分** manifest，复用文件并补齐缺口。
+                    // ★续算/复用（2026-10-20）：
                     //
-                    // 为何必须复用：RandomAccessWavWriter 构造时会 setLength()，
-                    // 重新创建会把**已分离的数据抹成 0**。
+                    // 三种情况：
+                    // 1. `complete=true` → 缓存已完整（无缺口）→ **直接复用，不重算**
+                    //    之前这里写的是 `!existing.complete`，导致“再次点分离”会把
+                    //    已完成的文件 setLength() 清空 → 用户听到十几秒静音后才重新填回来。
+                    // 2. `complete=false` → 有缺口 → 复用文件 + 只补缺口
+                    // 3. 无 manifest / 文件缺失 → 从头开始（旧行为）
                     val existing = RangeManifest.load(
                         outDir,
                         expectTotalFrames = frameSource.totalFrames,
                         expectModelId = ModelRegistry.SPLEETER.id,
                     )
-                    val resumable = existing != null && !existing.complete &&
-                        vFile.exists() && aFile.exists()
-                    if (resumable) {
-                        Log.i(
+                    val filesIntact = vFile.exists() && aFile.exists()
+                    // ★复用条件只看“文件在不在”，不再看 complete：
+                    //   完整缓存也必须复用（否则 setLength 会抹掉已有数据）。
+                    val resumable = existing != null && filesIntact
+                    val alreadyComplete = existing?.complete == true
+
+                    when {
+                        alreadyComplete -> Log.i(
+                            TAG,
+                            "edge 缓存已完整（${existing!!.coveredFrames}/${existing.totalFrames} 帧）" +
+                                " → 直接复用，不重新分离",
+                        )
+                        resumable -> Log.i(
                             TAG,
                             "edge 续算：已有 ${existing!!.coveredFrames}/${existing.totalFrames} 帧 " +
                                 "(${(existing.coveredFraction * 100).toInt()}%)，缺 ${existing.missingRanges().size} 段",
                         )
+                        else -> Log.i(TAG, "edge 无可用缓存 → 从头分离")
                     }
 
                     val vRw = RandomAccessWavWriter(
@@ -259,6 +273,29 @@ class SeparationRepository(private val app: Application) {
                     )
                     Log.i(TAG, "edge(file): 完整曲长文件 ${outDir.absolutePath} " +
                         "total=${frameSource.totalFrames} from frame=$startFrame")
+
+                    // ★缓存已完整 → 什么都不用跑，直接报完成。
+                    //   为何要这一个提前返回：否则会白跑一遍完整分离（18 秒 CPU），
+                    //   而且如果没有 reuseExisting 就会把数据抹掉。
+                    if (alreadyComplete) {
+                        vRw.close(); aRw.close()
+                        session.complete()
+                        // 让 Gate 直接进 Playable，AppShell 会立即切多轨。
+                        session.markFirstSegmentReady(100)
+                        val audioMs0 = frameSource.totalFrames.toLong() * 1000L /
+                            frameSource.sampleRate.coerceAtLeast(1)
+                        _state.value = State.EdgeDone(
+                            inferTimeMs = 0L,
+                            peakPssMb = currentPssMb(),
+                            audioDurationMs = audioMs0,
+                            vocalsFile = vFile,
+                            accompanimentFile = aFile,
+                            startFrame = startFrame,
+                            sampleRate = frameSource.sampleRate,
+                        )
+                        Log.i(TAG, "edge 缓存命中：跳过分离（complete=true）")
+                        return@launch
+                    }
 
                     try {
                         // 3) 定位模型（仅 Spleeter 2-stem）
