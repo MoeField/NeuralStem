@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -396,14 +398,18 @@ fun AppShell(
 /**
  * ★横屏的右侧导航栏（2026-10-20）。
  *
- * ## 为何不用 NavigationRail 组件
- * Material3 的 `NavigationRail` 默认就排在**左侧**，且内部 item 是上下堆叠的。
- * 我们要靠右 → 用普通的 `Column` + 点击行，控制力更强（且本项目零图标依赖，
- * 本来就不用 `NavigationRailItem` 的 icon 参数）。
+ * ## 设计意图：竖屏底部栏“转 90°”
+ * 竖屏底部栏是**均分宽度**的（720px ÷ 5 = 144px 每项，中心在 66/213/360/507/654）。
+ * 因此横屏就该是**均分高度**，而不是“从顶往下堆、底部留一大块空”。
+ * 用 `weight(1f)` 实现均分 → 看起来就像单纯把底栏旋转了一下。
  *
- * ## 为何图标 + 文字竖排（而不是只放图标）
+ * ## 为何不直接用 NavigationRail 组件
+ * 它默认靠**左**，且用 `NavigationRailItem`（带 icon 槽）——
+ * 我们用文本字形不需要那个参数，直接用 Column + clickable 控制力更强。
+ *
+ * ## 为何图标 + 文字竖排（不是只图标）
  * 项目用**文本字形**做图标（`☰ ▶ ✂ ☷ ⚙`），语义并不直观。
- * 只放图标 = 常驻的猜谜游戏；要修就得上 material-icons-extended（~1.5MB），
+ * 只放图标 = 常驻猜谜游戏；要修就得上 material-icons-extended（~1.5MB），
  * 违背项目既定取舍。⇒ 图标 + 两字标签竖排，宽 88dp 足够。
  */
 @Composable
@@ -416,33 +422,48 @@ private fun NavigationRailBar(
         modifier = Modifier.fillMaxHeight().width(RAIL_WIDTH),
     ) {
         Column(
-            modifier = Modifier.fillMaxHeight().padding(vertical = 8.dp),
+            // ★C：避开状态栏/刘海。`statusBarsPadding()` 只在横屏竖屏都生效，
+            //   但现在只有横屏会走这里（竖屏用底部栏）。
+            //   没有它，第一项“歌单”会被推到 y=56（压在状态栏下方边缘）。
+            modifier = Modifier
+                .fillMaxHeight()
+                .statusBarsPadding()
+                .navigationBarsPadding()
+                .padding(vertical = 4.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(4.dp),
+            // ★B：均分高度（与竖屏底部栏的均分宽度对称）
         ) {
             AppDestination.entries.forEach { dest ->
                 val selected = dest == current
-                Column(
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .clickable { onSelect(dest) }
-                        .padding(vertical = 8.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
+                        .weight(1f)          // ★均分：5 项各占 1/5 高度
+                        .padding(horizontal = 8.dp),
+                    contentAlignment = Alignment.Center,
                 ) {
-                    Text(
-                        glyphFor(dest),
-                        style = MaterialTheme.typography.titleMedium,
-                        color = if (selected) MaterialTheme.colorScheme.onSecondaryContainer
-                        else MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Text(
-                        stringResource(dest.labelRes),
-                        style = MaterialTheme.typography.labelSmall,
-                        maxLines = 1,
-                        color = if (selected) MaterialTheme.colorScheme.onSecondaryContainer
-                        else MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable { onSelect(dest) }
+                            .padding(vertical = 6.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Text(
+                            glyphFor(dest),
+                            style = MaterialTheme.typography.titleMedium,
+                            color = if (selected) MaterialTheme.colorScheme.onSecondaryContainer
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Text(
+                            stringResource(dest.labelRes),
+                            style = MaterialTheme.typography.labelSmall,
+                            maxLines = 1,
+                            color = if (selected) MaterialTheme.colorScheme.onSecondaryContainer
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
         }
