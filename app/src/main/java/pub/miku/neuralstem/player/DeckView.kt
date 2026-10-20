@@ -103,6 +103,19 @@ fun DeckView(
     modifier: Modifier = Modifier,
     playedColor: Color = WavePlayed,
     unplayedColor: Color = WaveRemaining,
+    /**
+     * ★G-3 视觉引导（2026-10-20）：边播时**分离已推进到哪里**（0..1 全曲比例）。
+     *
+     * ## 为何需要
+     * 边分离边播时，用户看到的是“多轨在放”，但不知道**后面还有多少没分离好**。
+     * 只能靠屏幕上的文字（“分离中 42%”）→ 视线要在波形和文字间跳。
+     * 直接在外环上标一条线，眼睛不用离开转盘。
+     *
+     * ## null = 边播未激活（普通预分离 / 无分离）→ 不画标记
+     */
+    separatedFraction: Float? = null,
+    /** 边播进行中（用于把标记画得显眼一点；完成后只是条淡线）。 */
+    isEdgeSeparating: Boolean = false,
 ) {
     // ★ 进度：在本组件 collect（重组范围仅限本组件），仅在 draw 阶段读其值。
     val progressState = progressFlow.collectAsState()
@@ -230,6 +243,18 @@ fun DeckView(
             }
             drawCircle(color = playedColor, radius = rInner, center = center, style = Stroke(width = 2f))
 
+            // ★G-3 视觉引导：在**外环**上标“分离已推进到哪”（2026-10-20）
+            //   画在外环外侧一点（rOut1*1.04），不压波形本体。
+            //   为何用角度线而不是扇形：扇形遮罩会抢掉波形可读性；一条线足矣。
+            if (separatedFraction != null && separatedFraction < 1f) {
+                drawSeparationMarker(
+                    center = center,
+                    radius = rOut1 * 1.04f,
+                    fraction = separatedFraction,
+                    color = if (isEdgeSeparating) SeparationActiveColor else SeparationDoneColor,
+                )
+            }
+
             // ---- 扇形遮罩：位于“过去结束 / 未来开始”交界的 15° 过渡带。
             //   ★ 位置：与**唱臂轴对称**（唱臂 1点半 → 对侧 7点半）；幅度偏“未播”侧 → 7点~7点半。
             //     边缘为离散（每度一条线）→ 左右**各补 1°**（210/225 → 209/226）使边缘不“缺角”。
@@ -303,6 +328,18 @@ private val StemColors: List<Color> = listOf(
     Color(0xFFBA68C8),   // bass —— 紫
     Color(0xFFE57373),   // other —— 红
 )
+
+/**
+ * ★G-3 视觉引导：分离进度标记的颜色。
+ *
+ * - **进行中**：黄色（= “还在干活”，与播放本身的青色/橙色区分开）
+ * - **已完成**：灰色淡线（仅作为“本次边播从哪开始”的记忆，不抢注意力）
+ *
+ * 为何不用红色：红色在本项目已被 “Starved / 错误” 占用（播放页文案用 error 色）。
+ */
+private val SeparationActiveColor = Color(0xFFFFD54F)   // 琥珀黄
+private val SeparationDoneColor = Color(0x55607D8B)     // 淡灰蓝（半透明）
+
 
 /**
  * ★F5.1：外环**多轨叠加**——每条 stem 用不同颜色、按不同半径层画同一时间轴包络。
@@ -436,6 +473,42 @@ private fun DrawScope.drawLocalRing(
             strokeWidth = 3f,
         )
     }
+}
+
+/**
+ * ★G-3 视觉引导：在外环上画一条“分离已推进到哪”的标记。
+ *
+ * ## 几何
+ * 与 [drawOverviewRing] 同坐标系：12 点 = -90°，顺时针增加。
+ * `fraction=0` → 12 点；`fraction=1` → 12 点一周后（不画，见调用处）。
+ *
+ * ## 为何是一条线而不是扇形
+ * 外环已被波形占满。再叠一个扇形会抢掉波形可读性（真的试过 → 糊成一团）。
+ * 一条细线足够回答“分离到哪了”这个唯一问题。
+ *
+ * ## 为何画在 rOut1 * 1.04（环外）
+ * 避免与波形本身重叠；同时让它看起来像“环的边框上的刻度”。
+ */
+private fun DrawScope.drawSeparationMarker(
+    center: Offset,
+    radius: Float,
+    fraction: Float,
+    color: Color,
+) {
+    val f = fraction.coerceIn(0f, 1f)
+    val deg = -90f + f * 360f          // 12 点起顺时针
+    val rad = Math.toRadians(deg.toDouble())
+    val dx = cos(rad).toFloat()
+    val dy = sin(rad).toFloat()
+    // 线段沿径向向外延伸一小段（像刻度）
+    val r0 = radius - 6f
+    val r1 = radius + 10f
+    drawLine(
+        color = color,
+        start = Offset(center.x + dx * r0, center.y + dy * r0),
+        end = Offset(center.x + dx * r1, center.y + dy * r1),
+        strokeWidth = 6f,
+    )
 }
 
 /** 唱臂：1 点半方向（=-45°），从外缘伸向内圈的小杆（固定）。
