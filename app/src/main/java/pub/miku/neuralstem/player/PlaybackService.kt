@@ -319,7 +319,11 @@ class PlaybackService : MediaSessionService() {
         // M3-P3：多轨 EQ（每轨各挂一份，等各自 READY）
         attachMultiTrackEq(c)
         pushTracksSnapshot()
-        Log.i(TAG, "loadMultiTrack(v2): ${items.size} track(s), singlePlayer 为主轨")
+        Log.i(
+            TAG,
+            "loadMultiTrack(v2): ${items.size} track(s) ids=${items.map { it.first }} " +
+                "uris=${items.map { it.third }}, singlePlayer 为主轨",
+        )
         return ok("loaded")
     }
 
@@ -388,6 +392,11 @@ class PlaybackService : MediaSessionService() {
     }
 
     private fun handleExit(): SessionResult {
+        Log.i(
+            TAG,
+            "EXIT_MT before: inMultiTrack=$inMultiTrack mainItem=${singlePlayer?.currentMediaItem?.localConfiguration?.uri} " +
+                "followers=${multiTrack?.trackList.orEmpty().joinToString { "${it.id}:${it.uri}" }}",
+        )
         inMultiTrack = false
         // singlePlayer 是主轨，不能被 multiTrack.close() release ——
         // 由 Track.ownsPlayer=false 保护。先停跟随轨，再清。
@@ -400,7 +409,10 @@ class PlaybackService : MediaSessionService() {
         eqController.detachAll()
         singlePlayer?.let { attachSingleEq(it) }
         pushTracksSnapshot()
-        Log.i(TAG, "exitMultiTrack(v2) → 单轨")
+        Log.i(
+            TAG,
+            "EXIT_MT after: inMultiTrack=$inMultiTrack mainItem=${singlePlayer?.currentMediaItem?.localConfiguration?.uri}",
+        )
         return ok()
     }
 

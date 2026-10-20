@@ -345,11 +345,13 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * ★状态机（骨架接入 · **I1**）：**换队列前先退多轨**的**单一判定点**。
      * - `mode` 由 Service 快照同步（见 [applyTracksSnapshot]）；
-     * - 副作用 [SessionStateMachine.Effects.closeFollowers] **复用现有 [exitMultiTrack]**（下发 `CMD_EXIT`）。
+     * - 副作用 [SessionStateMachine.Effects.closeFollowers] **只能**调 [bareExitMultiTrack]：
+     *   它只关跟随轨、**不重载原曲**。因为 [doLoad] 开头就调 `session.beforeSetQueue()`，
+     *   若走“退多轨 + 重载原曲”的 [exitMultiTrack]，`doLoad` 里再 setMediaItem 会**无限递归**。
      * - EQ 仍由 Service 管，故 attach/detach 暂为 no-op（I2 后续接入）。
      */
     private val session = SessionStateMachine(object : SessionStateMachine.Effects {
-        override fun closeFollowers() = exitMultiTrack()
+        override fun closeFollowers() = bareExitMultiTrack()
         override fun attachEq(sessionIds: List<Int>, enabled: Boolean) { /* EQ 由 Service 管 */ }
         override fun detachEq() { /* EQ 由 Service 管 */ }
     })
@@ -1424,14 +1426,6 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         } else {
             // 回原曲：退出多轨 → 重载原曲（单曲）；**保留 lastStems**
             //
-            // ★G-3fix（用户实报）：必须先捕获**多轨时的当前位置**再传进 doLoad。
-            //   旧代码 doLoad 未传 startPositionMs → 回原曲从头开播，
-            //   表现为“关多轨后进度条跳到最前 + 两秒无声”。
-            val resumeMs = runCatching { mediaController?.currentPosition ?: 0L }.getOrDefault(0L)
-            exitMultiTrack()
-            val u = originalUri
-            val p = mediaController
-            Log.i(TAG, "toggleSeparation(false): 回原曲 @${resumeMs}ms")
             // ★闸门（2026-10-20）：关开关 = “我不玩了” → **停掉 edge 分离任务**。
             //   不停会在后台白算到曲尾（耗电/发热），且下次开开关时
             //   lastStems 会指回那个“半满”的 stem 文件 → 又碰到静音问题。
@@ -1440,19 +1434,44 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                 Log.i(TAG, "toggleSeparation(false): 取消 edge 任务 (gate=${edgeSession.gate.value})")
                 SeparationRepository.get(getApplication()).cancel()
             }
-            // ★R-b：回原曲 = resetStems=false（**保留** lastStems，开关再开可恢复）
-            if (u != null && p != null) {
-                runCatching {
-                    doLoad(p, u, originalName, resetStems = false, startPositionMs = resumeMs)
-                }
-            }
-            _state.value = _state.value.copy(separationOn = false)
+            // ★G-3fix（用户实报）：必须捕获多轨时的当前位置再重载原曲，否则从头开播。
+            //   捕获 + 重载已收敛到 [exitMultiTrack]（「退出多轨」按钮/命令共用同一语义）。
+            Log.i(TAG, "toggleSeparation(false): 回原曲")
+            exitMultiTrack()
         }
         return true
     }
 
-    /** 退出多轨模式，回到单轨播放（委托给 Service）。 */
+    /**
+     * 退出多轨（用户语义）：关跟随轨后**回到原曲**并从当前位置继续播。
+     *
+     * ★「退出多轨」按钮 / `exitsmt` 命令与「分离开关关」是同一语义：
+     *   只发 `CMD_EXIT` 会让主轨 mediaItem 停留在当前 stem（听感 = 某一轨独响），
+     *   必须重载 [originalUri]（保留 [lastStems]，开关再开可恢复）。
+     */
     fun exitMultiTrack() {
+        if (!_state.value.isMultiTrack) return   // 幂等：非多轨时点「退出多轨」/发 exitsmt 不做任何事
+        val resumeMs = runCatching { mediaController?.currentPosition ?: 0L }.getOrDefault(0L)
+        bareExitMultiTrack()
+        val u = originalUri
+        val p = mediaController
+        Log.i(TAG, "exitMultiTrack: 回原曲 @${resumeMs}ms (originalUri=${u ?: "无"})")
+        if (u != null && p != null) {
+            runCatching {
+                doLoad(p, u, originalName, resetStems = false, startPositionMs = resumeMs)
+            }
+        }
+    }
+
+    /**
+     * **只**退出多轨：发 `CMD_EXIT` + 清本地多轨态，**不重载原曲**。
+     *
+     * 供两处调用：
+     * - [exitMultiTrack]：在其后重载原曲；
+     * - 状态机 [SessionStateMachine.Effects.closeFollowers]（`session.beforeSetQueue()`）：
+     *   换曲路径会由 `doLoad` 自己 setMediaItem，此处重载会递归。
+     */
+    private fun bareExitMultiTrack() {
         sendMtCommand(MultiTrackSession.CMD_EXIT)
         isMultiTrackLoaded = false
         // ★闸门：退出多轨/回原曲 → 播放侧不再受闸门管（原曲是文件，不是 stem）。
