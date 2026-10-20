@@ -366,83 +366,92 @@ class SeparationRepository(private val app: Application) {
                                     "(${(manifest.coveredFraction * 100).toInt()}%)",
                             )
 
-                            // ---- 阶段 2：回头补 [0, startFrame) ----
+                            // ==================== 阶段 2：按缺口逐段补齐 ====================
                             //
-                            // ★续算时跳过：若 0 帧已被覆盖，说明前段已补完。
+                            // ★为何不用“补 [0, startFrame)”这种硬编码区间：
+                            //   续算时缺口可能是**任意形状**。实测：上次在阶段 2 中途被杀
+                            //   留下 [[0,22050],[4056053,6639317]]，再进来时若机械补
+                            //   [0, startFrame)，会再算一遍右侧已覆盖的区间，
+                            //   而真正的缺口漏掉 → **空洞**（真机已复现）。
                             //
-                            // ★成本门控（2026-10-20）：长音频不自动补。
+                            // ⇒ 一律从 manifest.missingRanges() 驱动。
                             //
-                            // 场景：用户选了一小时的演唱会，从 55 分开始分离。
-                            //   正向只要算 5 分钟，回头补要算 55 分钟（按 1× RTF）。
-                            //   而他很可能听完就切歌 → 白算 55 分钟的 CPU/电。
-                            //
-                            // 判据：`补算耗时 = 缺口时长 / RTF`，超过阈值就不自动补，
-                            //   而是把选择权交给用户（manifest 记为“未完成”，
-                            //   下次进入时可手动续补）。
-                            val gapSeconds = startFrame.toDouble() / frameSource.sampleRate
+                            // ★成本门控（2026-10-20）：总缺口耗时太大就不自动补。
+                            //   场景：一小时演唱会从 55 分开始分离 —— 正向 5 分钟，
+                            //   补前段要 55 分钟，用户很可能听完就切歌 → 白烧 CPU。
                             val rtf = DeviceBenchmark(app)
                                 .cached()[ModelRegistry.SPLEETER.id]?.rtf ?: 1f
+                            val missing = manifest.missingRanges()
+                            val missingFrames = missing.sumOf { it.last - it.first + 1 }
+                            val gapSeconds = missingFrames.toDouble() / frameSource.sampleRate
                             val estimatedBackfillSec = if (rtf > 0.01f) gapSeconds / rtf else gapSeconds
                             val tooExpensive = estimatedBackfillSec > AUTO_BACKFILL_LIMIT_SEC
 
-                            val needBackfill = startFrame > 0 &&
-                                thisJob?.isActive != false &&
-                                !(resumable && existing!!.contains(0)) &&
-                                !tooExpensive
-
-                            if (tooExpensive) {
-                                Log.i(
-                                    TAG,
-                                    "edge 阶段2 跳过（成本门控）：缺口 ${gapSeconds.toInt()}s / " +
-                                        "RTF ${"%.2f".format(rtf)} ≈ ${estimatedBackfillSec.toInt()}s " +
-                                        "超过阈值 ${AUTO_BACKFILL_LIMIT_SEC.toInt()}s → 留给用户决定",
-                                )
-                                // ★记下缺口，分离页据此显示「前 55 分钟未分离 · 点击补齐」。
-                                session.markPendingBackfill(0..(startFrame - 1).coerceAtLeast(0))
-                            }
-
-                            if (needBackfill) {
-                                session.enterBackfill()
-                                _state.value = State.Preparing(State.PrepPhase.START)
-                                Log.i(TAG, "edge 阶段2 开始: 补 [0, $startFrame) 帧")
-
-                                SegmentedSeparator(
-                                    reader = frameSource,
-                                    separator = sep::separate,
-                                    onWrite = { v, a, frames, absFrame ->
-                                        vRw.writeAt(v, 0, frames, absFrame)
-                                        aRw.writeAt(a, 0, frames, absFrame)
-                                        // 注：水印不更新 —— 阶段 2 填的是**前面**，
-                                        //   “连续可播到哪”由 manifest 说了算。
-                                        onBlockWritten(frames, absFrame)
-                                    },
-                                    startFrame = 0,
-                                    // 必须在 startFrame 处停住，否则会重复算阶段 1 的区间。
-                                    //
-                                    // 为何要 +overlap：块之间用 0.5s 交叉淡化拼接，
-                                    //   最后一块的**尾部 overlap 区**不会写进 onWrite（要靠下一块合并）。
-                                    //   若严格停在 startFrame，会在 [startFrame-overlap, startFrame)
-                                    //   留下空洞（真机实测就是 900 帧的洞）。
-                                    //   多算一个 overlap 后两块区间自然重叠，manifest 合并即可。
-                                    endFrame = (startFrame + SegmentedSeparator.DEFAULT_OVERLAP_FRAMES)
-                                        .coerceAtMost(totalFrames),
-                                    chunkSchedule = schedule,
-                                    onProgress = { done, total ->
-                                        session.updateBackfillProgress(
-                                            if (total > 0) ((done * 100) / total).coerceIn(0, 100) else 0,
+                            when {
+                                tooExpensive -> {
+                                    Log.i(
+                                        TAG,
+                                        "edge 阶段2 跳过（成本门控）：缺口 ${gapSeconds.toInt()}s / " +
+                                            "RTF ${"%.2f".format(rtf)} ≈ ${estimatedBackfillSec.toInt()}s " +
+                                            "超过阈值 ${AUTO_BACKFILL_LIMIT_SEC.toInt()}s → 留给用户决定",
+                                    )
+                                    // 分离页据此显示「前 N 分钟未分离 · 点击补齐」。
+                                    missing.firstOrNull()?.let {
+                                        session.markPendingBackfill(it.first..it.last)
+                                    }
+                                }
+                                missing.isNotEmpty() && thisJob?.isActive != false -> {
+                                    session.enterBackfill()
+                                    Log.i(
+                                        TAG,
+                                        "edge 阶段2 开始: 补 ${missing.size} 段缺口 " +
+                                            "(共 $missingFrames 帧 = ${gapSeconds.toInt()}s)",
+                                    )
+                                    missing.forEachIndexed { idx, gap ->
+                                        if (thisJob?.isActive == false) return@forEachIndexed
+                                        _state.value = State.Preparing(State.PrepPhase.START)
+                                        Log.i(
+                                            TAG,
+                                            "edge 阶段2 [${idx + 1}/${missing.size}]: " +
+                                                "补 [${gap.first}, ${gap.last + 1}) 帧",
                                         )
-                                    },
-                                    // 阶段 2 不产生“新可播区域”的 Gate 语义 → 不调 markFirstSegmentReady
-                                    isCancelled = { thisJob?.isActive == false },
-                                ).run()
-
-                                vRw.flush(); aRw.flush()
-                                manifest.save(outDir)
-                                Log.i(
-                                    TAG,
-                                    "edge 阶段2 完成: 覆盖 ${manifest.coveredFrames}/$totalFrames 帧 " +
-                                        "complete=${manifest.complete}",
-                                )
+                                        SegmentedSeparator(
+                                            reader = frameSource,
+                                            separator = sep::separate,
+                                            onWrite = { v, a, frames, absFrame ->
+                                                vRw.writeAt(v, 0, frames, absFrame)
+                                                aRw.writeAt(a, 0, frames, absFrame)
+                                                // 水印不更新 —— 阶段 2 填的是缺口，
+                                                //   “连续可播到哪”由 manifest 说了算。
+                                                onBlockWritten(frames, absFrame)
+                                            },
+                                            startFrame = gap.first,
+                                            // 为何 +overlap：块之间用 0.5s 交叉淡化，
+                                            //   最后一块的尾部 overlap 区不写进 onWrite（靠下一块合并）。
+                                            //   严格停在 gap 末尾会留下 900 帧的洞（真机实测）。
+                                            endFrame = (gap.last + 1 +
+                                                SegmentedSeparator.DEFAULT_OVERLAP_FRAMES)
+                                                .coerceAtMost(totalFrames),
+                                            chunkSchedule = schedule,
+                                            onProgress = { done, total ->
+                                                val span = 100.0 / missing.size
+                                                val base = idx * span
+                                                val local = if (total > 0) done.toDouble() / total * span else 0.0
+                                                session.updateBackfillProgress((base + local).toInt())
+                                            },
+                                            // 阶段 2 不产生“新可播区域”的 Gate 语义
+                                            isCancelled = { thisJob?.isActive == false },
+                                        ).run()
+                                        vRw.flush(); aRw.flush()
+                                        manifest.save(outDir)
+                                    }
+                                    Log.i(
+                                        TAG,
+                                        "edge 阶段2 完成: 覆盖 ${manifest.coveredFrames}/$totalFrames 帧 " +
+                                            "complete=${manifest.complete}",
+                                    )
+                                }
+                                else -> Unit
                             }
 
                             // 刷盘 + 关闭（头部长度已在构造时写死，无需回填）。
