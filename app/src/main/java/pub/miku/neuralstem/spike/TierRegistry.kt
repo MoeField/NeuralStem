@@ -2,6 +2,8 @@ package pub.miku.neuralstem.spike
 
 import androidx.annotation.StringRes
 import pub.miku.neuralstem.R
+import android.content.Context
+import java.io.File
 
 /**
  * ★分离「档位」注册表（分离页按钮 = 档位；每档候选模型在设置里选）。
@@ -45,22 +47,47 @@ sealed interface SepOption {
     /** UI 显示名。 */
     val displayName: String
 
+    /**
+     * ★该选项的模型文件是否已安装（2026-10-20）。
+     *
+     * ## 为何放在接口上
+     * 之前调用方写的是 `(opt as? SepOption.Sherpa)?.spec?.isInstalled(app) == true`，
+     * 而 [Spleeter4] / [Demucs] **不是 Sherpa** → 恒为 false
+     * → 两个 4 轨模型装好后仍然显示「未安装」、分离页也不出按钮。
+     *
+     * 放到接口上，三个子类型各自实现，调用方不再需要知道类型。
+     */
+    fun isInstalled(app: Context): Boolean
+
     /** sherpa 引擎（2-stem 或 UVR）—— 走 [SeparationRepository.start]。 */
     data class Sherpa(val spec: ModelSpec) : SepOption {
         override val id get() = spec.id
         override val displayName get() = spec.displayName
+        override fun isInstalled(app: Context): Boolean = spec.isInstalled(app)
     }
 
     /** Spleeter 4-stem（自建 DSP）—— 走 [SeparationRepository.start4]。 */
     data object Spleeter4 : SepOption {
         override val id = "spleeter4"
         override val displayName = "Spleeter 4-stem"
+        // 与 SeparationRepository.start4 的目录约定保持一致
+        override fun isInstalled(app: Context): Boolean =
+            Spleeter4Dsp.STEM_KINDS.all { kind ->
+                File(app.filesDir, "spleeter4/$kind.fp16.onnx").let {
+                    it.exists() && it.length() > 0L
+                }
+            }
     }
 
     /** Demucs htdemucs —— 走 [SeparationRepository.startDemucs]。 */
     data object Demucs : SepOption {
         override val id = "demucs"
         override val displayName = "Demucs"
+        // 与 SeparationRepository.startDemucs 的默认路径保持一致
+        override fun isInstalled(app: Context): Boolean =
+            File(app.filesDir, "demucs/htdemucs_embedded.onnx").let {
+                it.exists() && it.length() > 0L
+            }
     }
 }
 

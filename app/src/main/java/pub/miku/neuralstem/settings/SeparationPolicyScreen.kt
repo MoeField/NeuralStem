@@ -198,7 +198,10 @@ private fun FourTierCard(
     var enabled by remember(tc.tier) { mutableStateOf(repo.fourTierEnabled(tc.tier)) }
     // ★installEpoch 作为 key：模型安装/删除后重新读取选中的模型
     val opt = remember(tc, installEpoch) { repo.tierOption(tc.stem, tc.tier) ?: tc.default() }
-    val installed = opt is SepOption.Sherpa && opt.spec.isInstalled(app)
+    // ★用 SepOption.isInstalled（2026-10-20 修）：
+    //   之前写 `opt is SepOption.Sherpa && ...`，而 Spleeter4 / Demucs 不是 Sherpa
+    //   → 恒 false → 两个 4 轨模型装好了仍显示「未安装」。
+    val installed = remember(opt, installEpoch) { opt.isInstalled(app) }
 
     Card(
         modifier = Modifier.fillMaxWidth(),
