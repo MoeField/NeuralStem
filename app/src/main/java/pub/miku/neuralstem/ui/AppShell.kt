@@ -5,6 +5,7 @@ import android.content.res.Configuration
 import android.net.Uri
 import android.util.Log
 import androidx.annotation.StringRes
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -13,8 +14,10 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -35,6 +38,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.graphics.Color
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -417,6 +421,14 @@ private fun NavigationRailBar(
     current: AppDestination,
     onSelect: (AppDestination) -> Unit,
 ) {
+    // ★底部额外避让：横屏下 navigationBars 的 inset 实测为 **0**
+    //   （frame=[0,720][1600,720]，手势条不占位），于是最后一项会紧贴屏幕下边。
+    //   而顶部状态栏有 96px 真实避让 → 视觉上不对称。
+    //   按用户要求补“上边的 1/3”（96/3 = 32px）作基准留白。
+    //   与 navigationBarsInset 取 max：将来若设备真占位（三键导航），不会重叠。
+    val navBarInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+    val railBottomPad = maxOf(navBarInset, RAIL_BOTTOM_PAD)
+
     Surface(
         color = MaterialTheme.colorScheme.surfaceContainer,
         modifier = Modifier.fillMaxHeight().width(RAIL_WIDTH),
@@ -428,8 +440,7 @@ private fun NavigationRailBar(
             modifier = Modifier
                 .fillMaxHeight()
                 .statusBarsPadding()
-                .navigationBarsPadding()
-                .padding(vertical = 4.dp),
+                .padding(top = 4.dp, bottom = railBottomPad),
             horizontalAlignment = Alignment.CenterHorizontally,
             // ★B：均分高度（与竖屏底部栏的均分宽度对称）
         ) {
@@ -445,7 +456,14 @@ private fun NavigationRailBar(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp))
+                            // ★选中态背景：对齐 M3 NavigationBarItem 的“胶囊高亮”，
+                            //   让右侧栅更像“把底部栅旋转了 90°”。
+                            .background(
+                                color = if (selected) MaterialTheme.colorScheme.secondaryContainer
+                                else Color.Transparent,
+                                shape = RoundedCornerShape(16.dp),
+                            )
+                            .clip(RoundedCornerShape(16.dp))
                             .clickable { onSelect(dest) }
                             .padding(vertical = 6.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
@@ -472,6 +490,20 @@ private fun NavigationRailBar(
 
 /** 右侧导航栏宽度（88dp —— 够放两个汉字且不挤压内容）。 */
 private val RAIL_WIDTH = 88.dp
+
+/**
+ * 右侧导航栏**底部**额外留白。
+ *
+ * ## 为何需要
+ * 横屏下 `navigationBars` 的 inset 实测为 **0**（手势条不占位），
+ * 于是最后一项紧贴屏幕下边；而顶部状态栏有 48dp 真实避让 → 视觉不对称。
+ *
+ * ## 数值取值
+ * 顶部视觉留白（状态栏 96px → 文字顶 162px）= 66px。
+ * 要求“底部约为顶部 1/3” → 22px。实测 16dp 时底部已到 50px
+ * （因为 item 本身在 1/5 区域内居中还有余量），降到 6dp ≈ 22px 正好。
+ */
+private val RAIL_BOTTOM_PAD = 6.dp
 
 /** 导航图标：用**文本字形**代替 material-icons（项目既定：零新增图标依赖）。 */
 private fun glyphFor(dest: AppDestination): String = when (dest) {
