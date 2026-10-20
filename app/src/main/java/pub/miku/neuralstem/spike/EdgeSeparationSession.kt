@@ -380,6 +380,34 @@ class EdgeSeparationSession private constructor() {
      * 与 [begin] 的区别：不建 ring buffer，而是用两个完整曲长的 stem 文件；
      * 播放器直接读文件，并按 [writtenUpToFrame] 判断可播范围。
      */
+    /**
+     * ★成本门控（2026-10-20）：本次会话**没自动补**的前段缺口（绝对帧范围）。
+     *
+     * ## 为何需要
+     * 一小时演唱会从 55 分开始分离：正向只需 5 分钟，补前段要 55 分钟 →
+     * 自动补太浪费（用户听完就切歌），所以拆出来让用户决定。
+     *
+     * UI 据此显示「前 55 分钟未分离 · 点击补齐」。
+     * null / 空 = 无缺口（已补完或无需补）。
+     */
+    @Volatile var pendingBackfillRange: IntRange? = null
+        private set
+
+    /** 设置“待用户决定”的缺口（成本门控跳过阶段 2 时调）。 */
+    fun markPendingBackfill(range: IntRange?) {
+        pendingBackfillRange = range
+        if (range != null) {
+            Log.i(TAG, "阶段2 转为待定：缺口 [${range.first}, ${range.last + 1}) 帧")
+        }
+    }
+
+    /** 缺口时长（ms），供 UI 算展示文案。 */
+    fun pendingBackfillMs(): Long {
+        val r = pendingBackfillRange ?: return 0L
+        val frames = (r.last - r.first + 1).toLong()
+        return frames * 1000L / sampleRate.coerceAtLeast(1)
+    }
+
     fun beginFiles(
         startFrame: Int,
         sampleRate: Int,

@@ -170,6 +170,9 @@
     <!-- ★两阶段：阶段1 完成、正在补前段 -->
     <string name="sep_backfilling">已可完整播放 · 正在补前段 %1$d%%</string>
     <string name="sep_backfill_done">✅ 全曲分离完成</string>
+    <!-- ★成本门控：长音频前段没自动补 -->
+    <string name="sep_pending_backfill">前 %1$s 尚未分离（自动补齐太耗时，已跳过）</string>
+    <string name="sep_backfill_now">补齐前段</string>
     <!-- ★灰区（补前段进行中时更准确的说法） -->
     <string name="sep_gray_backfilling">此段仍在分离中（%1$d%%）</string>
 

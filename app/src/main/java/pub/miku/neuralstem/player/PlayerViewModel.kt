@@ -148,6 +148,13 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
      * 两者互斥（不会同时非 null）。
      */
     val backfillPercent: Int? = null,
+    /**
+     * ★成本门控（2026-10-20）：本次会话**没自动补**的前段缺口（毫秒）。
+     *
+     * null / 0 = 无缺口。> 0 时分离页显示「前 N 分钟未分离 · 点击补齐」。
+     * 场景：一小时演唱会从 55 分开始分离 —— 补前段要 55 分钟，不值得自动跑。
+     */
+    val pendingBackfillMs: Long = 0L,
     )
 
     /** Task 4.4:单条轨的 UI 状态(F4.2/F4.3) */
@@ -722,14 +729,17 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                 val gray = s.seekInGrayZone
                 val startMs = s.startMs
                 val bf = if (s.inBackfill.value) s.backfillPercent.value else null
+                val pending = s.pendingBackfillMs()
                 if (_state.value.edgeBeforeStart != gray ||
                     _state.value.edgeStartMs != startMs ||
-                    _state.value.backfillPercent != bf
+                    _state.value.backfillPercent != bf ||
+                    _state.value.pendingBackfillMs != pending
                 ) {
                     _state.value = _state.value.copy(
                         edgeBeforeStart = gray,
                         edgeStartMs = startMs,
                         backfillPercent = bf,
+                        pendingBackfillMs = pending,
                     )
                 }
             }
