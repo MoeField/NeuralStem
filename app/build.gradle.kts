@@ -1,7 +1,50 @@
+import java.io.File
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
 }
+
+// ==================== ★签名配置（2026-10-20） ====================
+//
+// ## 为何需要
+// 之前 release 用 **debug 签名**（每台机器的 debug.keystore 不同）→
+// 不同机器构建的包**不能互相覆盖安装**，也无法做自动更新（F-Droid/Obtainium
+// 都靠签名一致性判定“同一个应用”）。
+//
+// ## 密钥从哪来
+// 优先读 `keystore.properties`（**不入库**）；缺失则回退环境变（CI）。
+// 两者都没有 → 回退 debug 签名（保证本地/CI 不因缺密钥而挂）。
+//
+// ## 生成密钥（一次性，详见 doc/release_signing.md）
+//   keytool -genkeypair -keystore neuralstem.jks -alias neuralstem \
+//     -keyalg RSA -keysize 4096 -validity 10000
+val keystorePropsFile = rootProject.file("keystore.properties")
+val keystoreProps = Properties().apply {
+    if (keystorePropsFile.exists()) {
+        keystorePropsFile.inputStream().use { load(it) }
+    }
+}
+
+/**
+ * 密钥信息：文件优先，其次环境变（CI），都没有则 null。
+ *
+ * 为何支持环境变：GitHub Actions 上不能提交 keystore.properties，
+ * 而是用 Secrets 解出 .jks 到临时目录 + 四个环境变。
+ */
+fun signingValue(key: String, env: String): String? =
+    (keystoreProps.getProperty(key) ?: System.getenv(env))?.takeIf { it.isNotBlank() }
+
+val signingStoreFile = signingValue("storeFile", "KEYSTORE_FILE")
+val signingStorePassword = signingValue("storePassword", "KEYSTORE_PASSWORD")
+val signingKeyAlias = signingValue("keyAlias", "KEY_ALIAS")
+val signingKeyPassword = signingValue("keyPassword", "KEY_PASSWORD")
+
+/** 四项齐全 + 文件存在 → 才能用正式签名。 */
+val hasReleaseSigning = listOf(
+    signingStoreFile, signingStorePassword, signingKeyAlias, signingKeyPassword,
+).all { it != null } && File(signingStoreFile!!).exists()
 
 android {
     namespace = "pub.miku.neuralstem"
@@ -9,12 +52,29 @@ android {
         version = release(37)
     }
 
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = file(signingStoreFile!!)
+                storePassword = signingStorePassword
+                keyAlias = signingKeyAlias
+                keyPassword = signingKeyPassword
+                // ★minSdk 23 → 必须同时开 v1（Android 6 及以下只认 v1）+ v2/v3。
+                enableV1Signing = true
+                enableV2Signing = true
+            }
+        }
+    }
+
     defaultConfig {
         applicationId = "pub.miku.neuralstem"
         minSdk = 23
         targetSdk = 37
-        versionCode = 10          // alpha 首发（0.1.0-alpha）
-        versionName = "0.1.0-alpha"
+        // ★版本号（2026-10-20 修正）：之前停在 10 / 0.1.0-alpha，但已发到 v0.2.1。
+        //   versionCode 必须**严格递增**，否则 F-Droid/Obtainium 看不到更新。
+        //   当前规则：semver 的 minor*10 + patch = 21（0.2.1 → 21）。
+        versionCode = 21
+        versionName = "0.2.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -31,15 +91,18 @@ android {
                 enable = false
             }
             /**
-             * ★release 用 **debug 签名**（alpha 阶段）。
-             *
-             * 为何：无签名产出的 `*-unsigned.apk` **装不上**（CI 出来的包等于废包）。
-             * 配 debug keystore 后能直接安装、能被用户侧加载。
-             *
-             * ⚠️ 局限：不同机器的 debug keystore 不同 → 不能跨机覆盖安装；
-             *    上应用商店必须换正式签名（见 doc/.todo.md）。
+             * 有正式密钥 → 用正式签名（可跨机覆盖安装、可自动更新）。
+             * 无 → 回退 debug（保证 CI/本地不挂；产物不能用于发布）。
              */
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = if (hasReleaseSigning) {
+                signingConfigs.getByName("release")
+            } else {
+                logger.warn(
+                    "⚠️ 未找到 keystore.properties / 密钥环境变量 → release 回退 debug 签名" +
+                        "（产物仅供本地测试，不可发布）",
+                )
+                signingConfigs.getByName("debug")
+            }
         }
     }
 

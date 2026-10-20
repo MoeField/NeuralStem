@@ -30,3 +30,13 @@ build/
 /doc/*.flac
 /doc/*.m4a
 /doc/*.ogg
+
+# ---- ★签名密钥：绝对不入库（2026-10-20）----
+#
+# 泄露 keystore = 任何人都能发布“你的”应用更新（用户无法分辨）。
+# 丢失 keystore+密码 = **永久无法更新该应用**（只能换 applicationId 重发）。
+# 备份方式见 doc/release_signing.md。
+keystore.properties
+*.jks
+*.keystore
+!debug.keystore

@@ -7,6 +7,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.lifecycle.lifecycleScope
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
@@ -15,12 +16,15 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import pub.miku.neuralstem.devtools.TestCommandBus
 import pub.miku.neuralstem.player.PlayerViewModel
 import pub.miku.neuralstem.player.WaveformCache
 import pub.miku.neuralstem.settings.SettingsRepository
 import pub.miku.neuralstem.spike.DeviceBenchmark
+import pub.miku.neuralstem.spike.StemOrderProbe
 import pub.miku.neuralstem.ui.AppShell
 import pub.miku.neuralstem.ui.theme.NeuralStemTheme
 import java.io.File
@@ -34,6 +38,9 @@ import java.io.File
  * 新实例则丢失全部状态(Task 1 实测踩坑,见 critical_steps)。
  */
 class MainActivity : ComponentActivity() {
+
+    /** ★NCC 实证任务（长跑，避免重复点击时并发多份）。 */
+    private var nccJob: Job? = null
 
     private val playerVm: PlayerViewModel by viewModels {
         object : ViewModelProvider.Factory {
@@ -262,6 +269,32 @@ class MainActivity : ComponentActivity() {
                 playerVm.play()
             }
             "exitsmt" -> playerVm.exitMultiTrack()
+            // ★stem 顺序实证（NCC）：a0 = 测试音频绝对路径
+            //   结果写日志 TAG=StemOrderProbe，并用 adb logcat -s StemOrderProbe 读。
+            "ncccheck" -> if (a0 != null) {
+                nccJob = lifecycleScope.launch {
+                    val probe = StemOrderProbe(application)
+                    Log.i("TestCmd", "ncccheck 开始：$a0（13 个实验模型，每个约需 5-20s）")
+                    val results = probe.run(File(a0)) { done, total, id ->
+                        Log.i("TestCmd", "ncccheck 进度 $done/$total $id")
+                    }
+                    // 汇总表（便于一眼看完）
+                    Log.i("TestCmd", "===== NCC 实证结果 =====")
+                    results.forEach { r ->
+                        val flag = when {
+                            r.error != null -> "ERR(${r.error})"
+                            !r.confident -> "UNCERTAIN(margin=%.3f)".format(r.margin)
+                            else -> "OK"
+                        }
+                        Log.i(
+                            "TestCmd",
+                            "${r.modelId}: same=%.3f swap=%.3f → ${r.verdict} [$flag]"
+                                .format(r.nccSame, r.nccSwap),
+                        )
+                    }
+                    Log.i("TestCmd", "===== NCC 实证完毕 =====")
+                }
+            } else Log.w("TestCmd", "ncccheck 需要 a0=音频路径")
             else -> Log.w("TestCmd", "未知命令: ${cmd.name}（--es cmd help 查看清单）")
         }
     }
