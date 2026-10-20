@@ -135,8 +135,9 @@ jobs:
   #   app-x86_64-release.apk      ← 模拟器用
   #   app-universal-release.apk   ← 合包（~42MB，不确定架构时用）
   #
-  # 签名：本项目 alpha 阶段**用 debug 签名**（免配置）。
-  # 要换成正式签名：# 生成 keystore → 配 4 个 Secrets（见 doc/.todo.md）
+  # 签名（2026-10-20）：**正式签名**，从 Repository Secrets 解出 keystore。
+  #   需要 KEYSTORE_BASE64 / KEYSTORE_PASSWORD / KEY_ALIAS / KEY_PASSWORD。
+  #   缺失时自动回退 debug 签名（保证 fork / PR 的 CI 仍能跑）。
   # ============================================================
   build-apk:
     needs: unit-test
@@ -200,9 +201,31 @@ jobs:
           echo "name=$V" >> "$GITHUB_OUTPUT"
           echo "resolved version: '$V'"
 
-      - name: Ensure debug keystore exists
-        # ★release 用 debug 签名（见 app/build.gradle.kts）。
-        # Gradle 会自动生成，但显式先建一份更稳（避免并行/缓存异常）。
+      # ★正式签名（2026-10-20）：从 Repository Secrets 解出 keystore。
+      #
+      # 为何需要：debug 签名每台机器/每次 CI 都不同 → 用户**无法覆盖安装**升级，
+      # F-Droid / Obtainium 的自动更新完全失效（它们靠签名一致判定“同一应用”）。
+      #
+      # 需要 4 个 Secret（Settings → Secrets and variables → Actions → Repository secrets）：
+      #   KEYSTORE_BASE64   = base64 -i neuralstem.jks | pbcopy
+      #   KEYSTORE_PASSWORD
+      #   KEY_ALIAS         = neuralstem
+      #   KEY_PASSWORD
+      #
+      # 缺失时**不报错**：app/build.gradle.kts 会回退 debug 签名并打印警告
+      # （保证 fork / PR 的 CI 仍能跑）。
+      - name: Decode release keystore
+        if: env.KEYSTORE_BASE64 != ''
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/neuralstem.jks"
+          ls -l "$RUNNER_TEMP/neuralstem.jks"
+          echo "::notice::使用正式签名 keystore（$RUNNER_TEMP/neuralstem.jks）"
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+
+      - name: Ensure debug keystore exists (fallback)
+        # 仅在**没有**正式密钥时用到（Gradle 会自动生成，显式先建一份更稳）。
+        if: env.KEYSTORE_BASE64 == ''
         run: |
           mkdir -p ~/.android
           if [ ! -f ~/.android/debug.keystore ]; then
@@ -212,6 +235,8 @@ jobs:
               -dname "CN=Android Debug,O=Android,C=US"
           fi
           ls -l ~/.android/debug.keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
 
       - name: Build release APK
         run: |
@@ -234,6 +259,24 @@ jobs:
               done
           fi
           exit $rc
+        # ★四个变量供 app/build.gradle.kts 读取（无 keystore.properties 时用它）。
+        # 缺失时 build.gradle.kts 的 hasReleaseSigning=false → 回退 debug。
+        env:
+          KEYSTORE_FILE: ${{ runner.temp }}/neuralstem.jks
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+
+      - name: Verify APK signature
+        # 把指纹写进 CI 日志 —— 以后排查“用户装不上更新”时可直接对比。
+        run: |
+          APKSIGNER=$(find "$ANDROID_SDK_ROOT/build-tools" -name apksigner 2>/dev/null | sort | tail -1)
+          APK=$(find app/build/outputs/apk/release -name "*arm64*v8a*.apk" | head -1)
+          if [ -n "$APKSIGNER" ] && [ -n "$APK" ]; then
+            "$APKSIGNER" verify --print-certs "$APK" 2>&1 | grep -E "certificate (DN|SHA-256)" || true
+          else
+            echo "::warning::未能定位 apksigner 或 APK，跳过签名校验"
+          fi
 
       - name: Collect APKs
         run: |
