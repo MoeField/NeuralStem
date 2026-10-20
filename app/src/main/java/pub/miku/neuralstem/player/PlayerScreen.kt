@@ -168,6 +168,9 @@ fun PlayerScreen(
                             val dur = if (d > 0) d else state.durationMs
                             if (dur > 0) vm.seekTo((f * dur).toLong())
                         },
+                        // ★G-3 视觉引导：外环上标“分离已推进到哪”
+                        separatedFraction = state.edgeSeparatedFraction,
+                        isEdgeSeparating = state.edgePercent != null,
                     )
                     ControlsArea(
                         modifier = Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()),
@@ -367,6 +370,9 @@ private fun DeckArea(
                     val dur = if (d > 0) d else state.durationMs
                     if (dur > 0) vm.seekTo((f * dur).toLong())
                 },
+                // ★G-3 视觉引导（竖屏路径）
+                separatedFraction = state.edgeSeparatedFraction,
+                isEdgeSeparating = state.edgePercent != null,
             )
         }
     }

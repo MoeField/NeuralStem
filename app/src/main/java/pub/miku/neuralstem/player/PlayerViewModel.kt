@@ -128,6 +128,17 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     val edgeBeforeStart: Boolean = false,
     /** 本次分离的起点（ms），供“此段未参与分离（从 X:XX 起）”文案。 */
     val edgeStartMs: Long = 0L,
+    /**
+     * ★G-3 视觉引导（2026-10-20）：分离在外环上的**推进位置**（0..1 全曲比例）。
+     *
+     * 与 [edgePercent] 的区别：
+     * - [edgePercent] 是**分离任务自己的进度百分比**（已分离帧 / 待分离帧）
+     * - 本字段是**在全曲时间轴上的位置**（水位线 / 整曲帧数）
+     * 后者才能直接映射到转盘外环的角度（外环的角度轴 = 时间轴）。
+     *
+     * null = 非边播场景（不画标记）。
+     */
+    val edgeSeparatedFraction: Float? = null,
     )
 
     /** Task 4.4:单条轨的 UI 状态(F4.2/F4.3) */
@@ -662,6 +673,23 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 if (_state.value.edgePercent != pct) {
                     _state.value = _state.value.copy(edgePercent = pct)
+                }
+            }
+        }
+        // ★G-3 视觉引导（2026-10-20）：把**水位线占整曲的比例**镜像进 state，供转盘外环画标记。
+        //   为何单独一个协程而不在 state.collect 里算：水位线是普通 volatile，
+        //   在分离过程中**持续变化**但 state 只在阶段性事件才 emit（每块才一次）。
+        //   这里用 500ms 轮询跟踪，足够 UI（线移动 500ms 一次完全看不出顿）。
+        viewModelScope.launch {
+            val s = EdgeSeparationSession.get()
+            while (isActive) {
+                delay(500)
+                val total = s.totalFrames
+                val frac: Float? = if (total > 0 && s.gate.value !is EdgeSeparationSession.Gate.Idle) {
+                    (s.writtenUpToFrame.toFloat() / total).coerceIn(0f, 1f)
+                } else null
+                if (_state.value.edgeSeparatedFraction != frac) {
+                    _state.value = _state.value.copy(edgeSeparatedFraction = frac)
                 }
             }
         }
