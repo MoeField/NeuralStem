@@ -139,6 +139,15 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
      * null = 非边播场景（不画标记）。
      */
     val edgeSeparatedFraction: Float? = null,
+    /**
+     * ★两阶段（2026-10-20）：阶段 1 已完成、正在回头补前段（0..100）；null = 没在补。
+     *
+     * 与 [edgePercent] 的区别：
+     * - [edgePercent] = 阶段 1（正向）的进度；为 null 表示阶段 1 已结束
+     * - [backfillPercent] = 阶段 2（补齐前段）的进度
+     * 两者互斥（不会同时非 null）。
+     */
+    val backfillPercent: Int? = null,
     )
 
     /** Task 4.4:单条轨的 UI 状态(F4.2/F4.3) */
@@ -705,14 +714,23 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         }
         // ★灰区：位置在本次分离起点之前 → 显示“此段未参与分离”。
         //   `seekInGrayZone` 是普通 volatile（不是 Flow），故用低频轮询镜像。
+        //   ★两阶段（2026-10-20）：把“补前段进度”也在这个轮询里带出来。
         viewModelScope.launch {
             val s = EdgeSeparationSession.get()
             while (isActive) {
                 delay(200)
                 val gray = s.seekInGrayZone
                 val startMs = s.startMs
-                if (_state.value.edgeBeforeStart != gray || _state.value.edgeStartMs != startMs) {
-                    _state.value = _state.value.copy(edgeBeforeStart = gray, edgeStartMs = startMs)
+                val bf = if (s.inBackfill.value) s.backfillPercent.value else null
+                if (_state.value.edgeBeforeStart != gray ||
+                    _state.value.edgeStartMs != startMs ||
+                    _state.value.backfillPercent != bf
+                ) {
+                    _state.value = _state.value.copy(
+                        edgeBeforeStart = gray,
+                        edgeStartMs = startMs,
+                        backfillPercent = bf,
+                    )
                 }
             }
         }

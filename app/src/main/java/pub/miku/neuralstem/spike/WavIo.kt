@@ -330,6 +330,16 @@ class RandomAccessWavWriter(
     private val channels: Int,
     private val sampleRate: Int,
     totalFrames: Int,
+    /**
+     * ★续算（2026-10-20）：**复用已存在的文件**，不重新预分配/不重写头。
+     *
+     * 为何需要：两阶段分离后，若用户杀掉进程再回来续补，
+     * 重新 `setLength()` 会把**已分离的数据全部抹掉**（变成全 0）。
+     *
+     * 前提：调用方已确认文件存在且长度正确（见 [RangeManifest]）。
+     * 若文件长度不符，仍会按 [totalFrames] 重新预分配。
+     */
+    private val reuseExisting: Boolean = false,
 ) : Closeable {
 
     private val raf = RandomAccessFile(file, "rw")
@@ -347,25 +357,35 @@ class RandomAccessWavWriter(
         require(channels in 1..2) { "Only mono/stereo supported, got $channels" }
         require(totalFrames >= 0) { "totalFrames must be >= 0, got $totalFrames" }
         val frameBytes = channels * 2
-        // 预分配完整长度（未写区域由文件系统填 0 = 静音）。
-        raf.setLength(DATA_START + totalFrames.toLong() * frameBytes)
-        raf.seek(0)
-        val dataSize = totalFrames * frameBytes
-        raf.write("RIFF".toByteArray(Charsets.US_ASCII))
-        raf.writeIntLE(36 + dataSize)
-        raf.write("WAVE".toByteArray(Charsets.US_ASCII))
-        raf.write("fmt ".toByteArray(Charsets.US_ASCII))
-        raf.writeIntLE(16)
-        raf.writeShortLE(1)                       // PCM
-        raf.writeShortLE(channels)
-        raf.writeIntLE(sampleRate)
-        raf.writeIntLE(sampleRate * frameBytes)   // byte rate
-        raf.writeShortLE(frameBytes)              // block align
-        raf.writeShortLE(16)                      // bits per sample
-        raf.write("data".toByteArray(Charsets.US_ASCII))
-        raf.writeIntLE(dataSize)
-        // 立刻落盘头部 —— 播放器可能在分离开始后立即打开本文件。
-        raf.fd.sync()
+        val expectedLen = DATA_START + totalFrames.toLong() * frameBytes
+
+        // ★续算：文件已经完整（长度对）→ **不碰数据**，直接接着写。
+        //   注意：头部也不重写（内容一样，重写只会多一次 sync）。
+        //   `init` 里不能用 `return` → 用 if/else 表达。
+        val canReuse = reuseExisting && raf.length() == expectedLen
+        if (canReuse) {
+            writtenUpToFrame = 0   // 由 manifest 决定“实际上有什么”，这里不猜
+        } else {
+            // 预分配完整长度（未写区域由文件系统填 0 = 静音）。
+            raf.setLength(expectedLen)
+            raf.seek(0)
+            val dataSize = totalFrames * frameBytes
+            raf.write("RIFF".toByteArray(Charsets.US_ASCII))
+            raf.writeIntLE(36 + dataSize)
+            raf.write("WAVE".toByteArray(Charsets.US_ASCII))
+            raf.write("fmt ".toByteArray(Charsets.US_ASCII))
+            raf.writeIntLE(16)
+            raf.writeShortLE(1)                       // PCM
+            raf.writeShortLE(channels)
+            raf.writeIntLE(sampleRate)
+            raf.writeIntLE(sampleRate * frameBytes)   // byte rate
+            raf.writeShortLE(frameBytes)              // block align
+            raf.writeShortLE(16)                      // bits per sample
+            raf.write("data".toByteArray(Charsets.US_ASCII))
+            raf.writeIntLE(dataSize)
+            // 立刻落盘头部 —— 播放器可能在分离开始后立即打开本文件。
+            raf.fd.sync()
+        }
     }
 
     /**

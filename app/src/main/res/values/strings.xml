@@ -167,6 +167,11 @@
     <string name="sep_no_models_title">没有可用的分离模型</string>
     <string name="sep_no_models_body">分离需要模型文件。请到「设置 › 模型库」下载至少一个模型，并在「分离策略」中启用对应档位。</string>
     <string name="sep_no_models_go">去模型库</string>
+    <!-- ★两阶段：阶段1 完成、正在补前段 -->
+    <string name="sep_backfilling">已可完整播放 · 正在补前段 %1$d%%</string>
+    <string name="sep_backfill_done">✅ 全曲分离完成</string>
+    <!-- ★灰区（补前段进行中时更准确的说法） -->
+    <string name="sep_gray_backfilling">此段仍在分离中（%1$d%%）</string>
 
     <!-- 混音页（EQ + 分轨混音） -->
     <string name="mix_title">混音</string>

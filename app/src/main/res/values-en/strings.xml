@@ -167,6 +167,11 @@
     <string name="sep_no_models_title">No separation model available</string>
     <string name="sep_no_models_body">Separation needs model files. Download at least one model in Settings › Model library, and enable the matching tier in Separation policy.</string>
     <string name="sep_no_models_go">Open model library</string>
+    <!-- ★two-phase: forward done, backfilling the head -->
+    <string name="sep_backfilling">Fully playable · backfilling the start %1$d%%</string>
+    <string name="sep_backfill_done">✅ Whole track separated</string>
+    <!-- ★gray zone wording while backfill is running -->
+    <string name="sep_gray_backfilling">This part is still being separated (%1$d%%)</string>
 
     <!-- Mix page (EQ + track mixer) -->
     <string name="mix_title">Mix</string>

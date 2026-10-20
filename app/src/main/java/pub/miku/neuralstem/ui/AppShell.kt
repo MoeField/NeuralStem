@@ -166,6 +166,28 @@ fun AppShell(
         //   Finished = 分离已跑完，整曲都有数据 → 自然也可切。
         val ready = gate is EdgeSeparationSession.Gate.Playable ||
             gate is EdgeSeparationSession.Gate.Finished
+
+        // ★2026-10-20 切歌保护：会话必须属于**当前曲**。
+        //
+        // 为何必需：`gate` 是进程级单例的，用户切歌后**旧会话仍然活着并继续推进**。
+        // 旧逻辑下它会达到 Playable → 把用户**切回旧歌的多轨**。
+        // 用“源文件名”比对：`sourceUri` 存的是 toFile() 后的绝对路径，
+        // 而当前曲可能来自 content:// → 统一只比“文件名”。
+        val sessionSource = edgeSession.sourceUri?.substringAfterLast('/')
+        val currentSource = playerState.currentUri?.substringAfterLast('/')
+        val belongsToCurrent = sessionSource == null ||
+            currentSource == null ||
+            sessionSource == currentSource
+
+        if (ready && !edgeSwitched && !belongsToCurrent) {
+            // 静默跳过（用户正在听新歌，不弹 snackbar 打扰）；只在日志里记一笔。
+            Log.i(
+                "AppShell",
+                "edge gate=$gate 但会话属于 $sessionSource（当前 $currentSource）→ 不切轨",
+            )
+            return@LaunchedEffect
+        }
+
         if (ready && !edgeSwitched) {
             edgeSwitched = true
             val sr = edgeSession.sampleRate.coerceAtLeast(1)
@@ -289,6 +311,8 @@ fun AppShell(
                 edgePercent = playerState.edgePercent,
                 // ★闸门：分离跟不上播放时，分离页也说明“已暂停等待”。
                 edgeStarved = playerState.edgeStarved,
+                // ★两阶段：补前段进度
+                backfillPercent = playerState.backfillPercent,
                 // ★G-3ux：无缓存时跳过来 → 自动开始分离（不用用户再点一次）。
                 autoStartToken = autoStartSeparate,
                 // ★无可用模型时的出口：跳设置页并直接打开模型库
