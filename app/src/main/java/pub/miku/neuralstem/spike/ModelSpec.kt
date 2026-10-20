@@ -175,13 +175,30 @@ object ModelRegistry {
      * - 全部暴露会让 UI 臃肿，且大部分实测比 9482 还慢。
      * ➜ **仅供 benchmark 测速 / 手动选用**（不写入 [ALL]）。
      *
-     * ## stem 顺序
-     * `Inst_*` / `Inst_Main` 系 → [StemOrder.ACCOMP_FIRST]（inst = instrumental 导向）；
-     * 其余（含 Crowd / KARA_2 / _9703 系）→ [StemOrder.VOCALS_FIRST]。
-     * ⚠️ 这批**未做 NCC 实证**，如需正式启用必须先验证反标签（参 Inst_HQ_3 的教训）。
+     * ## ★stem 顺序：已全部 NCC 实证（2026-10-20，BF00A）
+     *
+     * 用 [StemOrderProbe] 以 Spleeter 2-stem 作参考，对 20s 音频做互相关。
+     * 判据：`nccSame` vs `nccSwap`，差值 ≥ 0.10 才采信。
+     *
+     * ```
+     * 模型                       same    swap   margin  判定
+     * Inst_1/2/3                0.058   0.498   0.44   ACCOMP_FIRST
+     * Inst_HQ_1/2/4/5           0.058   0.498   0.44   ACCOMP_FIRST
+     * Inst_Main                 0.056   0.500   0.44   ACCOMP_FIRST
+     * KARA_2                    0.059   0.498   0.44   ACCOMP_FIRST  ← ★原名猜错！
+     * 1_9703 / 2_9682 / 3_9662  0.431   0.019   0.41   VOCALS_FIRST
+     * Crowd_HQ_1                0.302   0.398   0.096  UNCERTAIN
+     * ```
+     *
+     * ### 两个修正
+     * 1. **KARA_2 原名猜错**：原按“KARA = 伴奏导向但顺序正常”标 VOCALS_FIRST，
+     *    实测与 Inst 系一样需要交换。不修正则用户听到人声/伴奏对调。
+     * 2. **Crowd_HQ_1 判不了**（margin 0.096 < 0.10）：输出既不像纯人声也不像纯伴奏
+     *    （合唱/人群模型）。⇒ **不移入模型库**（见 [StemOrderProbe.Result.confident]）。
      */
     val EXPERIMENTAL: List<ModelSpec> = listOf(
-        // ---- Inst 系（乐器导向，62/56MB，dim_f 3072 → 预期 ~0.35×）----
+        // ---- Inst 系（乐器导向，64/56/50MB，dim_f 3072 → 实测 ~0.35×）----
+        // 实证：全部 ACCOMP_FIRST（margin 0.44，铁证）
         exp("uvr-Inst_1", "UVR Inst_1", "UVR-MDX-NET-Inst_1.onnx", 64, Purpose.INSTRUMENTAL, StemOrder.ACCOMP_FIRST),
         exp("uvr-Inst_2", "UVR Inst_2", "UVR-MDX-NET-Inst_2.onnx", 64, Purpose.INSTRUMENTAL, StemOrder.ACCOMP_FIRST),
         exp("uvr-Inst_3", "UVR Inst_3", "UVR-MDX-NET-Inst_3.onnx", 64, Purpose.INSTRUMENTAL, StemOrder.ACCOMP_FIRST),
@@ -191,16 +208,19 @@ object ModelRegistry {
         exp("uvr-Inst_HQ_5", "UVR Inst_HQ_5", "UVR-MDX-NET-Inst_HQ_5.onnx", 56, Purpose.INSTRUMENTAL, StemOrder.ACCOMP_FIRST),
         exp("uvr-Inst_Main", "UVR Inst_Main", "UVR-MDX-NET-Inst_Main.onnx", 50, Purpose.INSTRUMENTAL, StemOrder.ACCOMP_FIRST),
 
-        // ---- 人声/合唱 ----
+        // ---- 人声/合唱（★证据不足，故保留现有标注；**不进模型库**）----
+        // 实证：same=0.302 swap=0.398 margin=0.096 → 无法判定（合唱模型输出两边都不像）
         exp("uvr-Crowd_HQ_1", "UVR Crowd_HQ_1", "UVR-MDX-NET_Crowd_HQ_1.onnx", 56, Purpose.VOCALS),
 
-        // ---- 通用（28MB 系：dim_f 2048 → 预期 ~1.0×）----
+        // ---- 通用（28MB 系：dim_f 2048 → 实测 ~1.0×）----
+        // 实证：全部 VOCALS_FIRST（margin 0.41，铁证）
         exp("uvr-9703", "UVR 1_9703", "UVR_MDXNET_1_9703.onnx", 28, Purpose.GENERAL),
         exp("uvr-9682", "UVR 2_9682", "UVR_MDXNET_2_9682.onnx", 28, Purpose.GENERAL),
         exp("uvr-9662", "UVR 3_9662", "UVR_MDXNET_3_9662.onnx", 28, Purpose.GENERAL),
 
         // ---- 卡拉OK 2（50MB，中等档）----
-        exp("uvr-KARA_2", "UVR KARA_2", "UVR_MDXNET_KARA_2.onnx", 50, Purpose.INSTRUMENTAL),
+        // ★实证纠正：原名猜 VOCALS_FIRST，实测 ACCOMP_FIRST（same=0.059 swap=0.498）
+        exp("uvr-KARA_2", "UVR KARA_2", "UVR_MDXNET_KARA_2.onnx", 50, Purpose.INSTRUMENTAL, StemOrder.ACCOMP_FIRST),
     )
 
     /** benchmark 用：已注册 5 个 + 实验 13 个。 */
