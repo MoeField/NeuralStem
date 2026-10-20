@@ -79,9 +79,21 @@ private enum class SettingsPage { ROOT, MODELS, POLICY }
 fun SettingsScreen(
     modifier: Modifier = Modifier,
     vm: SettingsViewModel = viewModel(),
+    /**
+     * ★打开「模型库」二级页（2026-10-20）。
+     *
+     * 用途：分离页在“无可用模型”时提供“去模型库”按钮 → 宿主把用户送到设置页
+     * 并直接打开模型库，而不是让他自己找。递增 token 而非布尔：重复点可重触发。
+     */
+    openModelLibraryToken: Int = 0,
 ) {
     val st by vm.state.collectAsState()
     var page by remember { mutableStateOf(SettingsPage.ROOT) }
+
+    // ★外部请求打开模型库 → 切到 MODELS 页
+    LaunchedEffect(openModelLibraryToken) {
+        if (openModelLibraryToken > 0) page = SettingsPage.MODELS
+    }
 
     // 二级页 → 系统返回键回 ROOT（而不是退出 App）
     BackHandler(enabled = page != SettingsPage.ROOT) { page = SettingsPage.ROOT }

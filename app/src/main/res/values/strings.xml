@@ -162,6 +162,11 @@
     <string name="policy_four_title">4 轨</string>
     <string name="policy_four_hint">4 轨模型固定（Spleeter 4-stem / Demucs）。两档都关掉时，分离页不显示 4 轨按钮。</string>
     <string name="sep_four_all_disabled">4 轨档位已全部禁用 → 设置 › 分离策略</string>
+    <!-- ★无可用模型（未装或未启用） -->
+    <string name="sep_four_none_installed">4 轨模型未安装 → 设置 › 模型库下载</string>
+    <string name="sep_no_models_title">没有可用的分离模型</string>
+    <string name="sep_no_models_body">分离需要模型文件。请到「设置 › 模型库」下载至少一个模型，并在「分离策略」中启用对应档位。</string>
+    <string name="sep_no_models_go">去模型库</string>
 
     <!-- 混音页（EQ + 分轨混音） -->
     <string name="mix_title">混音</string>

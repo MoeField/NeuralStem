@@ -94,6 +94,12 @@ fun SeparationScreen(
      * 用户每次从播放页“无缓存点开关”都能重新触发，而重组不会误触。
      */
     autoStartToken: Int = 0,
+    /**
+     * ★跳转到「设置 › 模型库」（无可用模型时给用户一个出口）。
+     *
+     * null = 不提供跳转（仅显示文案）。由宿主 AppShell 注入。
+     */
+    onOpenModelLibrary: (() -> Unit)? = null,
 ) {
     val ctx = LocalContext.current
     val app = ctx.applicationContext as Application
@@ -242,11 +248,13 @@ fun SeparationScreen(
 
         // ==================== 2 轨：4 个速度簇（动态）====================
         // 只显示：① 设置里启用 且 ② 至少有一个候选已安装。
-        val twoTiers = remember(benchRtf, settingsRepo) {
-            TierRegistry.twoStemTiers(benchRtf)
-                .filter { settingsRepo.twoTierEnabled(it.speedTier) }
-                .filter { tc -> tc.candidates.any { it.spec.isInstalled(app) } }
-        }
+        //
+        // ★2026-10-20：用 `app` 作 remember key —— 之前 `remember(benchRtf, settingsRepo)`
+        //   在“下载完模型返回本页”时不会重算（benchRtf/settingsRepo 都没变，
+        //   但磁盘上多了文件），导致按钮不出现。改为**每帧现算**（几次文件 stat，廉价）。
+        val twoTiers = TierRegistry.twoStemTiers(benchRtf)
+            .filter { settingsRepo.twoTierEnabled(it.speedTier) }
+            .filter { tc -> tc.candidates.any { it.spec.isInstalled(app) } }
         if (twoTiers.isNotEmpty()) {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(
@@ -282,8 +290,14 @@ fun SeparationScreen(
         //
         // ★标题**恒显示**（即使用户把两档都关了）——否则用户会以为“4 轨功能没了”。
         //   两档全关 → 一行灰字指路去设置；灰字而非红字：用户自己的选择，不是错误。
-        val fourTiers = remember(settingsRepo) {
-            TierRegistry.FOUR_TIERS.filter { settingsRepo.fourTierEnabled(it.tier) }
+        //
+        // ★2026-10-20 修复：**同时按“已安装”过滤** —— 之前只看开关，
+        //   没装 Spleeter 4-stem / Demucs 时按钮照样显示，点了跑不了（`tierOption`
+        //   返回未装的候选）。现在未安装的档不显示按钮，并汇总提示“去模型库下载”。
+        val fourEnabled = TierRegistry.FOUR_TIERS.filter { settingsRepo.fourTierEnabled(it.tier) }
+        val fourTiers = fourEnabled.filter { tc ->
+            val opt = settingsRepo.tierOption(tc.stem, tc.tier) ?: tc.default()
+            (opt as? SepOption.Sherpa)?.spec?.isInstalled(app) == true
         }
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(
@@ -291,14 +305,18 @@ fun SeparationScreen(
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            if (fourTiers.isEmpty()) {
-                Text(
+            when {
+                fourEnabled.isEmpty() -> Text(
                     stringResource(R.string.sep_four_all_disabled),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-            } else {
-                FlowRow(
+                fourTiers.isEmpty() -> Text(
+                    stringResource(R.string.sep_four_none_installed),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+                else -> FlowRow(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -315,6 +333,30 @@ fun SeparationScreen(
                             Text(if (realtime) "⚡ $tierName" else tierName)
                         }
                     }
+                }
+            }
+        }
+
+        // ==================== 全局空态（两轨与四轨都无可用模型）====================
+        //
+        // ★2026-10-20 新增：之前若无任何模型，两区都不渲染任何内容 → 屏幕上只剩
+        //   “分离”标题和一片空白，用户不知道是出错还是没配置。
+        //   现在给一个明确的出口：“去模型库下载”。
+        if (twoTiers.isEmpty() && fourTiers.isEmpty()) {
+            HorizontalDivider()
+            Text(
+                stringResource(R.string.sep_no_models_title),
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+            Text(
+                stringResource(R.string.sep_no_models_body),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (onOpenModelLibrary != null) {
+                Button(onClick = onOpenModelLibrary) {
+                    Text(stringResource(R.string.sep_no_models_go))
                 }
             }
         }
