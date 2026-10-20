@@ -1,256 +1,254 @@
 # NeuralStem
 
 [![Android CI](https://github.com/MoeField/NeuralStem/actions/workflows/android-ci.yml/badge.svg)](https://github.com/MoeField/NeuralStem/actions/workflows/android-ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-> **版本：`0.1.0-alpha`** —— alpha 首发。功能已闭环（导入/波形/变速变调/本地分离/多轨/EQ/后台），
-> 已知限制见文末。
->
-> ⚠️ **模型不入库**（体积）；需自行获取 —— 见“快速上手 §2”。许可说明见 [NOTICE](NOTICE)。
+**把一首歌拆成人声和伴奏，然后分开调。**
 
-**本地 AI 音轨分离播放器** —— 在 Android 设备上完全离线地把一首歌拆成人声 / 伴奏两条音轨，
-并实时调节各轨音量、播放速度与音高。
+一个完全**离线**的 Android 音乐播放器。导入一首歌，它会在你的手机上用 AI 把歌拆成
+**人声** / **伴奏**（或 4 轨：人声 / 鼓 / 贝斯 / 其他），然后你可以分开调它们的音量、
+静音任意一轨、或者只听某一轨。
 
-面向 **音乐学习者与播客听众**：用本地算力免费实现 djay Neural Mix 式的核心体验
-（分离 + 分轨混音 + 变速变调），不追求专业 DJ 功能。
+**所有计算都在本机完成** —— 不联网、不上传、不需要账号。
 
 ---
 
-## 功能一览
+## 这能用来做什么
 
-| 能力 | 说明 |
+| 场景 | 怎么用 |
 |---|---|
-| **导入播放** | 支持 mp3 / wav / flac / aac / m4a / ogg（SAF 文件选择器） |
-| **波形交互** | 自绘波形进度条，拖动即**实时跳转**；已播 / 未播双色区分 |
-| **变速** | 0.5× – 2.0×，**变速不变调**，实时生效不中断 |
-| **变调** | ±12 半音，**变调不变速**，实时生效不中断 |
-| **本地 AI 分离** | 完全离线推理（sherpa-onnx / ONNX Runtime），输出人声 + 伴奏两条轨 |
-| **多轨混音** | 2 轨 / 4 轨 stem 同步播放，各轨独立音量 / 静音 / 独奏 |
-| **多轨波形叠加** | 多轨时转盘外环**按轨多色叠加**显示各轨波形（F5.1）|
-| **均衡器（EQ）** | 5 段均衡（平台 `audiofx.Equalizer`），单轨 / 多轨均可用 |
-| **后台播放** | 切后台 / 锁屏继续播，带系统媒体通知（`MediaSessionService`） |
-| **后台分离** | 分离任务跑在 `dataSync` 前台服务（+进度通知）→ 后台不降频 |
-| **边分离边播（G-3）** | 可选（默认关）：2 轨·快速档从**当前播放位置**起分离，首段就绪自动切 |
-| **模型管理** | 多模型 + 分离档位（2轨 3 档 / 4轨 2 档）；首启**设备 benchmark**，按本机实测速度分档 |
-
-**核心流程**：
-
-```
-导入音频 → 播放（波形拖动 / 变速变调 / EQ）
-        → 本地 AI 分离（2 轨）→ 多轨同步播放 + 各轨音量 / 静音 / 独奏
-```
+| **学一首歌** | 只留人声跟着唱，或只留伴奏当卡拉OK |
+| **扒谱 / 扒和弦** | 去掉人声，吉他贝斯听得清楚很多 |
+| **练习乐器** | 独奏伴奏轨 + 减速到 0.7× + 降 2 个半音，慢慢跟 |
+| **听细节** | 独奏某一轨，听清编曲里的某个声部 |
+| **做 Demo** | 导出分离后的 WAV，拿去剪辑（目前 4 轨分离后可导出） |
 
 ---
 
-## 快速上手
+## 主要特性
 
-### 1. 环境要求
+### 🎛 分离与混音
+- **2 轨**：人声 + 伴奏
+- **4 轨**：人声 / 鼓 / 贝斯 / 其他
+- **20 种模型可选** —— 从「4 分钟歌 30 秒搞定」到「音质优先」，按你的手机性能挑
+- 每轨独立的 **音量 / 静音 / 独奏**
+- **边分离边播**：不等整首分完，先听已经分好的部分
 
-- Android Studio（含 Android SDK；编译需 **API 37**）
-- **NDK `30.0.16248370`** + **CMake `4.1.2`**（构建 sherpa-onnx JNI 胶水层）
-- 设备：真机或模拟器，支持 **arm64-v8a / x86_64**
+### 🎚 播放调节
+- **变速** —— 速度区间由设置决定，默认 `0.71× – 1.40×`（可在设置里放宽到 `0.25× – 4×`），**变速不变调**
+- **变调** ±12 半音，**变调不变速**
+- **均衡器（EQ）** —— 内置多段均衡，频段数取决于你的设备
+- 波形拖动跳转、多轨波形分色叠加
+- 后台播放 + 锁屏控制
 
-> 换机器时需确认本机已安装上述 NDK / CMake 版本（AGP 默认首选版本可能未装）。
-
-### 2. 放入分离模型（必需）
-
-分离功能需要 ONNX 模型文件。本项目使用 **Spleeter 2-stem fp16**
-（[sherpa-onnx 官方 release](https://github.com/k2-fsa/sherpa-onnx/releases/tag/source-separation-models)，
-`vocals.fp16.onnx` + `accompaniment.fp16.onnx`，各 ~19.7 MB，已随仓库放在
-`model_assets/sherpa-onnx-spleeter-2stems-fp16/`）。
-
-模型需从**应用私有目录**读取（外部目录在 Android 11+ 下 app 可能读不到）：
-
-```bash
-ADB=/path/to/Android/sdk/platform-tools/adb
-PKG=pub.miku.neuralstem
-
-adb shell "run-as $PKG mkdir -p files/sherpa"
-adb push model_assets/sherpa-onnx-spleeter-2stems-fp16/vocals.fp16.onnx /sdcard/Download/
-adb push model_assets/sherpa-onnx-spleeter-2stems-fp16/accompaniment.fp16.onnx /sdcard/Download/
-adb shell "cat /sdcard/Download/vocals.fp16.onnx        | run-as $PKG sh -c 'cat > files/sherpa/vocals.fp16.onnx'"
-adb shell "cat /sdcard/Download/accompaniment.fp16.onnx | run-as $PKG sh -c 'cat > files/sherpa/accompaniment.fp16.onnx'"
-```
-
-### 3. 构建与安装
-
-```bash
-./gradlew app:assembleDebug                    # 构建 debug APK
-./gradlew app:installDebug                     # 直接装到已连接设备
-# 产物：app/build/outputs/apk/debug/app-debug.apk
-```
-
-### 4. 运行
-
-1. 打开应用（主页 = **播放器**）
-2. 点「**导入音频**」选一首歌 → 自动播放
-3. 拖动**波形**跳转；用滑块调**速度 / 音高**（EQ 在「混音」页）
-4. 点底部**「分离」** →「**开始分离**」（首次会提示检测设备性能；未检测则按钮禁用）
-5. 分离完成 → 自动切多轨 / 或回播放页拨「分离开关」
-6. 点底部**「混音」** → 调各轨音量 / 静音 / 独奏 + EQ
+### 💾 本地优先
+- 分离**完全离线**，CPU 推理，不依赖云服务
+- 模型一次下载，之后永久可用
+- 无账号、无遥测、无广告
 
 ---
 
-## 界面结构
+## 开始使用
 
-导航壳（**底部导航栏 5 项**；竖屏有顶栏，横屏隐藏顶栏）：
+### 1. 安装
 
-| 页面 | 内容 |
+从 [Releases](https://github.com/MoeField/NeuralStem/releases) 下载 APK：
+
+| 文件 | 用在哪 |
 |---|---|
-| **歌单** | 文件/文件夹导入 / 排序 / 删除 / 点曲播放（并作为播放队列）|
-| **播放器** | 黑胶转盘 + 波形拖动 / 导入 / 播放暂停 / 变速变调 / 分离开关 |
-| **分离** | 当前曲分离（档位：2 轨快速/均衡/质量 · 4 轨快速/质量）→ 去多轨播放 + 导出 WAV |
-| **混音** | 分轨混音（各轨音量/静音/独奏）+ EQ 面板 |
-| **设置** | 设备能力 + 模型三档分组（⚡ 实时 / ⏱ 较慢 / 🐢 很慢）+ 默认引擎 + 转盘时长 / 变速范围 |
+| `app-arm64-v8a-release.apk` | **绝大多数手机**（推荐，体积最小） |
+| `app-universal-release.apk` | 不确定架构时用 |
+| `app-x86_64-release.apk` | 模拟器 |
+
+> 需要 Android 6.0（API 23）或更高。
+
+### 2. 下载模型（首次必做）
+
+分离需要 AI 模型文件，App 里可以直接下：
+
+1. 打开 **设置** → **模型库**
+2. 点任意模型右侧的「下载」
+3. 确认许可 → 等待下载完成（会显示进度）
+
+**第一次用建议只下这一个**：
+
+> **Spleeter 2 轨** · 39 MB · 中端机约 8× 实时（4 分钟歌 ≈ 30 秒）
+
+想试更好的音质再下 UVR 系列（28–64 MB，更慢但分离更干净）。
+不确定下哪个？看 **设置 → 模型库** 里每个模型标的「实测 xx×」——
+**数字越大越快**，1.0× 表示分离耗时 ≈ 歌曲时长。
+
+### 3. 导入并播放
+
+1. 底部选 **播放器** → 点 **导入音频** → 选一首歌
+2. 拖动波形跳转；右侧竖条调**速度 / 音高**
+
+### 4. 分离
+
+1. 底部选 **分离** → 点「开始分离」
+2. 选一个档位（只有**已安装且已启用**的档位会显示）：
+
+   **2 轨（人声 + 伴奏）** —— 按你的手机实测速度自动分簇：
+
+   | 档位 | 含义 |
+   |---|---|
+   | **⚡ 极快** | ≥2× 实时，边听边分离无压力 |
+   | **临界** | 0.9–2×，分离耗时 ≈ 播放时长 |
+   | **慢** | 0.4–0.9×，慢于播放 |
+   | **很慢** | <0.4×，需耐心等 |
+
+   **4 轨（人声/鼓/贝斯/其他）** —— 固定 2 档：**快速**（Spleeter）/ **质量**（Demucs）
+
+3. 等分离完成 → **自动切到多轨**
+4. 回 **播放器**，开关显示「多轨」就说明在播分离结果了
+
+### 5. 分开调
+
+底部选 **混音**：
+- 每轨的**音量滑块** / **静音** / **独奏**
+- 下方是 **EQ**
 
 ---
 
-## 技术栈
+## 调节档位和模型
+
+打开 **设置 → 分离策略**，你可以：
+
+- **关掉不想用的档位** —— 分离页就不会显示它（比如中端机可以关掉「很慢」，省得误点）
+- **给每个档位换模型** —— 同一个速度档里如果有多个模型，点一下切换
+- **4 轨的两档也可以关**
+
+> 档位名字指的是**分离速度**，不是音质分级。
+> 同一个档位里可以换模型（在「分离策略」里）——不同模型的速度和音质都不同。
+
+---
+
+## 常见问题
+
+**Q：分离要多久？**
+看模型和你手机的 CPU。中端机（骁龙 6/7 系）用 Spleeter 约 **8 倍实时** ——
+4 分钟的歌 30 秒左右。旗舰机更快，老机器会慢些。
+App 首次启动会让你跑一次**设备性能检测**，之后按本机实测速度给模型分档。
+
+**Q：为什么下载后模型库还显示「未安装」？**
+不会 —— 下载完成会立即变成「✓ 已安装」，已装计数也会更新。
+如果遇到，重进一次模型库页面。
+
+**Q：分离完能导出吗？**
+可以，但**目前只支持 4 轨**：4 轨分离完成后，分离页的「导出到 Music/separate/」按钮会亮起，
+导出无损 WAV 到 `Music/separate/<歌名>/`。
+
+2 轨（人声/伴奏）暂不支持导出——若需要，选一个 4 轨档位重新分离即可。
+
+**Q：边分离边播是什么意思？**
+不整首等完。开始分离后会先攒一段，够你连续听之后自动切过去，
+剩下的部分在后台继续分离。如果分离速度跟不上播放（慢模型），App 会**暂停**等你，
+而不是放静音 —— 转盘外环上的**黄色刻度**就是分离进度。
+
+**Q：为什么有些模型标「实验」？**
+UVR 系列的音质差异没有统一评测，标「实验」是提醒你它们的定位可能重叠。
+用之前可以先在「分离策略」里试听对比。
+
+**Q：会联网吗？**
+只有**下载模型**时联网，且只连你选的下载源（HuggingFace 或镜像）。
+分离、播放全部离线。
+
+**Q：分离页上只看到一两个档位，是我下少了模型吗？**
+两个原因，都正常：
+1. 你的**手机太慢/太快**，某些速度簇里没有模型（比如中端机可能没有「极快」之外的快模型）；
+2. 你在「设置 › 分离策略」里**关掉了**某些档位。
+
+打开「设置 › 分离策略」能看到每个档位的真实状态：有模型、无模型、还是被你关了。
+
+---
+
+## 已知限制
+
+- **分离质量**：Spleeter 是 2019 年的模型，人声/伴奏能分开但有渗漏。
+  对「学歌 / 扒谱」够用，不是录音室级别。
+- **多声道输入**：超过 2 声道的音频只取前 2 声道。
+- **重装 App 会丢模型**：模型存在应用私有目录，卸载会一并删除，需重新下载。
+- **个别机型 MP3 seek 卡顿**：某些设备软解器的已知问题，App 有自动恢复兜底。
+
+---
+
+## 技术实现（给开发者）
+
+<details>
+<summary>点开看详细技术栈与构建方法</summary>
+
+### 技术栈
 
 | 层 | 选型 |
 |---|---|
 | 语言 / UI | Kotlin + Jetpack Compose（Material 3） |
-| 音频播放 | **Media3 / ExoPlayer**（多实例架构，每轨一个实例） |
-| 变速变调 | ExoPlayer 内置 **Sonic**（`setPlaybackParameters`，无需手动挂 AudioProcessor） |
-| 波形 | 自绘 Compose Canvas（每秒 50 个包络点，与采样率无关） |
-| 本地分离 | **sherpa-onnx**（ONNX Runtime）· Spleeter 2-stem ONNX |
+| 音频播放 | Media3 / ExoPlayer（多实例，每轨一个） |
+| 变速变调 | ExoPlayer 内置 Sonic（`setPlaybackParameters`） |
+| 波形 | 自绘 Compose Canvas（50 包络点/秒，与采样率无关） |
+| 本地分离 | sherpa-onnx（ONNX Runtime）+ Spleeter / UVR-MDX 模型 |
 | 均衡器 | 平台 `android.media.audiofx.Equalizer` |
-| 后台播放 | `MediaSessionService` + 系统媒体通知 |
-| 最低 / 目标 API | minSdk **23** · targetSdk **37** |
+| 后台 | `MediaSessionService` + `dataSync` 前台服务 |
+| API | minSdk 23 · targetSdk 37 |
 
-**架构要点**：播放器与多轨混音**都放在 `PlaybackService`**（前台服务）里，
-UI 通过 `MediaController` 控制 —— 因此单轨与多轨的后台行为完全一致。
-详见 `doc/.memory.md` §阶段 M3。
+**架构要点**：播放器与多轨混音都放在 `PlaybackService`（前台服务）里，
+MediaSession 始终认 `singlePlayer`（多轨时它是主轨）→ 通知/后台/锁屏天然可用。
 
----
+### 构建
 
-## 项目结构
-
-```
-app/src/main/java/pub/miku/neuralstem/
-├── MainActivity.kt            入口（托管 AppShell）
-├── ui/AppShell.kt             ★ 底部导航栏 5 项（歌单/播放器/分离/混音/设置）
-├── ui/theme/                  Material 3 主题
-├── player/                    播放侧
-│   ├── PlaybackService.kt     ★ MediaSessionService：持单轨 player + 多轨控制器 + EQ
-│   ├── SessionState.kt        ★ 状态机（单一真源，I1–I4 不变量）
-│   ├── PlayerViewModel.kt     经 MediaController 控制 + UI 状态
-│   ├── PlayerScreen.kt        播放器 UI（含黑胶转盘 DeckView）
-│   ├── DeckView.kt / CoverExtractor.kt   黑胶转盘 + 封面提取
-│   ├── MixScreen.kt           混音页（分轨混音 + EQ）
-│   ├── WaveformExtractor.kt   波形包络提取（流式/节流 emit）
-│   ├── WaveformCache.kt       波形文件缓存（全曲解码 ~20s→命中~秒出）
-│   ├── WaveformView.kt        Compose 波形组件（拖动 seek / 多轨预埋）
-│   ├── MultiTrackController.kt  多 ExoPlayer 同步 + 音量/静音/独奏
-│   ├── MultiTrackSession.kt   UI ↔ Service 的自定义命令协议
-│   ├── AudioEq.kt / EqController.kt  均衡器封装与多轨统一出口
-│   ├── TrackMixerPanel.kt     多轨混音面板
-│   └── Media3DecodeBridge.kt  平台 MediaExtractor+MediaCodec 解码桥（仍在用，勿删）
-├── playlist/                  歌单（导入/排序/持久化 + 队列语义）
-├── settings/                  设置页（模型分组 / 默认引擎 / 转盘时长 / 变速范围）
-├── export/                    导出 WAV（StemExporter）
-├── devtools/                  调试命令总线 + 测试面板（仅 debug）
-└── spike/                     分离侧
-    ├── SeparationRepository.kt  分离宿主（进程级单例 + 缓存 + 取消）
-    ├── StreamingSeparator.kt    分块流式分离 + 交叉淡化拼接（2-stem）
-    ├── Spleeter4Separator.kt / Spleeter4Dsp.kt   4-stem 自建 DSP
-    ├── DemucsSeparator.kt / DemucsStft.kt         htdemucs 4 源
-    ├── TierRegistry.kt / BenchmarkTable.kt        档位注册表 + CPU↔模型对照表
-    ├── SeparationScreen.kt      分离页 UI
-    ├── FrameSource.kt           统一帧源（wav 流式 / 压缩格式解码 + 重采样）
-    ├── ModelSpec.kt             模型注册表（用途 / stem 顺序）
-    ├── DeviceBenchmark.kt       设备能力探测
-    ├── WavIo.kt                 WAV 流式读写（probe / Reader / Writer）
-    ├── SherpaSourceSeparation.kt  sherpa-onnx JNI 封装
-    └── SpikeActivity.kt / SpikeViewModel.kt  分离页宿主与 VM
-
-app/src/main/cpp/sherpa_spike.c   JNI 胶水层
-app/src/deprecated/               已废弃代码存档（TFLite 路线，不编译）
-app/src/ncm/                      可选模块：NCM 格式解析（默认不编译，见下）
-```
-
----
-
-## 构建选项
-
-| 选项 | 说明 |
-|---|---|
-| `./gradlew app:assembleDebug` | 标准 debug 构建（**不含 NCM 模块**）|
-| `-Pwith_ncm=true` | 启用**可选的 NCM 格式解析模块**（`app/src/ncm/`）。默认**不编译、不打包、不接入播放**；发布 APK 与 CI 构建均不含此能力。 |
-
-### 关于可选的 NCM 模块
-
-`app/src/ncm/` 是一个独立的、**默认不编译**的源码模块，用于解析网易云音乐 `.ncm` 容器格式。
-它依据开源社区对该格式的**公开分析与自行重写**（非拷贝第三方代码），文件头含来源与合规声明。
-
-- **不影响主流程**：不接入播放、不新增 UI、不改变现有行为。
-- **不属于发布物**：不传 `-Pwith_ncm=true` 时该目录完全不参与编译；CI 也不启用。
-- **合规提示**：绕过 DRM 在多数法域可能构成「规避技术措施」。该实现**只在内存中解密**，
-  不写文件、不导出、不传播；仅供使用者对**自己已购买/已下载**的文件做本地格式互操作性研究。
-- 是否使用由使用者自行判断并承担相应责任。
-
----
-
-## 测试
+环境要求：
+- Android Studio（含 SDK，编译需 **API 37**）
+- **NDK `30.0.16248370`** + **CMake `4.1.2`**
 
 ```bash
-./gradlew app:testDebugUnitTest          # 单元测试（128 项）
-./gradlew app:connectedDebugAndroidTest  # 仪器化测试（7 项，需设备在线）
+unset ANDROID_PREFS_ROOT          # AGP 9.x 若同时设 ANDROID_USER_HOME 会卡住
+./gradlew :app:assembleDebug
+./gradlew :app:installDebug
 ```
 
-**单元测试覆盖**：WAV 流式读写 / 分块流式分离拼接 / 重采样 / 波形包络 /
-变速变调换算 / 多轨对齐 / 模型注册表 / EQ 多轨同步。
+### 发布签名
 
----
+正式签名配置见 [`doc/release_signing.md`](doc/release_signing.md)。
+CI 用 Repository Secrets（`KEYSTORE_BASE64` / `KEYSTORE_PASSWORD` / `KEY_ALIAS` / `KEY_PASSWORD`）
+自动注入；本地无密钥时自动回退 debug 签名。
 
-## 性能（真机实测）
+```bash
+./gradlew :app:assembleRelease -x lintVitalAnalyzeRelease -x lintVitalRelease
+```
 
-设备：BF00A（Android 16 / 12 GB / arm64）。
+> `-x lintVital*` 是因为 lint 需要额外下载 `lint-gradle`，网络受限时会失败；
+> CI 上可以不加（runner 能访问 dl.google.com）。
 
-| 项 | 结果 |
-|---|---|
-| 4 分钟歌分离（Spleeter fp16） | **30.2 s**（mp3）/ **30.7 s**（wav），≈ 7.9× 实时 |
-| 峰值内存 | ~710–740 MB |
-| 缓存命中 | < 100 ms |
-| 目标门槛 | ≤ 60 s ✅（余量约 2×） |
+### 项目文档
 
-> ⚠️ 以上为**前台运行**数据。应用在后台会被系统放入低优先级 cgroup，分离耗时可增至约 2×。
-
-**分离质量说明**：使用 Spleeter（2019 模型），人声/伴奏可分离，但存在人声渗漏与高频损失；
-对「学歌 / 扒谱」场景足够，非出版级。
-
----
-
-## 许可 / License
-
-- 本项目原创代码：**MIT**（见 [LICENSE](LICENSE)）
-- 第三方库与 **AI 模型许可**（模型权重许可**不统一**，商用前必须逐个核对）：见 [NOTICE](NOTICE)
-
----
-
-## 文档
+更详细的过程记录、踩坑、实测数据在 `doc/` 下。
+**新接手请先读 [`doc/冷启动入口.md`](doc/冷启动入口.md)**（5 分钟自包含）。
 
 | 文档 | 内容 |
 |---|---|
-| [`doc/guide.md`](doc/guide.md) | 需求文档（功能 / 非功能需求、验收标准） |
-| [`doc/.memory.md`](doc/.memory.md) | 过程笔记与**全部实测数据**、决策依据 |
-| [`doc/.critical_steps.md`](doc/.critical_steps.md) | **64 条踩坑记录**（改代码前建议先看） |
-| [`doc/research_separation.md`](doc/research_separation.md) | 分离方案选型调研 |
-| [`doc/demo_script.md`](doc/demo_script.md) | 演示视频分镜脚本 |
-| [`HANDOFF.md`](HANDOFF.md) | 项目现状 / 约定 / 下一步 |
+| [`doc/冷启动入口.md`](doc/冷启动入口.md) | 接手入口（现状 / 断点 / 环境） |
+| [`doc/.memory.md`](doc/.memory.md) | 过程笔记 + 全部实测数据 |
+| [`doc/.critical_steps.md`](doc/.critical_steps.md) | 70 条踩坑记录（改代码前必看） |
+| [`doc/model_speed_tiers.md`](doc/model_speed_tiers.md) | 19 个模型速度分级实测 |
+| [`doc/stem_order_evidence.md`](doc/stem_order_evidence.md) | 实验模型 stem 顺序 NCC 实证 |
+| [`doc/release_signing.md`](doc/release_signing.md) | 签名 / CI / 备份 |
+| [`doc/.todo.md`](doc/.todo.md) | 待办总账 |
+
+### 性能（BF00A 真机实测）
+
+| 项 | 结果 |
+|---|---|
+| 4 分钟歌分离（Spleeter fp16，前台） | **30.2 s**（mp3）/ 30.7 s（wav），≈7.9× 实时 |
+| 峰值内存 | ~710–740 MB |
+| 缓存命中 | < 100 ms |
+
+后台运行会进低优先级 cgroup，耗时可增至约 2×（已用前台服务缓解）。
+
+</details>
 
 ---
 
-## 已知限制（alpha）
+## 许可
 
-- **分离质量**：Spleeter（2019）模型有渗漏/高频损失，非出版级；4 轨/Demucs/UVR 更慢。
-- **边分离边播（G-3）**：✅ **已实现**（默认**关**，设置页可开）。开启后选「2 轨·快速」档时，
-  从**当前播放位置**起分离，首段就绪自动切。
-  - 仅 **2 轨·快速** 档支持；4 轨 / Demucs / UVR 仍为“分离完再播”。
-  - 已知体验欠缺：点击后需等 **~1–3 秒**才切到分离结果（**暂无视觉引导**，正式版补）。
-  - seek 到“尚未分离到”的位置会被限制在已分离区（MVP）。
-- **多声道输入**：> 2 声道只取前 2 声道（不做下混）。
-- **MP3 特定位置 seek 卡顿**：个别机型软解器缺陷（有自动恢复兑底，App 层不可根治）。
-- **重装 app 后模型丢失**：需重新 push `files/sherpa/*.onnx`（见“快速上手 §2”）。
-
-> ✅ 已实现（早期列为限制，现均已解决）：各轨波形叠加（F5.1）、后台分离降频（G-4 前台化）、
-> 横屏 / 深色跟随系统 / 触感 / 歌单（均已完成）。
+- 本项目代码：**MIT**（见 [LICENSE](LICENSE)）
+- 第三方库与**模型权重**许可不统一 —— 商用前请逐个核对，见 [NOTICE](NOTICE)
+- UVR / MDX-Net 系列模型上游多数**未显式声明许可**，仅供个人学习研究
