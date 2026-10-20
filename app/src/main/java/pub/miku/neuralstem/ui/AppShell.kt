@@ -5,10 +5,17 @@ import android.content.res.Configuration
 import android.net.Uri
 import android.util.Log
 import androidx.annotation.StringRes
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -16,6 +23,7 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -26,7 +34,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -207,6 +217,12 @@ fun AppShell(
         }
     }
 
+    // ★横屏用右侧栏（2026-10-20）：横屏下底部栏会吃掉 160/720 ≈ 22% 的高度，
+    //   而右侧栏只占 ~96/1600 ≈ 6% 的宽度 —— 内容区高度从 560 涨到 720（+29%）。
+    //   窄屏（竖屏）继续用底部栏（拇指可达性优先）。
+    //
+    //   为何右侧而不是左侧：本 App 右手持机场景多（横屏看视频/听歌），
+    //   右侧栏更靠近拇指；且左侧留给内容（时间轴/波形）更自然。
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
@@ -215,19 +231,24 @@ fun AppShell(
             }
         },
         bottomBar = {
-            NavigationBar {
-                AppDestination.entries.forEach { dest ->
-                    NavigationBarItem(
-                        selected = dest == current,
-                        onClick = { current = dest },
-                        icon = { Text(glyphFor(dest)) },
-                        label = { Text(stringResource(dest.labelRes)) },
-                    )
+            if (!isLandscape) {
+                NavigationBar {
+                    AppDestination.entries.forEach { dest ->
+                        NavigationBarItem(
+                            selected = dest == current,
+                            onClick = { current = dest },
+                            icon = { Text(glyphFor(dest)) },
+                            label = { Text(stringResource(dest.labelRes)) },
+                        )
+                    }
                 }
             }
         },
     ) { padding ->
-        when (current) {
+        Row(modifier = Modifier.fillMaxSize()) {
+            // 内容区（横屏时右侧栏占位由外层 Row 的第二个子项承担）
+            Box(modifier = Modifier.weight(1f)) {
+                when (current) {
             AppDestination.PLAYER -> PlayerScreen(
                 modifier = Modifier.fillMaxSize().padding(padding),
                 vm = playerVm,
@@ -359,9 +380,77 @@ fun AppShell(
                 modifier = Modifier.fillMaxSize().padding(padding),
                 vm = playerVm,
             )
+                }
+            }
+            // ★横屏：右侧导航栏（图标 + 竖排文字）
+            if (isLandscape) {
+                NavigationRailBar(
+                    current = current,
+                    onSelect = { current = it },
+                )
+            }
         }
     }
 }
+
+/**
+ * ★横屏的右侧导航栏（2026-10-20）。
+ *
+ * ## 为何不用 NavigationRail 组件
+ * Material3 的 `NavigationRail` 默认就排在**左侧**，且内部 item 是上下堆叠的。
+ * 我们要靠右 → 用普通的 `Column` + 点击行，控制力更强（且本项目零图标依赖，
+ * 本来就不用 `NavigationRailItem` 的 icon 参数）。
+ *
+ * ## 为何图标 + 文字竖排（而不是只放图标）
+ * 项目用**文本字形**做图标（`☰ ▶ ✂ ☷ ⚙`），语义并不直观。
+ * 只放图标 = 常驻的猜谜游戏；要修就得上 material-icons-extended（~1.5MB），
+ * 违背项目既定取舍。⇒ 图标 + 两字标签竖排，宽 88dp 足够。
+ */
+@Composable
+private fun NavigationRailBar(
+    current: AppDestination,
+    onSelect: (AppDestination) -> Unit,
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        modifier = Modifier.fillMaxHeight().width(RAIL_WIDTH),
+    ) {
+        Column(
+            modifier = Modifier.fillMaxHeight().padding(vertical = 8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            AppDestination.entries.forEach { dest ->
+                val selected = dest == current
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable { onSelect(dest) }
+                        .padding(vertical = 8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text(
+                        glyphFor(dest),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = if (selected) MaterialTheme.colorScheme.onSecondaryContainer
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        stringResource(dest.labelRes),
+                        style = MaterialTheme.typography.labelSmall,
+                        maxLines = 1,
+                        color = if (selected) MaterialTheme.colorScheme.onSecondaryContainer
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** 右侧导航栏宽度（88dp —— 够放两个汉字且不挤压内容）。 */
+private val RAIL_WIDTH = 88.dp
 
 /** 导航图标：用**文本字形**代替 material-icons（项目既定：零新增图标依赖）。 */
 private fun glyphFor(dest: AppDestination): String = when (dest) {
