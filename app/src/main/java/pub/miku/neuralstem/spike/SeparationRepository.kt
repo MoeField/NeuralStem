@@ -367,10 +367,39 @@ class SeparationRepository(private val app: Application) {
                             )
 
                             // ---- 阶段 2：回头补 [0, startFrame) ----
+                            //
                             // ★续算时跳过：若 0 帧已被覆盖，说明前段已补完。
+                            //
+                            // ★成本门控（2026-10-20）：长音频不自动补。
+                            //
+                            // 场景：用户选了一小时的演唱会，从 55 分开始分离。
+                            //   正向只要算 5 分钟，回头补要算 55 分钟（按 1× RTF）。
+                            //   而他很可能听完就切歌 → 白算 55 分钟的 CPU/电。
+                            //
+                            // 判据：`补算耗时 = 缺口时长 / RTF`，超过阈值就不自动补，
+                            //   而是把选择权交给用户（manifest 记为“未完成”，
+                            //   下次进入时可手动续补）。
+                            val gapSeconds = startFrame.toDouble() / frameSource.sampleRate
+                            val rtf = DeviceBenchmark(app)
+                                .cached()[ModelRegistry.SPLEETER.id]?.rtf ?: 1f
+                            val estimatedBackfillSec = if (rtf > 0.01f) gapSeconds / rtf else gapSeconds
+                            val tooExpensive = estimatedBackfillSec > AUTO_BACKFILL_LIMIT_SEC
+
                             val needBackfill = startFrame > 0 &&
                                 thisJob?.isActive != false &&
-                                !(resumable && existing!!.contains(0))
+                                !(resumable && existing!!.contains(0)) &&
+                                !tooExpensive
+
+                            if (tooExpensive) {
+                                Log.i(
+                                    TAG,
+                                    "edge 阶段2 跳过（成本门控）：缺口 ${gapSeconds.toInt()}s / " +
+                                        "RTF ${"%.2f".format(rtf)} ≈ ${estimatedBackfillSec.toInt()}s " +
+                                        "超过阈值 ${AUTO_BACKFILL_LIMIT_SEC.toInt()}s → 留给用户决定",
+                                )
+                                // ★记下缺口，分离页据此显示「前 55 分钟未分离 · 点击补齐」。
+                                session.markPendingBackfill(0..(startFrame - 1).coerceAtLeast(0))
+                            }
 
                             if (needBackfill) {
                                 session.enterBackfill()
@@ -932,6 +961,20 @@ class SeparationRepository(private val app: Application) {
          * - 2s 意味着**最多丢 2 秒**分离结果（重跑那 2s 即可）
          */
         private const val MANIFEST_SAVE_INTERVAL_MS = 2_000L
+
+        /**
+         * ★自动补前段的**成本上限**（秒）：预估耗时超过它就不自动补。
+         *
+         * ## 为何需要
+         * 一小时演唱会从 55 分开始分离：正向只需 5 分钟，但补前段要 55 分钟。
+         * 用户很可能听完就切歌 → 白算 55 分钟 CPU/电。
+         *
+         * ## 取 5 分钟的理由
+         * - 普通歌曲（3–5 分钟）从中间起分离，补前段最多 2–3 分钟 → 仍自动补
+         * - 超过 5 分钟说明缺口很大，大概率是长音频/播客/演唱会
+         * - 不自动补 ≠ 不补：manifest 记为未完成，用户可在分离页手动续补
+         */
+        private const val AUTO_BACKFILL_LIMIT_SEC = 300.0
 
         const val NUM_THREADS = 4
 

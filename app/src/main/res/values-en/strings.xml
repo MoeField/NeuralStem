@@ -170,6 +170,9 @@
     <!-- ★two-phase: forward done, backfilling the head -->
     <string name="sep_backfilling">Fully playable · backfilling the start %1$d%%</string>
     <string name="sep_backfill_done">✅ Whole track separated</string>
+    <!-- ★cost gate: long audio, head not auto-backfilled -->
+    <string name="sep_pending_backfill">First %1$s not separated (auto-backfill too costly, skipped)</string>
+    <string name="sep_backfill_now">Backfill the start</string>
     <!-- ★gray zone wording while backfill is running -->
     <string name="sep_gray_backfilling">This part is still being separated (%1$d%%)</string>
 

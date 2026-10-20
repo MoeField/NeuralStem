@@ -95,6 +95,18 @@ fun SeparationScreen(
      */
     backfillPercent: Int? = null,
     /**
+     * ★成本门控（2026-10-20）：本次会话没自动补的前段缺口（毫秒）；0 = 无缺口。
+     */
+    pendingBackfillMs: Long = 0L,
+    /**
+     * ★用户点「补齐前段」时调用。null = 不提供入口（仅显示提示）。
+     *
+     * ★实现约定（2026-10-20）：宿主只需用 `fromPositionMs = 0` 重新发起边播分离。
+     *   `startEdge` 会读到已有 manifest（resumable），自动跳过已分离区间，
+     *   只补缺口 → 不需要另写一条“续算”代码路径。
+     */
+    onBackfillNow: (() -> Unit)? = null,
+    /**
      * ★G-3ux：自动开始分离的触发 token。
      *
      * 使用递增整数而非布尔：同一值不重复触发，新值（+1）才触发 →
@@ -172,6 +184,32 @@ fun SeparationScreen(
             } else {
                 vm.startOption(src, opt)
             }
+        }
+    }
+
+    /**
+     * ★成本门控（2026-10-20）：用户点「补齐前段」→ 从头重新发起一次边播分离。
+     *
+     * ## 为何简单重跑即可
+     * `SeparationRepository.startEdge` 会读已有 manifest（resumable = true）：
+     * - 复用文件（不 setLength 抹掉数据）
+     * - 阶段 1 若 startFrame 已覆盖 → 跳过
+     * - 阶段 2 补 [0, startFrame)
+     * 所以传 `fromPositionMs = 0` 就等价于“把没分离的都补上”。
+     *
+     * 传 0 而不是当前位置：用户此刻可能已听到曲尾，用当前位置会漏掉中间。
+     */
+    fun backfillNow() {
+        val uri = currentUri ?: return
+        onSeparationStarted(uri)
+        scope.launch {
+            val src = CurrentTrackBridge.toFile(app, uri)
+            if (src == null) {
+                cacheMsg = app.getString(R.string.sep_uri_unreadable)
+                return@launch
+            }
+            Log.i("SepScreen", "backfillNow: 从头发起，让 startEdge 自动跳过已完成区间")
+            vm.startEdgeOption(src, 0L)
         }
     }
 
@@ -426,6 +464,26 @@ fun SeparationScreen(
         // ★⑬：竖屏在此（档位跟分离开关之后）；横屏会挪到右栏。
         if (!isLandscape) tierSection()
 
+        // ---- ★成本门控（2026-10-20）：前段未分离，给用户一个手动补齐入口 ----
+        //
+        // 场景：一小时演唱会从 55 分开始分离 —— 自动补要 55 分钟，不值得
+        // （用户大概率听完就切歌）。这里明确告知并提供按钮。
+        if (pendingBackfillMs > 0L) {
+            HorizontalDivider()
+            Text(
+                stringResource(R.string.sep_pending_backfill, formatDuration(pendingBackfillMs)),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            // 宿主可覆盖；默认用内置的 backfillNow()（复用 startEdge 的续算逻辑）。
+            Button(
+                onClick = { onBackfillNow?.invoke() ?: backfillNow() },
+                enabled = hasSong && !busy,
+            ) {
+                Text(stringResource(R.string.sep_backfill_now))
+            }
+        }
+
         // ---- 进度 / 结果（★3a-2：**单一真源** separationTask；不再并列读 spikeState + repoState）----
         when (val t = separationTask) {
             is SeparationTask.Preparing -> {
@@ -539,6 +597,25 @@ fun SeparationScreen(
             modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) { body() }
+    }
+}
+
+/**
+ * 把毫秒格式化成「55 分钟」/「1 小时 5 分钟」/「3 分 20 秒」。
+ *
+ * 用于成本门控的提示文案 —— 「前 3300 秒」没人看得懂。
+ */
+private fun formatDuration(ms: Long): String {
+    val totalSec = (ms / 1000).coerceAtLeast(0)
+    val h = totalSec / 3600
+    val m = (totalSec % 3600) / 60
+    val s = totalSec % 60
+    return when {
+        h > 0 && m > 0 -> "$h 小时 $m 分钟"
+        h > 0 -> "$h 小时"
+        m > 0 && s > 0 -> "$m 分 $s 秒"
+        m > 0 -> "$m 分钟"
+        else -> "$s 秒"
     }
 }
 
