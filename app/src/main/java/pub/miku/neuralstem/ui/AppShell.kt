@@ -97,6 +97,8 @@ fun AppShell(
     // ★G-3ux：用户在播放页点开分离开关但**无缓存** → 跳分离页时**自动开始分离**，
     //   不用用户再手动点一次「快速」。传一个递增的 token 而非布尔（可重复触发）。
     var autoStartSeparate by remember { mutableStateOf(0) }
+    // ★分离页“无可用模型 → 去模型库”：递增 token，既跳设置页又直接打开模型库。
+    var openModelLibToken by remember { mutableStateOf(0) }
     // ★⑭b：用于“分离完成但已切歌”→ snackbar 提示。
     val scope = rememberCoroutineScope()
     // 歌单 VM（供歌单页显示 + 点曲时解析 uri）
@@ -289,6 +291,11 @@ fun AppShell(
                 edgeStarved = playerState.edgeStarved,
                 // ★G-3ux：无缓存时跳过来 → 自动开始分离（不用用户再点一次）。
                 autoStartToken = autoStartSeparate,
+                // ★无可用模型时的出口：跳设置页并直接打开模型库
+                onOpenModelLibrary = {
+                    openModelLibToken++
+                    current = AppDestination.SETTINGS
+                },
                 onPlayStems = { done ->
                     // ★⑭b：若分离期间已切歌 → **不切多轨**，仅提示（防“播旧曲 stem、显新曲”错配）。
                     if (!playerVm.separationMatchesCurrent()) {
@@ -336,6 +343,7 @@ fun AppShell(
 
             AppDestination.SETTINGS -> SettingsScreen(
                 modifier = Modifier.fillMaxSize().padding(padding),
+                openModelLibraryToken = openModelLibToken,
             )
 
             // Step 4（范围B）：歌单页（列表管理 + 持久化）

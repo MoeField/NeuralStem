@@ -162,6 +162,11 @@
     <string name="policy_four_title">4-stem</string>
     <string name="policy_four_hint">4-stem models are fixed (Spleeter 4-stem / Demucs). Disable both tiers to hide the 4-stem buttons on the separation screen.</string>
     <string name="sep_four_all_disabled">All 4-stem tiers disabled → Settings › Separation policy</string>
+    <!-- ★no usable models (not installed or not enabled) -->
+    <string name="sep_four_none_installed">4-stem models not installed → Settings › Model library</string>
+    <string name="sep_no_models_title">No separation model available</string>
+    <string name="sep_no_models_body">Separation needs model files. Download at least one model in Settings › Model library, and enable the matching tier in Separation policy.</string>
+    <string name="sep_no_models_go">Open model library</string>
 
     <!-- Mix page (EQ + track mixer) -->
     <string name="mix_title">Mix</string>

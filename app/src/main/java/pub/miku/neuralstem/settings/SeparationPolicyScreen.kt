@@ -23,7 +23,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -32,6 +34,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import pub.miku.neuralstem.R
 import pub.miku.neuralstem.spike.DeviceBenchmark
 import pub.miku.neuralstem.spike.SepOption
@@ -75,6 +80,26 @@ fun SeparationPolicyScreen(
     val benchRtf = remember { DeviceBenchmark(app).cached().mapValues { it.value.rtf } }
     val benchLoaded = benchRtf.isNotEmpty()
     val tiers = remember(benchRtf) { TierRegistry.twoStemTiers(benchRtf) }
+
+    // ★安装状态刷新（2026-10-20 修复）：
+    //
+    // ## 问题
+    // 用户去「模型库」下载完模型 → 返回本页，仍显示「本机该簇暂无已装模型」/ 开关置灰。
+    // 因为之前**没有任何信号**能触发重算 —— `remember(tier)` 缓存的
+    // `seededModelId` / `selected` 只在首次组合时算一次。
+    //
+    // ## 修法
+    // 监听生命周期（每次回到本页重算）+ 监听下载器状态（前台下载完也重算）。
+    // 用「安装代际」递增 int 作为 key 传给子组件 —— 避免每个 Card 自己轮询文件系统。
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var installEpoch by remember { mutableIntStateOf(0) }
+    DisposableEffect(lifecycleOwner) {
+        val obs = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) installEpoch++
+        }
+        lifecycleOwner.lifecycle.addObserver(obs)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+    }
 
     // ★为何不用 Scaffold（同 ModelLibraryScreen，2026-10-20 横屏实测修）：
     // 宿主 AppShell 已处理系统栏 insets，二级页再套 Scaffold 会被向内挤两次。
@@ -125,6 +150,8 @@ fun SeparationPolicyScreen(
                         .toSet(),
                     repo = repo,
                     seededModelId = tc.candidates.firstOrNull { it.spec.isInstalled(app) }?.id,
+                    // ★安装代际：模型装/删后强制重算 selected
+                    installEpoch = installEpoch,
                 )
             }
 
@@ -149,7 +176,7 @@ fun SeparationPolicyScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             TierRegistry.FOUR_TIERS.forEach { tc ->
-                FourTierCard(tc = tc, repo = repo, app = app)
+                FourTierCard(tc = tc, repo = repo, app = app, installEpoch = installEpoch)
             }
         }
     }
@@ -166,9 +193,11 @@ private fun FourTierCard(
     tc: TierChoices,
     repo: SettingsRepository,
     app: Application,
+    installEpoch: Int,
 ) {
     var enabled by remember(tc.tier) { mutableStateOf(repo.fourTierEnabled(tc.tier)) }
-    val opt = remember(tc) { repo.tierOption(tc.stem, tc.tier) ?: tc.default() }
+    // ★installEpoch 作为 key：模型安装/删除后重新读取选中的模型
+    val opt = remember(tc, installEpoch) { repo.tierOption(tc.stem, tc.tier) ?: tc.default() }
     val installed = opt is SepOption.Sherpa && opt.spec.isInstalled(app)
 
     Card(
@@ -217,11 +246,17 @@ private fun SpeedTierCard(
     installedIds: Set<String>,
     repo: SettingsRepository,
     seededModelId: String?,
+    installEpoch: Int,
 ) {
     var enabled by remember(tier) { mutableStateOf(repo.twoTierEnabled(tier)) }
     val fallback = seededModelId
-    var selected by remember(tier, fallback) {
+    // ★installEpoch 作为 key：模型安装/删除后重新回落
+    var selected by remember(tier, fallback, installEpoch) {
         mutableStateOf(repo.twoTierModelId(tier, fallback))
+    }
+    // ★若之前选的模型已被卸载（换机器/删除），自动回落到首个已装候选
+    if (selected != null && selected !in installedIds) {
+        selected = installedIds.firstOrNull()
     }
     val installedCandidates = candidateIds.filter { it.first in installedIds }
 
