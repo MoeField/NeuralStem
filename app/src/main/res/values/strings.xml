@@ -72,8 +72,8 @@
     <!-- ★闸门：播放追上分离，已自动暂停等待 -->
     <string name="sep_edge_starved">分离跟不上播放，已暂停等待…</string>
     <string name="sep_edge_starved_paused">分离跟不上播放（已暂停）· 分离中 %1$d%%</string>
-    <!-- ★闸门：用户拖到本次分离起点之前（那段从未分离，永远静音） -->
-    <string name="sep_edge_before_start">此段未参与本次分离（从 %1$s 起）· 你已暂停</string>
+    <!-- ★灰区：用户拖到本次分离起点之前（那段从未分离，永远静音；**不暂停**） -->
+    <string name="sep_edge_before_start">此段未参与本次分离（从 %1$s 起），所以无声</string>
     <string name="sep_done_cache">✅ 命中缓存（未重新推理）</string>
     <string name="sep_done">✅ 分离完成</string>
     <string name="sep_done4_cache">✅ 4-stem 命中缓存</string>
