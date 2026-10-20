@@ -124,22 +124,33 @@ fun ModelLibraryScreen(
     }
     fun isOpen(bytes: Long) = (bytes in installedBuckets || bytes in manualOpen) && bytes !in manualClosed
 
-    Scaffold(
-        modifier = modifier.fillMaxSize(),
-        topBar = {
-            TopAppBar(
-                title = { Text(stringResource(R.string.settings_page_models)) },
-                navigationIcon = {
-                    // 零图标依赖：用文本字形做返回
-                    TextButton(onClick = onBack) {
-                        Text("‹ " + stringResource(R.string.page_back))
-                    }
-                },
+    // ★为何不用 Scaffold（2026-10-20 横屏实测修）
+    //
+    // 宿主 AppShell 已经用 `Scaffold { padding -> ... }` 并给页面传了
+    // `Modifier.fillMaxSize().padding(padding)`。本页若再套一层 Scaffold，
+    // 它会被当作“新窗口”再算一遍 insets（含 TopAppBar + 系统栏），
+    // 内容区被向内挤两次 —— 实测横屏下 LazyColumn 只剩 240px 高、
+    // 左边距 192px，模型列表全被推出屏外。
+    //
+    // ⇒ 二级页只负责“标题行 + 内容”，insets 全部交给宿主。
+    Column(modifier = modifier.fillMaxSize()) {
+        // 顶部标题行（等价原 TopAppBar，但不再参与 insets 计算）
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            // 零图标依赖：用文本字形做返回
+            TextButton(onClick = onBack) {
+                Text("‹ " + stringResource(R.string.page_back))
+            }
+            Text(
+                stringResource(R.string.settings_page_models),
+                style = MaterialTheme.typography.titleLarge,
+                modifier = Modifier.padding(start = 8.dp),
             )
-        },
-    ) { padding ->
+        }
         LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding),
+            modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(
                 start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp,
             ),

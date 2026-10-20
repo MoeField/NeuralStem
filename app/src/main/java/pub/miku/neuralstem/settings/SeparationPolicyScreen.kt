@@ -76,23 +76,25 @@ fun SeparationPolicyScreen(
     val benchLoaded = benchRtf.isNotEmpty()
     val tiers = remember(benchRtf) { TierRegistry.twoStemTiers(benchRtf) }
 
-    Scaffold(
-        modifier = modifier.fillMaxSize(),
-        topBar = {
-            TopAppBar(
-                title = { Text(stringResource(R.string.settings_page_policy)) },
-                navigationIcon = {
-                    TextButton(onClick = onBack) {
-                        Text("‹ " + stringResource(R.string.page_back))
-                    }
-                },
+    // ★为何不用 Scaffold（同 ModelLibraryScreen，2026-10-20 横屏实测修）：
+    // 宿主 AppShell 已处理系统栏 insets，二级页再套 Scaffold 会被向内挤两次。
+    Column(modifier = modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TextButton(onClick = onBack) {
+                Text("‹ " + stringResource(R.string.page_back))
+            }
+            Text(
+                stringResource(R.string.settings_page_policy),
+                style = MaterialTheme.typography.titleLarge,
+                modifier = Modifier.padding(start = 8.dp),
             )
-        },
-    ) { padding ->
+        }
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding)
                 .verticalScroll(rememberScrollState())
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
