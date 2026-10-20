@@ -58,42 +58,57 @@ class ModelCatalogGroupingTest {
     }
 
     /**
-     * ★已知缺口（有意固定，不是 bug 修复）。
+     * ★模型库与可分离模型的对应关系（2026-10-20 重写）。
      *
-     * 可下载的 [ModelPack]（8 个）与可分离的 [ModelRegistry.ALL]（5 个正式）
-     * + 13 个实验模型**不是一一对应**：
-     * - 实验模型能测速但**没有下载条目**；
-     * - `demucs / spleeter4` 能下载但**不在** [ModelRegistry.ALL]（另走 Spleeter4Dsp / Demucs 路径）。
+     * 背景：实验模型原本**没有下载条目**（只靠 adb push），因为它们没做过
+     * stem 顺序实证。2026-10-20 完成 NCC 实证后开放了 12 个，本测试锁死对应关系。
      *
-     * 模型库显示「实测 RTF」必须跨这两张表，本测试把缺口显式钉住；
-     * 将来若补齐下载条目，这里会失败并提醒更新预期。
+     * 两个方向都要保证：
+     * 1. **每个实验模型要么有下载条目、要么在“明确排除”名单里** ——
+     *    否则用户会在分离策略里看到它、但模型库里下载不到（幽灵模型）。
+     * 2. **排除名单里的不能有下载条目** —— 否则等于把未验证的推给用户。
      */
     @Test
-    fun `known gap between downloadable packs and separable models`() {
+    fun `实验模型的下载条目与 NCC 实证结论一一对应`() {
+        // ★因 NCC 证据不足而**明确排除**的模型（见 doc/stem_order_evidence.md）
+        val excluded = setOf("uvr-Crowd_HQ_1")
+
+        assertEquals(
+            "EXPERIMENTAL 总数变了（新增模型时请同步更新本测试）",
+            13, ModelRegistry.EXPERIMENTAL.size,
+        )
+        val shouldBeDownloadable = ModelRegistry.EXPERIMENTAL.filter { it.id !in excluded }
+        assertEquals("应有 12 个可下载的实验模型", 12, shouldBeDownloadable.size)
+
+        val downloadableFiles = ModelCatalog.ALL.flatMap { it.files }.map { it.fileName }.toSet()
+        for (spec in ModelRegistry.EXPERIMENTAL) {
+            val hasEntry = spec.fileName in downloadableFiles
+            if (spec.id in excluded) {
+                assertTrue(
+                    "${spec.id} 因 NCC 证据不足被排除，不应有下载条目（否则等于推给用户）",
+                    !hasEntry,
+                )
+            } else {
+                assertTrue(
+                    "${spec.id} 已通过 NCC 实证，模型库应有下载条目（否则是幽灵模型）",
+                    hasEntry,
+                )
+            }
+        }
+    }
+
+    /** Demucs / Spleeter4 可下载但不属于 2 轨模型（走各自引擎路径）。 */
+    @Test
+    fun `demucs 与 spleeter4 可下载但不属于 2 轨模型`() {
         val downloadable = ModelCatalog.ALL.map { it.pack }.toSet()
-        val separatable = ModelRegistry.ALL.map { it.id }
+        val separatable2 = ModelRegistry.ALL.map { it.id }
 
-        // Spleeter 2 轨：可下载且可分离（唯一完全重合的一个）
-        assertTrue("spleeter-2stems-fp16 应可分离", "spleeter-2stems-fp16" in separatable)
-
-        // UVR 5 个正式模型：可下载且可分离
-        val uvrIds = ModelRegistry.UVR_VARIANTS.map { it.id }.toSet()
-        assertEquals("UVR 正式模型应为 5 个", 5, uvrIds.size)
-
-        // Demucs / Spleeter4 可下载但不在 ModelRegistry.ALL（走各自引擎路径）
         assertTrue(ModelPack.DEMUCS in downloadable)
         assertTrue(ModelPack.SPLEETER_4STEM in downloadable)
         assertTrue(
             "Demucs 不应出现在 2 轨模型注册表里",
-            separatable.none { it == "demucs" },
+            separatable2.none { it == "demucs" },
         )
-
-        // 实验模型目前均无下载条目 —— 既定状态
-        val expIds = ModelRegistry.EXPERIMENTAL.map { it.id }.toSet()
-        assertEquals(
-            "实验模型目前均无下载条目（若要补，请同步更新本测试）",
-            0,
-            expIds.count { it in uvrIds },
-        )
+        assertTrue("spleeter-2stems-fp16 应可分离", "spleeter-2stems-fp16" in separatable2)
     }
 }
