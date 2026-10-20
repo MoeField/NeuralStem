@@ -74,7 +74,10 @@ android {
         //   versionCode 必须**严格递增**，否则 F-Droid/Obtainium 看不到更新。
         //   当前规则：semver 的 minor*10 + patch = 21（0.2.1 → 21）。
         versionCode = 21
-        versionName = "0.2.1"
+        // ★versionName 可由 CI 覆盖（`-PversionName=0.2.1`，从 tag 名解出）。
+        //   为何需要：tag 与 build.gradle 里的版本号容易不同步；
+        //   以 tag 为准能保证“Release 页显示的版本 = 代码里的版本”。
+        versionName = (project.findProperty("versionName") as String?) ?: "0.2.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
