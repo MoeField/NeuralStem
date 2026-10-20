@@ -47,6 +47,55 @@ class ModelSpecTest {
         }
     }
 
+    /**
+     * ★实验模型的 stem 顺序 **已 NCC 实证**（2026-10-20，BF00A）。
+     *
+     * 这里把那次实测的结论固定下来 —— 若有人“按名字”改回去（比如觉得
+     * KARA_2 应该和人声优先），本测试会立即失败。
+     *
+     * 实测数据（参考 = Spleeter 2-stem，20s，判据 margin ≥ 0.10）：
+     * ```
+     * Inst_1/2/3, Inst_HQ_1/2/4/5, Inst_Main : same≈0.058 swap≈0.499 margin≈0.44 → ACCOMP_FIRST
+     * KARA_2                                  : same=0.059 swap=0.498 margin=0.44 → ACCOMP_FIRST
+     * 1_9703 / 2_9682 / 3_9662                : same=0.431 swap=0.019 margin=0.41 → VOCALS_FIRST
+     * Crowd_HQ_1                              : same=0.302 swap=0.398 margin=0.096 → UNCERTAIN（保留原标）
+     * ```
+     */
+    @Test
+    fun `实验模型的 stem 顺序与 NCC 实证结果一致`() {
+        val expectedAccompFirst = listOf(
+            "uvr-Inst_1", "uvr-Inst_2", "uvr-Inst_3",
+            "uvr-Inst_HQ_1", "uvr-Inst_HQ_2", "uvr-Inst_HQ_4", "uvr-Inst_HQ_5",
+            "uvr-Inst_Main",
+            // ★KARA_2 是最容易被“按名字”改错的一个 —— 实测它也是反的。
+            "uvr-KARA_2",
+        )
+        val expectedVocalsFirst = listOf(
+            "uvr-9703", "uvr-9682", "uvr-9662",
+            // 证据不足，保留原标注（margin 0.096 < 0.10）
+            "uvr-Crowd_HQ_1",
+        )
+
+        val byId = ModelRegistry.EXPERIMENTAL.associateBy { it.id }
+
+        for (id in expectedAccompFirst) {
+            val m = byId[id]
+            assertNotNull("$id 应在 EXPERIMENTAL 中", m)
+            assertEquals(
+                "$id 经 NCC 实证为 ACCOMP_FIRST（same≈0.058 vs swap≈0.499）",
+                StemOrder.ACCOMP_FIRST, m!!.stemOrder,
+            )
+        }
+        for (id in expectedVocalsFirst) {
+            val m = byId[id]
+            assertNotNull("$id 应在 EXPERIMENTAL 中", m)
+            assertEquals(
+                "$id 经 NCC 实证为 VOCALS_FIRST（或证据不足保留原标）",
+                StemOrder.VOCALS_FIRST, m!!.stemOrder,
+            )
+        }
+    }
+
     @Test
     fun `注册表 id 唯一且都能按 id 反查`() {
         val ids = ModelRegistry.ALL.map { it.id }
