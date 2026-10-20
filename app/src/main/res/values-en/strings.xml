@@ -72,8 +72,8 @@
     <!-- ★gate: playback caught up with separation -->
     <string name="sep_edge_starved">Separation can’t keep up — paused</string>
     <string name="sep_edge_starved_paused">Separation can’t keep up (paused) · separating %1$d%%</string>
-    <!-- ★gate: user seeked before the separation start point -->
-    <string name="sep_edge_before_start">This part was not separated (starts at %1$s) · paused</string>
+    <!-- ★gray zone: user seeked before the separation start point (never separated, so it is silent; playback is NOT paused) -->
+    <string name="sep_edge_before_start">This part was not separated (starts at %1$s), hence silent</string>
     <string name="sep_done_cache">✅ Cache hit (no re-inference)</string>
     <string name="sep_done">✅ Separation done</string>
     <string name="sep_done4_cache">✅ 4-stem cache hit</string>

@@ -465,6 +465,12 @@ private fun ControlsArea(
                 //   慢模型（0.34×）会反复进这个态，必须解释清楚。
                 val pct = state.edgePercent
                 when {
+                    // ★灰区优先：位置在分离起点之前 —— 那段永远不会填，需特别说明。
+                    state.edgeBeforeStart -> Text(
+                        stringResource(R.string.sep_edge_before_start, PlayerViewModel.formatTime(state.edgeStartMs)),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
                     state.edgeStarved && pct != null -> Text(
                         stringResource(R.string.sep_edge_starved_paused, pct),
                         style = MaterialTheme.typography.labelSmall,

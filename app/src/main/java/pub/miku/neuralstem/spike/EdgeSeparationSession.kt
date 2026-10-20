@@ -228,7 +228,32 @@ class EdgeSeparationSession private constructor() {
             }
             else -> Unit
         }
+        // ★灰区（2026-10-20）：目标落在 [0, startFrame) —— 本次分离**从未处理过**这段，
+        //   文件里它是预分配静音，且**永远不会**被填。
+        //   不暂停（等也等不到），但必须告诉用户“为什么没声”。
+        val inGray = playedFrames < 0
+        if (seekInGrayZone != inGray) {
+            seekInGrayZone = inGray
+            if (inGray) {
+                Log.i(TAG, "gate: seek 到分离起点之前 (target=${playedFrames}f) → 灰区（永不填充）")
+            }
+        }
     }
+
+    /**
+     * ★灰区（2026-10-20）：播放位置落在**本次分离起点之前**（`[0, startFrame)`）。
+     *
+     * ## 为何单独一个标志（而不复用 Gate）
+     * 那段数据**永远不会有**（分离从 startFrame 起）→ 进 `Starved` 会让播放器暂停等一个
+     * 永远不会到来的水位线，用户会以为卡死。而它也不需要暂停（静音是正确结果）。
+     * ⇒ 用独立布尔标志，UI 据此显示“此段未参与本次分离”。
+     */
+    @Volatile
+    var seekInGrayZone: Boolean = false
+        private set
+
+    /** 分离起点（ms），供 UI 提示“从 X:XX 起”。 */
+    val startMs: Long get() = startFrame.toLong() * 1000L / sampleRate.coerceAtLeast(1)
 
     // ==================== ★G-3-ux2：边分离边播的**实时波形** ====================
 
@@ -427,6 +452,7 @@ class EdgeSeparationSession private constructor() {
         writtenUpToFrame = 0
         // ★闸门：中止 → Idle。
         _gate.value = Gate.Idle
+        seekInGrayZone = false
         // ★诊断：buffer 置 null —— 若播放器此时仍持 stem:// uri，下一次 open 会抛 IOException。
         Log.i(TAG, "abort: buffers→null (had=$had) fileMode=${vocalsFile != null} state=${_state.value}")
         if (had) {

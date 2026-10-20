@@ -119,6 +119,15 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
      * 没这一项时用户会以为播放坏了（慢模型 0.34× 会频繁进入此态）。
      */
     val edgeStarved: Boolean = false,
+    /**
+     * ★灰区（2026-10-20）：当前播放位置落在**本次分离起点之前**。
+     *
+     * 那段从未分离，文件里是预分配静音且**永远不会填** → 静音是正确结果。
+     * 不暂停（等不了），但必须告知用户“为什么没声”。
+     */
+    val edgeBeforeStart: Boolean = false,
+    /** 本次分离的起点（ms），供“此段未参与分离（从 X:XX 起）”文案。 */
+    val edgeStartMs: Long = 0L,
     )
 
     /** Task 4.4:单条轨的 UI 状态(F4.2/F4.3) */
@@ -663,6 +672,19 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                 val starved = g is EdgeSeparationSession.Gate.Starved
                 if (_state.value.edgeStarved != starved) {
                     _state.value = _state.value.copy(edgeStarved = starved)
+                }
+            }
+        }
+        // ★灰区：位置在本次分离起点之前 → 显示“此段未参与分离”。
+        //   `seekInGrayZone` 是普通 volatile（不是 Flow），故用低频轮询镜像。
+        viewModelScope.launch {
+            val s = EdgeSeparationSession.get()
+            while (isActive) {
+                delay(200)
+                val gray = s.seekInGrayZone
+                val startMs = s.startMs
+                if (_state.value.edgeBeforeStart != gray || _state.value.edgeStartMs != startMs) {
+                    _state.value = _state.value.copy(edgeBeforeStart = gray, edgeStartMs = startMs)
                 }
             }
         }
