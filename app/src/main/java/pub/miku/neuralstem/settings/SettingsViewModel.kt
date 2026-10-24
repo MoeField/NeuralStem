@@ -95,12 +95,19 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             try {
                 val mode = if (long) DeviceBenchmark.Mode.LONG else DeviceBenchmark.Mode.SHORT
-                val r = bench.run(mode, resume = resume) { done, total, id ->
-                    // ★G-1a：进度回写（MutableStateFlow 线程安全，可在 Default 线程直接写）。
-                    _state.value = _state.value.copy(
-                        benchTotal = total, benchDone = done, benchCurrentId = id,
-                    )
-                }
+                // ★分批：每 4 个模型等冷却，避免热降频压低 RTF（2026-10-24 事故）。
+                //   用户点“重新检测”时无感，只是历时变长，但数据可信。
+                val r = bench.run(
+                    mode = mode,
+                    resume = resume,
+                    batchSize = BENCH_BATCH_SIZE,
+                    onProgress = { done, total, id ->
+                        // ★G-1a：进度回写（MutableStateFlow 线程安全，可在 Default 线程直接写）。
+                        _state.value = _state.value.copy(
+                            benchTotal = total, benchDone = done, benchCurrentId = id,
+                        )
+                    },
+                )
                 Log.i(TAG, "benchmark done: ${r.mapValues { "%.2f".format(it.value.rtf) }}")
             } catch (t: Throwable) {
                 Log.e(TAG, "benchmark failed", t)
@@ -205,5 +212,14 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
 
     companion object {
         private const val TAG = "SettingsVm"
+
+        /**
+         * ★benchmark 分批大小（每批后等设备冷却）。
+         *
+         * 为何是 4：BF00A 实测连续跑 18 个模型时，第 8 个之后 RTF 掉了 30–38%
+         * （热降频：小/中核降到 25%）。每 4 个停一次，能在温度升上来之前切断。
+         * 旗舰机（Gen3）散热好，可能从不触发冷却 → 不会有额外等待。
+         */
+        private const val BENCH_BATCH_SIZE = 4
     }
 }

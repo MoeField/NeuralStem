@@ -77,6 +77,8 @@ object TestCommandBus {
           eq      a0=on(bool)         开关 EQ
           inmt    a0=vocals a1=accomp 载入多轨（abs 路径）
           exitsmt                     退出多轨
+          dlmodel a0=all|<packId,...> 下载模型（all=全部；或逗号分隔的 pack id）
+          dlstatus                    打印下载进度（指 dlmodel 的屏上日志）
         例:
           adb shell am start-service -n pub.miku.neuralstem/.devtools.TestCommandService --es cmd seek --es a0 62000
           adb shell am start-service -n pub.miku.neuralstem/.devtools.TestCommandService --es cmd help

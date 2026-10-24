@@ -2,6 +2,7 @@ package pub.miku.neuralstem
 
 import android.net.Uri
 import android.os.Bundle
+import android.os.SystemClock
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -22,6 +23,8 @@ import kotlinx.coroutines.launch
 import pub.miku.neuralstem.devtools.TestCommandBus
 import pub.miku.neuralstem.player.PlayerViewModel
 import pub.miku.neuralstem.player.WaveformCache
+import pub.miku.neuralstem.settings.ModelCatalog
+import pub.miku.neuralstem.settings.ModelDownloader
 import pub.miku.neuralstem.settings.SettingsRepository
 import pub.miku.neuralstem.spike.DeviceBenchmark
 import pub.miku.neuralstem.spike.StemOrderProbe
@@ -41,6 +44,9 @@ class MainActivity : ComponentActivity() {
 
     /** ★NCC 实证任务（长跑，避免重复点击时并发多份）。 */
     private var nccJob: Job? = null
+
+    /** ★dlmodel 下载任务（长跑，避免并发多份；重发即取消旧的）。 */
+    private var downloadJob: Job? = null
 
     private val playerVm: PlayerViewModel by viewModels {
         object : ViewModelProvider.Factory {
@@ -269,6 +275,62 @@ class MainActivity : ComponentActivity() {
                 playerVm.play()
             }
             "exitsmt" -> playerVm.exitMultiTrack()
+            // ★dlmodel：批量下载模型（自动化用，避免 UI 逐个点击 19 次）。
+            //   a0 = "all" 或逗号分隔的 ModelPack.id（如 "uvr-9482,uvr-kara"）。
+            //   结果写 TAG=ModelDl，并同步进 TestLog（屏上可见）。
+            "dlmodel" -> {
+                val sel = a0?.trim().orEmpty()
+                if (sel.isBlank()) {
+                    Log.w("TestCmd", "dlmodel 需要 a0=all|<packId,...>")
+                } else {
+                    val packs = if (sel.equals("all", true)) {
+                        ModelCatalog.ALL.map { it.pack }
+                    } else {
+                        sel.split(',').mapNotNull { id ->
+                            ModelCatalog.ALL.firstOrNull { it.pack.id == id.trim() }?.pack
+                                ?: run {
+                                    Log.w("TestCmd", "dlmodel: 未知 pack id '$id'")
+                                    null
+                                }
+                        }
+                    }
+                    if (packs.isEmpty()) {
+                        Log.w("TestCmd", "dlmodel: 没有可下载的包")
+                    } else {
+                        Log.i("TestCmd", "dlmodel: ${packs.size} 个包 → ${packs.map { it.id }}")
+                        downloadJob = lifecycleScope.launch {
+                            val dl = ModelDownloader(filesDir).apply {
+                                proxyProvider = { SettingsRepository(application).downloadProxy }
+                            }
+                            val pref = SettingsRepository(application).modelSourcePreference
+                            val t0 = SystemClock.elapsedRealtime()
+                            packs.forEachIndexed { i, p ->
+                                Log.i("TestCmd", "dlmodel [${i + 1}/${packs.size}] start ${p.id}")
+                                runCatching { dl.download(p, pref) }
+                                    .onFailure { Log.e("TestCmd", "dlmodel ${p.id} failed", it) }
+                                Log.i(
+                                    "TestCmd",
+                                    "dlmodel [${i + 1}/${packs.size}] done ${p.id} " +
+                                        "installed=${ModelCatalog.installed(filesDir).size}",
+                                )
+                            }
+                            val ids = ModelCatalog.installed(filesDir)
+                            Log.i(
+                                "TestCmd",
+                                "DLMODEL_DONE total=${packs.size} installed=${ids.size}/${ModelCatalog.ALL.size} " +
+                                    "elapsed=${SystemClock.elapsedRealtime() - t0}ms",
+                            )
+                        }
+                    }
+                }
+            }
+            "dlstatus" -> {
+                val ids = ModelCatalog.installed(filesDir)
+                Log.i(
+                    "TestCmd",
+                    "DLSTATUS installed=${ids.size}/${ModelCatalog.ALL.size} ids=$ids",
+                )
+            }
             // ★stem 顺序实证（NCC）：a0 = 测试音频绝对路径
             //   结果写日志 TAG=StemOrderProbe，并用 adb logcat -s StemOrderProbe 读。
             "ncccheck" -> if (a0 != null) {
