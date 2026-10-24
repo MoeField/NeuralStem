@@ -146,7 +146,7 @@
     <string name="page_back">返回</string>
     <!-- 模型库：体积分节 -->
     <string name="models_group_header">%1$s · %2$d 个模型</string>
-    <string name="models_group_hint">实测 %1$s</string>
+    <string name="models_group_hint">%1$s</string>
     <string name="models_rtf_unknown">未测</string>
     <string name="models_rtf_value">实测 %1$s</string>
     <string name="models_delete">删除</string>

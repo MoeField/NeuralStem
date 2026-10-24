@@ -233,7 +233,15 @@ fun ModelLibraryScreen(
                             style = MaterialTheme.typography.titleSmall,
                             modifier = Modifier.weight(1f),
                         )
-                        ModelCatalog.sizeBucketHint(bytes)?.let { hint ->
+                        // ★本机实测值（2026-10-25）：不再硬编码 ≈0.34×。
+                        //   未测过该节任何模型 → null → 不显示（而不是编一个数字）。
+                        ModelCatalog.sizeBucketHint(
+                            bytes = bytes,
+                            rtfMap = rtf,
+                            idsOf = { infos ->
+                                infos.mapNotNull { i -> modelIdOf(i.pack) }
+                            },
+                        )?.let { hint ->
                             Text(
                                 stringResource(R.string.models_group_hint, hint),
                                 style = MaterialTheme.typography.bodySmall,
@@ -447,31 +455,37 @@ private fun ModelRow(
 }
 
 /**
- * 该包的「实测 RTF」文案。
+ * 把一个 [ModelPack] 换算成 `DeviceBenchmark` 使用的 **ModelSpec.id**（找不到返回 null）。
  *
- * ## 为何要跨三张表查
- * `DeviceBenchmark` 的键是 **ModelSpec.id**，而模型库遍历的是 **ModelPack**；
+ * ## 为何要跨表查
+ * `DeviceBenchmark` 的键是 **ModelSpec.id**，而模型库遍历的是 **ModelPack**，
  * 两者并不一一对应（见 `ModelCatalogGroupingTest` 的已知缺口测试）：
  * - `SPLEETER_2STEM` → `spleeter-2stems-fp16`
- * - `UVR_*` → 同名 UVR spec（按文件名反查，最稳）
+ * - `UVR_*` → 按**文件名**反查 ModelSpec（文件名唯一，比按 index 更稳）
  * - `SPLEETER_4STEM` → `spleeter4`（走 4 轨 DSP，不是 sherpa spec）
  * - `DEMUCS` → `demucs`
  *
- * 查不到 → 显示「未测」。注意 Spleeter 2-stem 的 `sizeMb=39` 对应两个文件共 39MB，
- * 与 bench 里的 8.6× 是同一条记录。
+ * UVR 同时查 [ModelRegistry.ALL] 与 [ModelRegistry.EXPERIMENTAL]：
+ * 正式 5 个在 ALL，实验 12 个在 EXPERIMENTAL，两者都要覆盖。
+ */
+internal fun modelIdOf(pack: ModelPack): String? = when (pack) {
+    ModelPack.SPLEETER_2STEM -> ModelRegistry.SPLEETER.id
+    ModelPack.SPLEETER_4STEM -> "spleeter4"
+    ModelPack.DEMUCS -> "demucs"
+    else -> {
+        val file = ModelCatalog.info(pack).files.firstOrNull()?.fileName
+        ModelRegistry.ALL.firstOrNull { it.fileName == file }?.id
+            ?: ModelRegistry.EXPERIMENTAL.firstOrNull { it.fileName == file }?.id
+    }
+}
+
+/**
+ * 单个模型的「实测 RTF」文案（行内小字）。
+ *
+ * 查不到 → 返回空串（UI 不显示）。注意 Spleeter 2-stem 的 `sizeMb=39` 对应两个文件
+ * 共 39MB，与 bench 里的同一条记录。
  */
 private fun modelRtfText(info: ModelPackInfo, rtf: Map<String, Float>): String {
-    val id = when (info.pack) {
-        ModelPack.SPLEETER_2STEM -> ModelRegistry.SPLEETER.id
-        ModelPack.SPLEETER_4STEM -> "spleeter4"
-        ModelPack.DEMUCS -> "demucs"
-        else -> {
-            // UVR：按首个文件名反查 ModelSpec（文件名唯一，比按 index 更稳）
-            val file = info.files.firstOrNull()?.fileName
-            ModelRegistry.ALL.firstOrNull { it.fileName == file }?.id
-                ?: ModelRegistry.EXPERIMENTAL.firstOrNull { it.fileName == file }?.id
-        }
-    }
-    val v = id?.let { rtf[it] } ?: return ""
+    val v = modelIdOf(info.pack)?.let { rtf[it] } ?: return ""
     return "%.2f×".format(v)
 }

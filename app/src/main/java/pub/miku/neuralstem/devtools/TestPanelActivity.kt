@@ -173,12 +173,31 @@ class TestPanelActivity : ComponentActivity() {
             try {
                 val mode = if (long) DeviceBenchmark.Mode.LONG else DeviceBenchmark.Mode.SHORT
                 // ★G-1a：带进度回调（验证半态/进度）+ resume（续测）
+                // ★分批 + 冷却：每 4 个停一次，避免热降频（2026-10-24 事故）
                 val r = runBlocking {
-                    DeviceBenchmark(application).run(mode, resume = true) { done, total, id ->
-                        TestLog.log("Bench", "进度 $done/$total ← $id")
-                    }
+                    DeviceBenchmark(application).run(
+                        mode = mode,
+                        resume = true,
+                        batchSize = 4,
+                        onProgress = { done, total, id ->
+                            TestLog.log("Bench", "进度 $done/$total ← $id")
+                        },
+                        onCooldown = { ms, s ->
+                            TestLog.log("Bench", "冷却 ${ms / 1000}s ${s.describe()}")
+                        },
+                    )
                 }
-                r.forEach { (id, b) -> TestLog.log("Bench", "$id rtf=%.2f ms=${b.ms}".format(b.rtf)) }
+                r.forEach { (id, b) ->
+                    TestLog.log(
+                        "Bench",
+                        "$id rtf=%.2f ms=${b.ms} %s".format(
+                            b.rtf,
+                            b.thermal?.describe() ?: "",
+                        ),
+                    )
+                }
+                val suspect = r.values.count { it.thermal?.suspect == true }
+                TestLog.log("Bench", "可信度: ${r.size - suspect}/${r.size} 未被降频污染")
                 TestLog.log("Panel", "=== bench DONE in ${SystemClock.elapsedRealtime() - t0}ms ===")
             } catch (t: Throwable) {
                 TestLog.log("Panel", "bench FAILED: $t")

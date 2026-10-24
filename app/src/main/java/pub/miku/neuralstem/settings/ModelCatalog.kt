@@ -387,13 +387,21 @@ object ModelCatalog {
     /**
      * ★模型库：把全部包**按体积分节**（升序）。
      *
-     * ## 为何按体积而不是按名字/引擎
-     * 19 个模型的实测 RTF 与**文件名无关、与体积强相关**（`doc/model_speed_tiers.md`）：
+     * ## 为何按体积分组（三设备实测验证，2026-10-25）
+     * 18 个 UVR 的实测 RTF 与**文件名无关、与体积强相关**：
      * ```
-     * 28MB → 1.00–1.04×   39MB → 8.56×（Spleeter 2 轨）
-     * 50MB → 0.52×        56MB → 0.41×       64MB → 0.34–0.35×   172MB → 0.06×（Demucs）
+     * 28MB → 最快   50MB → 第二   56MB → 第三   64MB → 最慢
      * ```
-     * 所以「体积」是速度簇的**物理成因**，按它分组比按功能分组更能解释“为什么慢”。
+     * **关键证据**：这个簇边界在**三台不同设备**上**完全相同**（见
+     * `doc/benchmark_3devices_2026-10-25.md`）：
+     * ```
+     *          28MB        50MB        56MB        64MB
+     * BF00A   1.02×       0.52×       0.41×       0.35×   (Helio G100)
+     * OPPO    0.97×       0.48×       0.38×       0.32×   (天玑 MT6833)
+     * Gen3    2.01×       0.99×       0.76×       0.71×   (骁龙 8 Gen3)
+     * ```
+     * 物理原因：体积 ≈ `dim_f`（频谱宽度）→ 直接决定矩阵乘的计算量。
+     * ⇒ **体积是跨设备稳定的可靠代理**，而绝对 RTF **不能**跨设备硬编码。
      *
      * @return 每个元素 = (节体积字节, 该节的包)；节内保持 [ALL] 的原顺序。
      */
@@ -401,18 +409,41 @@ object ModelCatalog {
         ALL.groupBy { it.totalBytes }.toSortedMap().map { (bytes, list) -> bytes to list }
 
     /**
-     * 某包的「该体积簇典型 RTF 区间」说明（仅用于分节头的小字，非精确值）。
+     * 某包的「该体积簇典型 RTF」说明（分节头小字）。
      *
-     * 无对应体积 → null（UI 不显示）。
+     * ## ★★ 2026-10-25 重写：改为**本机实测**，不再硬编码
+     *
+     * 旧实现硬编码了 BF00A 的数字：
+     * ```kotlin
+     * bytes >= 60_000_000L -> "≈0.34–0.35×"   // ← 这是 Helio G100 的值
+     * ```
+     * 但 Gen3 上同样 64MB 的模型实测 **0.71×**（快一倍）—— 用户会看到与实际严重不符的
+     * 数字，进而怀疑“模型是不是装错了”。
+     *
+     * ## 现做法
+     * 1. 从 [rtfMap]（本机 benchmark 缓存）取该节内**已测模型的中位数 RTF**
+     * 2. 一个都没测过 → 返回 null（UI **不显示**，而不是编一个数字）
+     *
+     * @param bytes 节的体积（字节）
+     * @param rtfMap 本机实测 RTF（键 = `ModelSpec.id`，来自 `DeviceBenchmark.cached()`）
+     * @param idsOf 把该节的包换算成 `ModelSpec.id` 的函数（跨 ModelPack / ModelSpec 两表）
+     * @return 形如 `"本机 0.71×"`；本机未测该节任何模型 → null
      */
-    fun sizeBucketHint(bytes: Long): String? = when {
-        bytes >= 150_000_000L -> "≈0.06×（旗舰机才勉强可用）"
-        bytes >= 60_000_000L -> "≈0.34–0.35×"
-        bytes >= 52_000_000L -> "≈0.41×"
-        bytes >= 45_000_000L -> "≈0.52×"
-        bytes >= 30_000_000L -> "≈8.6×（最快）"
-        bytes >= 20_000_000L -> "≈1.00–1.04×"
-        else -> null
+    fun sizeBucketHint(
+        bytes: Long,
+        rtfMap: Map<String, Float>,
+        idsOf: (List<ModelPackInfo>) -> List<String>,
+    ): String? {
+        val infos = ALL.filter { it.totalBytes == bytes }
+        val values = idsOf(infos).mapNotNull { rtfMap[it] }.sorted()
+        if (values.isEmpty()) return null
+        // 中位数（偶数取中间两个的平均）——比均值抗离群
+        val median = if (values.size % 2 == 1) {
+            values[values.size / 2]
+        } else {
+            (values[values.size / 2 - 1] + values[values.size / 2]) / 2f
+        }
+        return "本机 %.2f×".format(median)
     }
 
     /** 人类可读体积。 */

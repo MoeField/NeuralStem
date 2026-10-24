@@ -79,10 +79,30 @@ class SpikeActivity : ComponentActivity() {
                 //   默认只测已注册的（ALL）——设置页/档位用的就是这批。
                 val all = intent.getBooleanExtra("bench_all", false)
                 val models = if (all) ModelRegistry.BENCHMARKABLE else ModelRegistry.ALL
-                Log.i("DevBench", "bench start: ${models.size} 个模型（all=$all, mode=$mode）")
-                val r = DeviceBenchmark(application).run(mode, models = models)
+                // ★--ei bench_batch N：每 N 个模型分批，批间等冷却（防热降频）。
+                //   0/缺省 = 不分批（旧行为）。2026-10-24 热降频事故后新增。
+                val batch = intent.getIntExtra("bench_batch", 0)
+                Log.i(
+                    "DevBench",
+                    "bench start: ${models.size} 个模型（all=$all, mode=$mode, batch=$batch）",
+                )
+                val r = DeviceBenchmark(application).run(
+                    mode = mode,
+                    models = models,
+                    batchSize = batch,
+                    onCooldown = { ms, s ->
+                        Log.i("DevBench", "cooldown ${ms / 1000}s ${s.describe()}")
+                    },
+                )
                 val summary = r.entries.joinToString { e -> e.key + "=" + e.value.rtf }
                 Log.i("DevBench", "BENCH_DONE " + summary)
+                // ★可信度汇总：热降频标记了多少个
+                val suspect = r.values.count { it.thermal?.suspect == true }
+                Log.i(
+                    "DevBench",
+                    "BENCH_QUALITY total=${r.size} suspect=$suspect " +
+                        (if (suspect > 0) "⚠️ 有数据被热降频污染，建议冷却后重跑" else "✅ 全部可信"),
+                )
             }
         }
 

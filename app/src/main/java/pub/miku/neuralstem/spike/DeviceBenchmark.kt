@@ -43,11 +43,13 @@ class DeviceBenchmark(private val app: Application) {
     /**
      * @param rtf 实时率(>1 比播放快)
      * @param ms 本次测量的代表耗时(ms)
+     * @param thermal 测量时的热状态快照（**数据可信度证据**）；null = 未采集
      */
     data class ModelBenchmark(
         val modelId: String,
         val rtf: Float,
         val ms: Long,
+        val thermal: ThermalProbe.Snapshot? = null,
     ) {
         /** 处理 [audioSeconds] 秒音频预计耗时(ms)。 */
         fun estimateMs(audioSeconds: Float): Long =
@@ -66,7 +68,25 @@ class DeviceBenchmark(private val app: Application) {
             buildMap {
                 for (id in obj.keys()) {
                     val o = obj.getJSONObject(id)
-                    put(id, ModelBenchmark(id, o.getDouble("rtf").toFloat(), o.getLong("ms")))
+                    // ★热状态可选（旧缓存无此字段 → null，不报错）
+                    val thermal = if (o.has("thermalStatus")) {
+                        ThermalProbe.Snapshot(
+                            thermalStatus = o.optInt("thermalStatus", -1),
+                            maxTempC = if (o.has("maxTempC")) o.getDouble("maxTempC").toFloat() else null,
+                            freqRatio = if (o.has("freqRatio")) o.getDouble("freqRatio").toFloat() else null,
+                        )
+                    } else {
+                        null
+                    }
+                    put(
+                        id,
+                        ModelBenchmark(
+                            id,
+                            o.getDouble("rtf").toFloat(),
+                            o.getLong("ms"),
+                            thermal,
+                        ),
+                    )
                 }
             }
         }.getOrElse {
@@ -124,7 +144,13 @@ class DeviceBenchmark(private val app: Application) {
         mode: Mode = Mode.SHORT,
         models: List<ModelSpec> = ModelRegistry.ALL,
         resume: Boolean = false,
+        /** ★分批：每跑完 [batchSize] 个就等设备冷却。0 = 不分批（旧行为）。 */
+        batchSize: Int = 0,
+        /** ★冷却超时（每批间隔最多等多久）。 */
+        cooldownMaxMs: Long = 10 * 60 * 1000L,
         onProgress: ((done: Int, total: Int, modelId: String) -> Unit)? = null,
+        /** ★分批时的冷却回调（`elapsedMs` / `snapshot`）。 */
+        onCooldown: ((elapsedMs: Long, s: ThermalProbe.Snapshot) -> Unit)? = null,
     ): Map<String, ModelBenchmark> = withContext(Dispatchers.Default) {
         val rounds = if (mode == Mode.LONG) 3 else 1
         // ★G-1a 可续半态：续测时以已有缓存为初值，跳过已测（LONG 除外——重测提精度）。
@@ -135,18 +161,39 @@ class DeviceBenchmark(private val app: Application) {
         val pending = models.filter { !out.containsKey(it.id) }
         val total = pending.size
 
-        // ★G-1a：编排（进度/取消/逐模型落盘）抽到 [runBenchmarkPlan]（纯逻辑，可单测）。
-        runBenchmarkPlan(
-            pending = pending,
-            total = total,
-            isActive = { coroutineContext.isActive },
-            measure = { spec -> measureOne(spec, rounds) },
-            onResult = { spec, b ->
+        // ★分批（2026-10-24 热降频事故后新增）：每测完 batchSize 个模型就等冷却。
+        //   不分批时（batchSize<=0）完全等价于旧行为。
+        val pm = app.getSystemService(android.os.PowerManager::class.java)
+        val plan = if (batchSize > 0) {
+            pending.chunked(batchSize).flatMapIndexed { i, batch ->
+                if (i == 0) batch else {
+                    // 在批与批之间插入“冷却”哨兵（用 null 标记，下面循环里识别）
+                    @Suppress("UNCHECKED_CAST")
+                    (listOf(null) + batch) as List<ModelSpec?>
+                }
+            }
+        } else {
+            pending as List<ModelSpec?>
+        }
+
+        var done = 0
+        for (item in plan) {
+            if (!coroutineContext.isActive) break
+            if (item == null) {
+                // ---- 冷却点 ----
+                Log.i(TAG, "batch cooldown: waiting until not throttled (max ${cooldownMaxMs}ms)")
+                ThermalProbe.waitUntilCool(pm, maxWaitMs = cooldownMaxMs, onProgress = onCooldown)
+                continue
+            }
+            val spec = item
+            val b = measureOne(spec, rounds)
+            if (b != null) {
                 out[spec.id] = b
-                save(out)   // 每模型落盘：中断/取消不丢已测
-            },
-            onProgress = onProgress,
-        )
+                save(out)
+            }
+            done++
+            onProgress?.invoke(done, total, spec.id)
+        }
         out
     }
 
@@ -170,7 +217,16 @@ class DeviceBenchmark(private val app: Application) {
             Log.w(TAG, "skip ${spec.id}: engine create failed", it); null
         } ?: return null
 
+        // ★热探针：在**测量期间**采样（预热后、每轮后），取最后一轮的值。
+        //
+        // ## 为何不能在测量前/后单独采一次（2026-10-25 OPPO 实测修正）
+        // 初版在主测前采一次 → 拿到的是 **空闲频率**（推理还没开始跑）→ 误报 25%“降频”。
+        // 实际上：空闲时小核本来就在 25–40%，这是正常调度，不是降频。
+        // ⇒ 必须在**推理刚跑完**时采样，那时频率才反映真实负载下的状态。
+        val powerManager = app.getSystemService(android.os.PowerManager::class.java)
+
         val times = ArrayList<Long>(rounds)
+        var thermal = ThermalProbe.Snapshot(-1, null, null)
         try {
             // 预热(丢弃):首次 forward 有 lazy 分配/页错误,不代表稳态
             runCatching { engine.separate(block, 2, SR) }
@@ -178,6 +234,8 @@ class DeviceBenchmark(private val app: Application) {
                 val t0 = System.nanoTime()
                 engine.separate(block, 2, SR)
                 times += (System.nanoTime() - t0) / 1_000_000
+                // ★每轮跑完立即采：此时 CPU 频率处于负载态（非空闲）
+                thermal = ThermalProbe.snapshot(powerManager)
             }
         } finally {
             engine.release()
@@ -185,8 +243,13 @@ class DeviceBenchmark(private val app: Application) {
 
         val ms = times.sorted()[times.size / 2]     // 中位数
         val rtf = chunkSeconds / (ms / 1000f)
-        Log.i(TAG, "bench ${spec.id}: chunk=${"%.1f".format(chunkSeconds)}s ms=$ms rtf=${"%.2f".format(rtf)} (rounds=$rounds times=$times)")
-        return ModelBenchmark(spec.id, rtf, ms)
+        // ★日志带热状态 —— 看到 ⚠️SUSPECT 就知道这次数据不可信（2026-10-24 热降频事故）。
+        Log.i(
+            TAG,
+            "bench ${spec.id}: chunk=${"%.1f".format(chunkSeconds)}s ms=$ms rtf=${"%.2f".format(rtf)} " +
+                "(rounds=$rounds times=$times) ${thermal.describe()}",
+        )
+        return ModelBenchmark(spec.id, rtf, ms, thermal)
     }
 
     // ---------------- 内部 ----------------
@@ -225,7 +288,19 @@ class DeviceBenchmark(private val app: Application) {
     private fun save(results: Map<String, ModelBenchmark>) {
         val obj = JSONObject()
         results.forEach { (id, b) ->
-            obj.put(id, JSONObject().put("rtf", b.rtf.toDouble()).put("ms", b.ms))
+            obj.put(
+                id,
+                JSONObject().apply {
+                    put("rtf", b.rtf.toDouble())
+                    put("ms", b.ms)
+                    // ★热状态一并落盘：事后可查“这次测量可信吗”（2026-10-24 热降频事故）
+                    b.thermal?.let { t ->
+                        put("thermalStatus", t.thermalStatus)
+                        t.maxTempC?.let { put("maxTempC", it.toDouble()) }
+                        t.freqRatio?.let { put("freqRatio", it.toDouble()) }
+                    }
+                },
+            )
         }
         app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit().putString(cacheKey(), obj.toString()).apply()
