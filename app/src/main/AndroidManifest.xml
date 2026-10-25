@@ -17,6 +17,17 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
+    <!--
+      ★NCM 导入（Shizuku）：仅 `-Pwith_ncm=true` 构建才会真正引用这些库。
+
+      `tools:overrideLibrary` 的用途：Shizuku 的 AAR 声明 minSdk=24，
+      而本项目 minSdk=23。这个 override 让清单合并通过。
+      **安全性**：NcmImporter 的全部入口都在 NCM 面板（with_ncm 构建）里，
+      Android 6（API 23）用户即使误入也会在调用 Shizuku 时安全失败（功能不支持），
+      不影响播放/分离等主线功能。
+    -->
+    <uses-sdk tools:overrideLibrary="rikka.shizuku.api,rikka.shizuku.provider" />
+
     <application
         android:largeHeap="true"
         android:allowBackup="true"
@@ -81,6 +92,30 @@
             android:name=".devtools.TestPanelActivity"
             android:exported="true"
             android:label="测试面板" />
+
+        <!--
+          ★Shizuku Provider（NCM 导入用）。
+
+          ## 为何必须有它
+          Shizuku API 靠这个 provider 完成 **binder 初始化**：
+          `Shizuku.pingBinder()` / `checkSelfPermission()` / `newProcess()` 全部依赖它。
+          没有声明时，`pingBinder()` 恒为 false → 表现为“Shizuku 没运行”，
+          但实际进程在跑（第一次实测就踩了这坑）。
+
+          ## 字段说明（照官方 demo）
+          - `authorities = ${applicationId}.shizuku`：必须是这个格式
+          - `exported = true` + `permission = INTERACT_ACROSS_USERS_FULL`：
+            Shizuku App 需要跨用户访问它，缺了权限声明会 binder 失败
+
+          仅 `-Pwith_ncm=true` 构建实际用到（默认构建带着也无害，因为无代码引用）。
+        -->
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:enabled="true"
+            android:exported="true"
+            android:multiprocess="false"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
     </application>
 
 </manifest>

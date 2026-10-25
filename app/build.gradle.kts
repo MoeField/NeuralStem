@@ -158,6 +158,22 @@ android {
         buildConfigField("boolean", "WITH_NCM", withNcm.toString())
     }
 
+    // ================= ★Shizuku（仅 with_ncm 时） =================
+    //
+    // ## 用途
+    // 网易云把 .ncm 存在 `/storage/XXXX/Android/data/com.netease.cloudmusic/files/...`，
+    // Android 11+ 下**普通应用无法读**（SAF 选择器也进不去）。
+    // Shizuku 提供“以 shell 权限运行”的能力 → 可以把文件 cp 到公共目录。
+    //
+    // ## 为何受 with_ncm 控制
+    // 这是 NCM 功能的辅助工具，不属主线；不带 NCM 的构建不应多一个依赖。
+    if (withNcm) {
+        dependencies {
+            implementation("dev.rikka.shizuku:api:13.1.5")
+            implementation("dev.rikka.shizuku:provider:13.1.5")
+        }
+    }
+
     // Task 0e: StreamingSeparator 是纯逻辑类(分块/交叉淡化/权重归一化),
     // 但内部用 android.util.Log 做诊断输出。JVM 单测里那个类只有 "not mocked" 桩,
     // 一调用就抛 RuntimeException。开启默认返回值,让 Log 在单测中变为空操作,

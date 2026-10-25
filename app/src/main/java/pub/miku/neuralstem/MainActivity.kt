@@ -304,6 +304,14 @@ class MainActivity : ComponentActivity() {
                         )
                         val result = m.invoke(inst, a0, filesDir.absolutePath)
                         Log.i("TestCmd", "NCM_RESULT $result")
+                        // ★可选：a1="bench" → 额外跑性能基准（实测解密耗时）
+                        if (a1 == "bench") {
+                            val bm = cls.getMethod("benchmark", String::class.java, Int::class.javaPrimitiveType)
+                                .invoke(inst, a0, 3)
+                            android.util.Log.i("TestCmd", "NCM_BENCH $bm")
+                            File(filesDir, "ncmtest_result.txt")
+                                .appendText("\n\n--- benchmark ---\n$bm\n")
+                        }
                     }.onFailure { Log.e("TestCmd", "ncmtest 失败", it) }
                     Log.i("TestCmd", "ncmtest done in ${SystemClock.elapsedRealtime() - t0}ms")
                 }
@@ -363,6 +371,84 @@ class MainActivity : ComponentActivity() {
                     "TestCmd",
                     "DLSTATUS installed=${ids.size}/${ModelCatalog.ALL.size} ids=$ids",
                 )
+            }
+            // ★ncmimport：用 Shizuku 把网易云私有目录的 .ncm 复制到 /sdcard/Music/NCM。
+            //   无参数 = 先报状态 + 列源目录 + 列文件（不复制）
+            //   a0="copy" a1=<文件名或 all> = 真正复制
+            //   结果同样写 filesDir/ncmtest_result.txt（vivo 吞 logcat）
+            "ncmimport" -> {
+                if (!BuildConfig.WITH_NCM) {
+                    Log.w("TestCmd", "ncmimport 不可用：未启用 NCM 模块")
+                } else if (a0 == "request") {
+                    // 主动弹 Shizuku 授权框（需主线程）
+                    runCatching {
+                        val icls = Class.forName("pub.miku.neuralstem.experimental.ncm.NcmImporter")
+                        val inst = icls.getField("INSTANCE").get(null)
+                        val ok = icls.getMethod("requestPermission").invoke(inst) as Boolean
+                        Log.i("TestCmd", "NCM requestPermission -> $ok")
+                    }.onFailure { Log.e("TestCmd", "request failed", it) }
+                } else {
+                    lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                        val sb = StringBuilder()
+                        runCatching {
+                            val icls = Class.forName(
+                                "pub.miku.neuralstem.experimental.ncm.NcmImporter",
+                            )
+                            val inst = icls.getField("INSTANCE").get(null)
+
+                            // ★分步记录：每一步都写文件，卡在哪一步一目了然
+                            fun step(s: String) {
+                                sb.append(s).append('\n')
+                                runCatching {
+                                    File(filesDir, "ncmtest_result.txt").writeText(sb.toString())
+                                }
+                            }
+
+                            step("1. start")
+                            val st = icls.getMethod("status", android.content.Context::class.java)
+                                .invoke(inst, application)
+                            step("2. status = $st")
+
+                            // 单独测 sh()（这是最可能卡住的一步）
+                            step("3. calling findSourceDirs...")
+                            val dirs = icls.getMethod("findSourceDirs").invoke(inst) as List<*>
+                            step("4. sourceDirs = $dirs")
+
+                            // 列文件
+                            val listM = icls.getMethod("listNcm", String::class.java)
+                            val all = mutableListOf<String>()
+                            for (d in dirs) {
+                                val entries = listM.invoke(inst, d) as List<*>
+                                step("5. $d -> ${entries.size} 个 .ncm")
+                                entries.take(3).forEach { e ->
+                                    step("     ${e?.toString()}")
+                                }
+                                all += entries.filterNotNull().mapNotNull { ent ->
+                                    ent.javaClass.getMethod("getAbsolutePath")
+                                        .invoke(ent) as? String
+                                }
+                            }
+
+                            // 复制指定文件（a1=文件名）或全部（a1=all）
+                            if (a0 == "copy" && all.isNotEmpty()) {
+                                val toCopy = if (a1 == null || a1 == "all") all.take(3) else {
+                                    all.filter { it.endsWith("/$a1") }
+                                }
+                                step("6. 复制 ${toCopy.size} 个...")
+                                val ir = icls.getMethod(
+                                    "importTo", List::class.java, String::class.java,
+                                ).invoke(inst, toCopy, "Music/NCM")
+                                step("7. result = $ir")
+                            }
+
+                            val d = icls.getMethod("drainDiagnostics").invoke(inst) as String
+                            if (d.isNotBlank()) step("--- diag ---\n$d")
+                        }.onFailure { sb.append("ERR: ").append(it).append('\n') }
+
+                        Log.i("TestCmd", "NCMIMPORT\n$sb")
+                        runCatching { File(filesDir, "ncmtest_result.txt").writeText(sb.toString()) }
+                    }
+                }
             }
             // ★stem 顺序实证（NCC）：a0 = 测试音频绝对路径
             //   结果写日志 TAG=StemOrderProbe，并用 adb logcat -s StemOrderProbe 读。
