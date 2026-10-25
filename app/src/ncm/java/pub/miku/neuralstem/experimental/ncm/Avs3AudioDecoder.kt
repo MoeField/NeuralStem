@@ -58,26 +58,50 @@ class Avs3AudioDecoder : Closeable {
     }
 
     /**
-     * ★用**第一帧**初始化解码器（解析 sequence header）。
+     * ★按官方顺序初始化（`parse_header(init=1)` → `parse_header(init=0)`）。
      *
-     * ## 为何必须调
-     * `open()` 只做了 `calloc`（全零）。而 `avs3_decode` 靠 ctx 里的
-     * 采样率/帧长/声道数算输出大小 —— 全零时输出恒为空。
-     * `parse_header` 从码流解析并填好这些字段。
+     * ## 为何要两次
+     * 从 `avs3_dec_lib.c` 的官方封装可看出：
+     * ```c
+     * // Avs3DecoderLibCreate:
+     * Avs3ParseBsFrameHeader(dec, hdr, 1, NULL);   // ← init=1：解析头+初始化
+     * Avs3InitDecoder(dec, &fModel, path);
+     * // Avs3DecoderLibParseHeader:
+     * Avs3ParseBsFrameHeader(dec, hdr, 0, &crc);   // ← init=0：算 CRC
+     * bytesPerFrame = ceil(bitsPerFrame / 8);
+     * ```
      *
-     * 实测日志（成功时）：
-     * ```
-     * parse_header: len=2415 -> rc=1 offset=0 out2=0
-     *   ctx: sampleRate=44100 totalSamples=... frameSize=1024 channels=2 required=...
-     * ```
+     * @return 0 成功
      */
-    fun parseHeader(firstFrame: ByteArray): Boolean {
-        if (handle == 0L) return false
-        val rc = runCatching { nativeParseHeader(handle, firstFrame) }
+    fun initSequence(headerFrame: ByteArray): Int {
+        if (handle == 0L) return -1
+        val rc = runCatching { nativeInitSequence(handle, headerFrame) }
+            .onFailure { Log.e(TAG, "initSequence EXCEPTION", it) }
+            .getOrDefault(-99)
+        Log.i(TAG, "initSequence rc=$rc")
+        return rc
+    }
+
+    /**
+     * ★初始化/解析帧头（单次）。
+     *
+     * ```c
+     * int parse_header(h, data, len, isInitFrame, &lenConsumed, &crc);
+     * ```
+     *
+     * ## 之前崩溃的根因（2026-10-25）
+     * 靠反汇编猜签名时漏了第 6 参 `unsigned short* crc`，
+     * 库往随机地址写 → 前 60 帧碰巧能跑，之后 `SIGSEGV fault addr 0x1202`。
+     *
+     * @param isInitFrame true = 初始化帧（sequence header）
+     * @return 库的原始返回值（0 = 成功）
+     */
+    fun parseHeader(frame: ByteArray, isInitFrame: Boolean = true): Int {
+        if (handle == 0L) return -1
+        val rc = runCatching { nativeParseHeader(handle, frame, if (isInitFrame) 1 else 0) }
             .onFailure { Log.e(TAG, "parseHeader EXCEPTION", it) }
             .getOrDefault(-99)
-        Log.i(TAG, "parseHeader rc=$rc")
-        return rc == 0
+        return rc
     }
 
     /**
@@ -128,7 +152,8 @@ class Avs3AudioDecoder : Closeable {
     private external fun nativeInit(): Int
     private external fun nativeCreate(): Long
     private external fun nativeDestroy(handle: Long)
-    private external fun nativeParseHeader(handle: Long, firstFrame: ByteArray): Int
+    private external fun nativeParseHeader(handle: Long, frame: ByteArray, isInitFrame: Int): Int
+    private external fun nativeInitSequence(handle: Long, headerFrame: ByteArray): Int
     private external fun nativeDecode(
         handle: Long,
         inBytes: ByteArray,
