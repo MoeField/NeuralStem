@@ -590,6 +590,131 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
+            // ★avs3test：端到端验证 AVS3 解码（ncm → m4a → 裸流 → PCM）
+            //   a0 = .ncm 路径
+            "avs3test" -> {
+                if (!BuildConfig.WITH_NCM) {
+                    Log.w("TestCmd", "avs3test 不可用：未启用 NCM 模块")
+                } else if (a0 == null) {
+                    Log.w("TestCmd", "avs3test 需要 a0=.ncm 路径")
+                } else {
+                    // ★a0 = "auto" → 自动取导入目录第一个 .ncm（避命令行空格）
+                    val realPath = if (a0 == "auto") {
+                        runCatching {
+                            val icls = Class.forName(
+                                "pub.miku.neuralstem.experimental.ncm.NcmImporter",
+                            )
+                            val inst = icls.getField("INSTANCE").get(null)
+                            val dir = icls.getMethod(
+                                "destDir", android.content.Context::class.java, String::class.java,
+                            ).invoke(inst, application, "NCM") as File
+                            dir.listFiles { f -> f.name.endsWith(".ncm", true) }
+                                ?.firstOrNull()?.absolutePath
+                        }.getOrNull()
+                    } else a0
+                    if (realPath == null) {
+                        runCatching {
+                            File(filesDir, "ncmtest_result.txt")
+                                .writeText("ERR: auto 模式找不到 .ncm")
+                        }
+                    } else lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                        val sb = StringBuilder()
+                        fun step(s: String) {
+                            sb.append(s).append('\n')
+                            runCatching {
+                                File(filesDir, "ncmtest_result.txt").writeText(sb.toString())
+                            }
+                        }
+                        runCatching {
+                            val f = File(realPath)
+                            step("1. file=${f.name} size=${f.length()} exists=${f.exists()}")
+
+                            // --- 解密 NCM ---
+                            val dcls = Class.forName(
+                                "pub.miku.neuralstem.experimental.ncm.NcmDecoder",
+                            )
+                            val dst = dcls.getField("INSTANCE").get(null)
+                            val decoded = dcls.getMethod("decode", java.io.InputStream::class.java)
+                                .invoke(dst, f.inputStream())
+                            val audio = decoded.javaClass.getMethod("getAudioBytes")
+                                .invoke(decoded) as ByteArray
+                            val fmt = decoded.javaClass.getMethod("getFormat")
+                                .invoke(decoded) as String
+                            step("2. ncm decoded: fmt=$fmt bytes=${audio.size}")
+
+                            // --- 提取 MP4 音频轨 ---
+                            val ecls = Class.forName(
+                                "pub.miku.neuralstem.experimental.ncm.Mp4TrackExtractor",
+                            )
+                            val einst = ecls.getField("INSTANCE").get(null)
+                            val res = ecls.getMethod("extractSamples", ByteArray::class.java)
+                                .invoke(einst, audio)
+                            if (res == null) {
+                                step("3. ❌ MP4 提取失败（无音频轨？）")
+                            } else {
+                                val codec = res.javaClass.getMethod("getCodecTag").invoke(res) as String
+                                @Suppress("UNCHECKED_CAST")
+                                val samples = res.javaClass.getMethod("getSamples").invoke(res) as List<ByteArray>
+                                val durMs = res.javaClass.getMethod("durationMs").invoke(res) as Long
+                                step("3. MP4 提取: codec=$codec samples=${samples.size} dur=${durMs}ms")
+                                // ★诊断：打印前几帧的头字节与大小（判断是不是 sequence header）
+                                samples.take(5).forEachIndexed { i, s ->
+                                    step(
+                                        "   frame[$i] ${s.size}B head=${
+                                            s.take(12).joinToString(" ") { "%02x".format(it) }
+                                        }",
+                                    )
+                                }
+
+                                // --- AVS3 解码 ---
+                                val acls = Class.forName(
+                                    "pub.miku.neuralstem.experimental.ncm.Avs3AudioDecoder",
+                                )
+                                val dec = acls.getConstructor().newInstance()
+                                // Kotlin 的 `val available` 编译后是 `getAvailable()`
+                                val avail = acls.getMethod("getAvailable").invoke(dec) as Boolean
+                                step("4. decoder available=$avail")
+                                if (!avail) {
+                                    step("   ❌ AVS3 库不可用（仅 arm64-v8a）")
+                                } else {
+                                    val opened = acls.getMethod("open").invoke(dec) as Boolean
+                                    step("5. open=$opened")
+                                    if (opened) {
+                                        val decodeM = acls.getMethod("decodeFrame", ByteArray::class.java)
+                                        var ok = 0; var fail = 0; var empty = 0; var totalPcm = 0L
+                                        var firstPcm: ByteArray? = null
+                                        // ★依次喂**不同**的帧（不是同一帧 30 次）：
+                                        //   第 1 帧通常只是 sequence header，size=0是正常的。
+                                        for (s in samples.take(60)) {
+                                            val bb = s as ByteArray
+                                            val pcm = decodeM.invoke(dec, bb) as ByteArray?
+                                            when {
+                                                pcm == null -> fail++
+                                                pcm.isEmpty() -> empty++
+                                                else -> {
+                                                    ok++; totalPcm += pcm.size
+                                                    if (firstPcm == null) firstPcm = pcm
+                                                }
+                                            }
+                                        }
+                                        step("6. decode: ok=$ok empty=$empty fail=$fail pcmBytes=$totalPcm")
+                                        firstPcm?.let { p ->
+                                            step("   firstPcm=${p.size}B head=${
+                                                p.take(16).joinToString(" ") { "%02x".format(it) }
+                                            }")
+                                            // 判断是否全零（真解码 vs 静音）
+                                            val nonZero = p.count { it != 0.toByte() }
+                                            step("   nonZeroBytes=$nonZero / ${p.size}")
+                                        }
+                                        runCatching { acls.getMethod("close").invoke(dec) }
+                                    }
+                                }
+                            }
+                        }.onFailure { step("ERR: $it") }
+                        Log.i("TestCmd", "AVS3TEST\n$sb")
+                    }
+                }
+            }
             // ★stem 顺序实证（NCC）：a0 = 测试音频绝对路径
             //   结果写日志 TAG=StemOrderProbe，并用 adb logcat -s StemOrderProbe 读。
             "ncccheck" -> if (a0 != null) {
