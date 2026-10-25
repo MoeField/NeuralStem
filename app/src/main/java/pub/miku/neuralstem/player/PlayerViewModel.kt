@@ -908,6 +908,15 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         // V2(N4):把曲目名放进 MediaMetadata,供系统媒体通知显示
         val item = MediaItem.Builder()
             .setUri(uri)
+            // ★NCM：`ncm://<key>` 没有文件扩展名，DefaultMediaSourceFactory 无法猜容器格式
+            //   → 实测读完立即 STATE_ENDED（0 字节音频）。
+            //   解密结果统一是 m4a(AAC) → 显式声明 MIME。
+            //   （仅 ncm scheme 需要；其他 scheme 保持原行为）
+            .apply {
+                if (uri.scheme == "ncm") {
+                    setMimeType(androidx.media3.common.MimeTypes.AUDIO_MP4)
+                }
+            }
             .setMediaMetadata(
                 MediaMetadata.Builder()
                     .setTitle(displayName)

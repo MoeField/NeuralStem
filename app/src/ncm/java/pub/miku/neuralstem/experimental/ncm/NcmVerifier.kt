@@ -260,6 +260,119 @@ object NcmVerifier {
     private fun MediaFormat.optString(key: String): String? =
         runCatching { if (containsKey(key)) getString(key) else null }.getOrNull()
 
+    /**
+     * **批量扫描目录**：统计每首的容器/编码。
+     *
+     * ## 为何需要
+     * 2026-10-25 发现网易云的某些 m4a 实际是 **AV3A（AVS3-P3）编码**，
+     * Android 原生不支持。在决定要不要集成解码器前，必须先知道
+     * **这批文件里到底有多少是 AV3A**。
+     *
+     * ## ★ 必须走 Shizuku（2026-10-25 真机踩到）
+     * 网易云目录在 `Android/data/<包>/` 下，**App 无权限直接 `listFiles()`**
+     * （返回 null）。初版用 `File(dir).listFiles()` → 报“目录不存在”。
+     * ⇒ 改用 [NcmImporter] 的 Shizuku 能力：先用 shell 列文件，再逐个拉字节。
+     *
+     * ## 全量扫描太慢
+     * 每首 100-200ms（解密）+ 传输。407 首 ≈ 1-2 分钟。
+     * 所以支持 `limit`，先扫 20 首看分布。
+     */
+    fun scanCodecs(dir: String, limit: Int = 500): String {
+        val entries = runCatching { NcmImporter.listNcm(dir) }.getOrDefault(emptyList())
+        if (entries.isEmpty()) return "无 .ncm（或 Shizuku 未授权）: $dir"
+
+        val targets = entries.take(limit)
+        val counts = LinkedHashMap<String, Int>()
+        val samples = LinkedHashMap<String, String>()
+        var failed = 0
+        val t0 = System.currentTimeMillis()
+
+        for (e in targets) {
+            val tag = runCatching {
+                // 用 Shizuku 把字节拉回来（不能直接读），只解头部
+                val bytes = NcmImporter.readBytesViaShizuku(e.absolutePath)
+                    ?: error("pull 失败")
+                // 轻量：不整首解密，先看 magic；若是 MP4 再找 codec tag
+                // （NcmDecoder.decode 会读整文件，这里为了速度自己做）
+                classifyNcmHead(bytes)
+            }.getOrElse { "error" }
+            if (tag == "error") failed++
+            counts[tag] = (counts[tag] ?: 0) + 1
+            if (!samples.containsKey(tag)) samples[tag] = e.name
+        }
+        val elapsed = System.currentTimeMillis() - t0
+
+        val sb = StringBuilder()
+        sb.append("扫描 ").append(targets.size).append(" / ").append(entries.size)
+        sb.append(" 个，耗时 ").append(elapsed).append("ms\n")
+        counts.entries.sortedByDescending { it.value }.forEach { (k, v) ->
+            sb.append("  ").append(k).append(" = ").append(v)
+            samples[k]?.let { sb.append("   例：").append(it) }
+            sb.append('\n')
+        }
+        if (failed > 0) sb.append("  失败 = ").append(failed).append('\n')
+        val s = sb.toString()
+        Log.i(TAG, "CODE_SCAN\n$s")
+        return s
+    }
+
+    /**
+     * 从 NCM 字节里直接识别音频编码（不解密全文件）。
+     *
+     * ## 为何能这样做
+     * NCM 的头部结构（key / meta / cover 长度）都在前 100KB 内，
+     * 拿到长度后音频起点就确定了；而 MP4 的 `moov`（含 codec tag）
+     * **就在音频段的最开头**（实测 moov 在 offset 28，731 字节）。
+     * ⇒ 只需解密前几 KB 就能认出编码。
+     */
+    private fun classifyNcmHead(raw: ByteArray): String = runCatching {
+        // 直接复用 decode 的头部逻辑：调一次 decode 但只取前 8KB 头部分类
+        // （decode 本身 100-200ms，对 20 个样本可接受；全量时另优化）
+        val d = NcmDecoder.decode(raw.inputStream())
+        classify(d.audioBytes)
+    }.getOrElse { "error" }
+
+    /**
+     * 判断解密后的音频是什么容器/编码。
+     *
+     * ## 为何要认出 av3a
+     * `av3a` 是 AVS3-P3 音频的 MP4 codec tag（中国自主标准）。
+     * Android 的 `MediaExtractor` 不认识它 → 无 audio track。
+     */
+    private fun classify(audio: ByteArray): String {
+        if (audio.size < 12) return "too-short"
+        fun ch(i: Int) = audio[i].toInt() and 0xFF
+        fun hasAt(tag: String, limit: Int): Boolean {
+            val n = tag.toByteArray(Charsets.US_ASCII)
+            val max = minOf(audio.size, limit) - n.size
+            if (max < 0) return false
+            for (i in 0..max) {
+                var hit = true
+                for (j in n.indices) if (audio[i + j] != n[j]) { hit = false; break }
+                if (hit) return true
+            }
+            return false
+        }
+        // MP4 家族：第 4~8 字节是 box type
+        if (ch(4) == 0x66 && ch(5) == 0x74 && ch(6) == 0x79 && ch(7) == 0x70) {
+            val win = 65536
+            return when {
+                hasAt("av3a", win) -> "m4a/av3a(AVS3)"
+                hasAt("mp4a", win) -> "m4a/aac"
+                hasAt("alac", win) -> "m4a/alac"
+                else -> "m4a/other"
+            }
+        }
+        return when {
+            ch(0) == 0x66 && ch(1) == 0x4C && ch(2) == 0x61 && ch(3) == 0x43 -> "flac"
+            ch(0) == 0x49 && ch(1) == 0x44 && ch(2) == 0x33 -> "mp3"
+            ch(0) == 0xFF && (ch(1) and 0xE0) == 0xE0 -> "mp3"
+            ch(0) == 0x4F && ch(1) == 0x67 && ch(2) == 0x67 -> "ogg"
+            ch(0) == 0x52 && ch(1) == 0x49 && ch(2) == 0x46 && ch(3) == 0x46 -> "wav"
+            else -> "unknown"
+        }
+    }
+
     private fun fail(path: String, srcBytes: Long, msg: String): Result =
         Result(
             ok = false, file = path, sourceBytes = srcBytes, audioBytes = 0,

@@ -264,6 +264,16 @@ class StemStreamFactory(
     private val upstream: DataSource.Factory,
 ) : DataSource.Factory {
 
+    companion object {
+        /**
+         * NCM 解码结果的 uri scheme（`ncm://<key>`）。
+         *
+         * 与 `NcmMemoryDataSource.SCHEME` 保持一致（main 源集不能引用 ncm 类，
+         * 所以只能重复定义）。改一边要同步另一边。
+         */
+        const val NCM_SCHEME = "ncm"
+    }
+
     override fun createDataSource(): DataSource = DispatchingDataSource(upstream)
 
     /**
@@ -301,6 +311,22 @@ class StemStreamFactory(
                 )
                 delegate = d
                 return d.open(dataSpec.buildUpon().setUri(Uri.parse("stem-local://$host")).build())
+            }
+            // ★NCM（仅 -Pwith_ncm=true 构建）：用反射分发，避免 main 源集依赖 ncm 类。
+            //   `ncm://<key>` → NcmMemoryDataSource（从 NcmPlaybackStore 取解密后的字节）。
+            if (scheme == NCM_SCHEME) {
+                isStem = false
+                Log.i(StemPcmDataSource.TAG_STEM, "dispatch: NCM uri=${dataSpec.uri}")
+                val d = runCatching {
+                    val cls = Class.forName(
+                        "pub.miku.neuralstem.experimental.ncm.NcmMemoryDataSource",
+                    )
+                    cls.getDeclaredConstructor().newInstance() as DataSource
+                }.getOrElse {
+                    throw IOException("NCM 数据源不可用（未启用 with_ncm 构建？）", it)
+                }
+                delegate = d
+                return d.open(dataSpec)
             }
             // ★诊断：非 stem scheme → 委派给 upstream（file/content）。
             //   若“普通文件没声音”，先看这一行是否存在、scheme 是否如预期。
