@@ -15,15 +15,22 @@ import java.io.Closeable
  * - `libAVS3AudioDec.so`（324KB，核心解码器）
  * - `libVMFPlatForm.so`（185KB，平台层）
  *
- * 仓库**没有头文件**，函数签名是从导出符号反汇编推出来的：
+ * 函数签名以**官方头文件**为准（不再靠反汇编猜）：
+ * - `av3adecoder/avs3Decoder/include/avs3_decoder_interface.h`
+ * - 常量定义：`av3adecoder/libavs3_common/avs3_cnst_com.h`
  * ```c
- * void* avs3_create_decoder(void);                       // 无参，返回 opaque
- * int   avs3_decode(void* dec, const void* in, int inLen,
- *                   void* out, int* outSize1, int* outSize2);
- *        // 返回 1 成功 / 0 参数无效 / 2 输入不足
- *        // *outSize1 = PCM16 字节数
+ * void* avs3_create_decoder(void);
  * void  avs3_destroy_decoder(void* dec);
+ * int   parse_header(void* dec, unsigned char* in, int inLen, int isInitFrame,
+ *                    int* lenConsumed, unsigned short* crc);
+ * int   avs3_decode(void* dec, unsigned char* in, int inLen,
+ *                   unsigned char* out, int* outLen, int* consumed);
  * ```
+ *
+ * ## ★返回值语义（最容易搞错的一点）
+ * 官方常量：`AVS3_FALSE=0` / `AVS3_TRUE=1` / `AVS3_DATA_NOT_ENOUGH=2`。
+ * `parse_header` 的文档注释也明确写着 `0: failed / 1: success / 2: data not enough`。
+ * **1 才是成功**，`avs3_decode` 同理。别按「0 = OK」的直觉写判断。
  *
  * ## 使用
  * ```kotlin
@@ -71,7 +78,7 @@ class Avs3AudioDecoder : Closeable {
      * bytesPerFrame = ceil(bitsPerFrame / 8);
      * ```
      *
-     * @return 0 成功
+     * @return 0 成功；负数失败（-1 未 open / -2 native init 失败 / -99 异常）
      */
     fun initSequence(headerFrame: ByteArray): Int {
         if (handle == 0L) return -1
@@ -92,9 +99,10 @@ class Avs3AudioDecoder : Closeable {
      * ## 之前崩溃的根因（2026-10-25）
      * 靠反汇编猜签名时漏了第 6 参 `unsigned short* crc`，
      * 库往随机地址写 → 前 60 帧碰巧能跑，之后 `SIGSEGV fault addr 0x1202`。
+     * 签名现已按官方头文件 `avs3_decoder_interface.h` 对齐。
      *
      * @param isInitFrame true = 初始化帧（sequence header）
-     * @return 库的原始返回值（0 = 成功）
+     * @return 库的原始返回值：**0 = 失败，1 = 成功，2 = 输入不足**
      */
     fun parseHeader(frame: ByteArray, isInitFrame: Boolean = true): Int {
         if (handle == 0L) return -1
@@ -128,8 +136,11 @@ class Avs3AudioDecoder : Closeable {
             }
             return null
         }
-        // ★ n == 0 是**正常情况**：首帧只是 sequence header，不产 PCM。
-        //   实测：`avs3_decode` 返回 1（成功）但 *outSize1 = 0。
+        // ★ n == 0 有两种可能，都**不是失败**：
+        //   ① 成功但本帧无输出（首帧只含 sequence header 时 lenOut=0）；
+        //   ② rc=DATA_NOT_ENOUGH，即输入不够 —— 说明 access unit 被切错了，
+        //      native 侧会打 LOGW(inLen/consumed)，这里同样按「空帧」继续。
+        //   顺序很重要：先判 n < 0（硬失败）再判 n == 0，别调过来。
         if (n == 0) return EMPTY
         // 若本次用满缓冲，下次扩容（应对高声道数）
         if (n >= cap) {
@@ -165,8 +176,20 @@ class Avs3AudioDecoder : Closeable {
 
     companion object {
         private const val TAG = "Avs3Dec"
-        /** 默认输出缓冲：8 声道 × 2048 帧 × 2 字节 = 32KB，留足余量。 */
-        private const val DEFAULT_OUT_CAP = 64 * 1024
+        /**
+         * 默认输出缓冲大小。
+         *
+         * ## 为什么 256KB（而不是原来的 64KB）
+         * 单帧 PCM 字节数 = `numChansOutput × frameLength × 2`（16bit LE）。
+         * 本项目实际码流是 12 声道（帧头 channelNumIdx=10 → `CHANNEL_CONFIG_MC_7_1_4`）：
+         * - frameLength=1024 → 12×1024×2 = 24,576 B
+         * - frameLength=2048 → 12×2048×2 = 49,152 B
+         *
+         * 64KB 对 12ch/2048 只剩 15KB 余量，太紧；而规范里还有
+         * `MC_22_2`（24 声道）：24×2048×2 = 98,304 B，64KB 直接溢出。
+         * 直接给 256KB，余量足够容纳现有全部声道配置，代价只是一次分配。
+         */
+        private const val DEFAULT_OUT_CAP = 256 * 1024
 
         /**
          * “成功但无 PCM”的哨兵值（首帧 sequence header 返回这个）。
