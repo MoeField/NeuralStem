@@ -18,6 +18,22 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <!--
+      ★NCM 导入后读取需要存储权限（2026-10-25 真机踩到）。
+
+      Shizuku 把 .ncm 从网易云私有目录复制到 `/sdcard/Music/NCM/`（公共目录），
+      但**公共目录不等于免权限**：App 仍需 READ 权限才能读里面的文件。
+      实测：`File.exists()=true, length()=14168127, canRead()=false` →
+      打开时报 `EACCES (Permission denied)`。
+
+      - Android 13+（API 33）：`READ_MEDIA_AUDIO`（运行时授权）
+      - Android 12 及以下：`READ_EXTERNAL_STORAGE`（maxSdkVersion=32）
+    -->
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+
+    <!--
       ★NCM 导入（Shizuku）：仅 `-Pwith_ncm=true` 构建才会真正引用这些库。
 
       `tools:overrideLibrary` 的用途：Shizuku 的 AAR 声明 minSdk=24，

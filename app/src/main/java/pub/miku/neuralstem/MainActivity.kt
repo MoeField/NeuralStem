@@ -20,6 +20,7 @@ import androidx.media3.common.Player
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import pub.miku.neuralstem.devtools.TestCommandBus
 import pub.miku.neuralstem.player.PlayerViewModel
 import pub.miku.neuralstem.player.WaveformCache
@@ -429,16 +430,38 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
 
-                            // 复制指定文件（a1=文件名）或全部（a1=all）
+                            // 复制指定文件（a1=文件名）或全部（a1=all → 取前 3 个）
                             if (a0 == "copy" && all.isNotEmpty()) {
                                 val toCopy = if (a1 == null || a1 == "all") all.take(3) else {
                                     all.filter { it.endsWith("/$a1") }
                                 }
-                                step("6. 复制 ${toCopy.size} 个...")
+                                step("6. pull ${toCopy.size} 个（stdout 传字节）...")
                                 val ir = icls.getMethod(
-                                    "importTo", List::class.java, String::class.java,
-                                ).invoke(inst, toCopy, "Music/NCM")
+                                    "importByPull",
+                                    android.content.Context::class.java,
+                                    List::class.java,
+                                    String::class.java,
+                                ).invoke(inst, application, toCopy, "NCM")
                                 step("7. result = $ir")
+                                // 打印最近一次 pull 的错误
+                                runCatching {
+                                    val err = icls.getMethod("getLastError").invoke(inst) as? String
+                                    if (err != null) step("   lastError = $err")
+                                }
+                                // 核对：App 能否读这些文件
+                                val outDir = icls.getMethod(
+                                    "destDir", android.content.Context::class.java, String::class.java,
+                                ).invoke(inst, application, "NCM") as File
+                                step("8. destDir=${outDir.absolutePath} exists=${outDir.exists()}")
+                                outDir.listFiles()?.forEach { f ->
+                                    step("   readable: ${f.name} canRead=${f.canRead()} len=${f.length()}")
+                                }
+                                // 核对：App 能否读这些文件
+                                val destDir = icls.getMethod("destDir", String::class.java)
+                                    .invoke(inst, "NCM") as File
+                                destDir.listFiles()?.forEach { f ->
+                                    step("   app-readable: ${f.name} canRead=${f.canRead()} len=${f.length()}")
+                                }
                             }
 
                             val d = icls.getMethod("drainDiagnostics").invoke(inst) as String
@@ -446,6 +469,123 @@ class MainActivity : ComponentActivity() {
                         }.onFailure { sb.append("ERR: ").append(it).append('\n') }
 
                         Log.i("TestCmd", "NCMIMPORT\n$sb")
+                        runCatching { File(filesDir, "ncmtest_result.txt").writeText(sb.toString()) }
+                    }
+                }
+            }
+            // ★ncmplay：端到端验证 —— 解密 .ncm 后直接交给播放器。
+            //   a0 = .ncm 路径。解密到内存 → 存 NcmPlaybackStore → ncm://<key> → ExoPlayer
+            "ncmplay" -> {
+                if (!BuildConfig.WITH_NCM) {
+                    Log.w("TestCmd", "ncmplay 不可用：未启用 NCM 模块")
+                } else if (a0 == null) {
+                    Log.w("TestCmd", "ncmplay 需要 a0=.ncm 路径")
+                } else {
+                    // ★a0 = "auto" → 自动取 App 导入目录的第一个文件
+                    //   （命令行传带空格的路径会被 am 拆参，auto 避开这个坑）
+                    val realPath = if (a0 == "auto") {
+                        runCatching {
+                            val icls = Class.forName(
+                                "pub.miku.neuralstem.experimental.ncm.NcmImporter",
+                            )
+                            val inst = icls.getField("INSTANCE").get(null)
+                            val dir = icls.getMethod(
+                                "destDir", android.content.Context::class.java, String::class.java,
+                            ).invoke(inst, application, "NCM") as File
+                            dir.listFiles { f -> f.name.endsWith(".ncm", true) }
+                                ?.firstOrNull()?.absolutePath
+                        }.getOrNull()
+                    } else {
+                        a0
+                    }
+                    if (realPath == null) {
+                        Log.w("TestCmd", "ncmplay: 找不到可用文件")
+                        runCatching {
+                            File(filesDir, "ncmtest_result.txt")
+                                .writeText("ERR: auto 模式找不到 .ncm（先跑 ncmimport copy）")
+                        }
+                    } else lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                        val sb = StringBuilder()
+                        fun step(s: String) {
+                            sb.append(s).append('\n')
+                            runCatching {
+                                File(filesDir, "ncmtest_result.txt").writeText(sb.toString())
+                            }
+                        }
+                        runCatching {
+                            step("1. start a0=$realPath")
+                            val f = File(realPath)
+                            step("2. exists=${f.exists()} size=${f.length()} canRead=${f.canRead()}")
+
+                            val dcls = Class.forName(
+                                "pub.miku.neuralstem.experimental.ncm.NcmDecoder",
+                            )
+                            val dst = dcls.getField("INSTANCE").get(null)
+                            step("3. decoder class ok")
+                            val t0 = SystemClock.elapsedRealtime()
+                            val decoded = dcls.getMethod("decode", java.io.InputStream::class.java)
+                                .invoke(dst, f.inputStream())
+                            val ms = SystemClock.elapsedRealtime() - t0
+                            val audio = decoded.javaClass.getMethod("getAudioBytes")
+                                .invoke(decoded) as ByteArray
+                            val fmt = decoded.javaClass.getMethod("getFormat")
+                                .invoke(decoded) as String
+                            step("4. decoded fmt=$fmt bytes=${audio.size} in ${ms}ms")
+
+                            val scls = Class.forName(
+                                "pub.miku.neuralstem.experimental.ncm.NcmPlaybackStore",
+                            )
+                            val sinst = scls.getField("INSTANCE").get(null)
+                            val key = f.name
+                            scls.getMethod("put", String::class.java, ByteArray::class.java)
+                                .invoke(sinst, key, audio)
+                            step("5. stored key=$key")
+
+                            val uri = android.net.Uri.parse("ncm://$key")
+                            step("6. loading $uri ...")
+                            withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                playerVm.loadAndPlay(uri, "NCM: $key")
+                            }
+                            step("7. loadAndPlay called")
+                        }.onFailure { step("ERR: $it") }
+                        Log.i("TestCmd", "NCMPLAY\n$sb")
+                    }
+                }
+            }
+            // ★ncmscan：批量统计 NCM 的容器/编码分布（a0 = 源目录，缺省用自动发现的第一个）
+            //   用途：先搞清楚“有多少能播、多少是 AVS3”再决定要不要做解码器
+            "ncmscan" -> {
+                if (!BuildConfig.WITH_NCM) {
+                    Log.w("TestCmd", "ncmscan 不可用：未启用 NCM 模块")
+                } else {
+                    lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                        val sb = StringBuilder()
+                        runCatching {
+                            val vcls = Class.forName(
+                                "pub.miku.neuralstem.experimental.ncm.NcmVerifier",
+                            )
+                            val vinst = vcls.getField("INSTANCE").get(null)
+                            val icls = Class.forName(
+                                "pub.miku.neuralstem.experimental.ncm.NcmImporter",
+                            )
+                            val iinst = icls.getField("INSTANCE").get(null)
+
+                            // a0 = 源目录（缺省自动发现）；a1 = limit（缺省 500）
+                            val limit = a1?.toIntOrNull() ?: 500
+                            val dir = a0 ?: run {
+                                val dirs = icls.getMethod("findSourceDirs").invoke(iinst) as List<*>
+                                dirs.firstOrNull() as? String
+                            }
+                            sb.append("dir = ").append(dir).append(" limit=").append(limit).append('\n')
+                            if (dir != null) {
+                                val r = vcls.getMethod("scanCodecs", String::class.java, Int::class.javaPrimitiveType)
+                                    .invoke(vinst, dir, limit) as String
+                                sb.append(r)
+                            } else {
+                                sb.append("找不到源目录\n")
+                            }
+                        }.onFailure { sb.append("ERR: ").append(it).append('\n') }
+                        Log.i("TestCmd", "NCMSCAN\n$sb")
                         runCatching { File(filesDir, "ncmtest_result.txt").writeText(sb.toString()) }
                     }
                 }

@@ -46,8 +46,24 @@ object NcmImporter {
     /** 网易云在存储卷上的相对路径。 */
     private const val NETEASE_REL = "Android/data/com.netease.cloudmusic/files/Documents/Music"
 
-    /** 目标公共目录（相对外部存储根）。 */
-    const val DEST_REL = "Music/NCM"
+    /**
+     * 目标目录（App 可读）。
+     *
+     * ## ★ 为何不用 /sdcard/Music/NCM（2026-10-25 真机踩到）
+     * 先试的是公共目录 `/sdcard/Music/NCM/`，结果：
+     * - `cp` 成功，文件确实在那
+     * - 但权限位是 `-rw-rw---- u0_a147 media_rw`（沿用源的属主/权限）
+     * - **`chmod 644` 返回 0 但权限不变** —— `/sdcard` 是 FUSE 虚拟化存储，
+     *   MediaProvider 把 chmod 变成空操作
+     * - 即使 App 已拿到 `READ_MEDIA_AUDIO`，`File.canRead()` 仍 false，打开报 `EACCES`
+     *
+     * ⇒ 改复制到 **应用自己的外部私有目录**：
+     * `/sdcard/Android/data/pub.miku.neuralstem/files/NCM/`
+     * 那里 App 有完全读写权，且仍在外部存储上（用户可用文件管理器看到/备份）。
+     *
+     * 注：Android 11+ 用户不能直接浏览 `Android/data/<其他包>`，但**本应用自己**能读写。
+     */
+    const val DEST_REL = "NCM"
 
     /** Shizuku 包名。 */
     private const val SHIZUKU_PKG = "moe.shizuku.privileged.api"
@@ -260,12 +276,12 @@ object NcmImporter {
     // ---------------- 复制 ----------------
 
     /**
-     * 把指定的 NCM 复制到公共目录。
+     * 把指定的 NCM 复制到**本应用的外部私有目录**。
      *
      * @param files 源绝对路径列表
      */
     fun importTo(files: List<String>, destRel: String = DEST_REL): ImportResult {
-        val destRoot = "${Environment.getExternalStorageDirectory().absolutePath}/$destRel"
+        val destRoot = destDir(destRel).absolutePath
         val copied = mutableListOf<String>()
         val failed = mutableListOf<Pair<String, String>>()
 
@@ -273,7 +289,9 @@ object NcmImporter {
 
         if (files.isEmpty()) return ImportResult(copied, failed, destRoot)
 
-        // ★逐个 cp（不用批量：700+ 文件会撞命令行长度上限）
+        // ★逐个 cp（不用批量：700+ 文件会撞命令行上限）
+        //   目标目录是 App 自己的外部私有目录，权限本来就对，无需 chmod
+        //   （更何况 /sdcard 上的 chmod 是 FUSE 空操作）。
         for (src in files) {
             val name = src.substringAfterLast('/')
             val dst = "$destRoot/$name"
@@ -282,7 +300,6 @@ object NcmImporter {
                     failed += name to (e.message ?: "cp 异常")
                     continue
                 }
-            // cp 成功时 stdout 为空；非空 = 错误信息
             if (cpOut.isNotBlank()) {
                 failed += name to cpOut.trim().take(120)
                 continue
@@ -297,11 +314,44 @@ object NcmImporter {
         return ImportResult(copied, failed, destRoot)
     }
 
-    /** 目标目录（App 可读）。 */
-    fun destDir(destRel: String = DEST_REL): File =
-        File(Environment.getExternalStorageDirectory(), destRel)
+    /**
+     * 目标目录（App 的外部私有目录，读写无限制）。
+     *
+     * `getExternalFilesDir(null)` → `/sdcard/Android/data/pub.miku.neuralstem/files/`
+     * 详见 [DEST_REL] 的注释（为何不用公共 `/sdcard/Music/NCM`）。
+     */
+    /**
+     * 目标目录。
+     *
+     * ## ★ 必须用 [Context.getExternalFilesDir]，不能手拼路径（2026-10-25 真机踩到）
+     * 手拼 `/sdcard/Android/data/<pkg>/files/NCM` 会踩到一个陷阱：
+     * **如果这个目录先被 Shizuku（shell 用户）用 `mkdir -p` 创建**，
+     * 它的属主就是 `shell` → App 写不进去，报：
+     * ```
+     * FileNotFoundException: .../NCM/xxx.ncm.part: open failed: EACCES
+     * ```
+     * [Context.getExternalFilesDir] 返回的目录由系统保证属主是 App 自己。
+     *
+     * 注：本函数不带 Context；App 首次使用前应先调 [ensureDir] 传 context 创建。
+     */
+    fun destDir(context: Context, destRel: String = DEST_REL): File =
+        File(context.getExternalFilesDir(null) ?: context.filesDir, destRel).apply { mkdirs() }
 
-    /** 列出目标目录里已导入的 NCM（普通 File API，因为它在公共目录）。 */
+    /** 兼容旧调用：不带 context 时退回手拼路径（仅当目录已由 App 创建时安全）。 */
+    @Deprecated("用 destDir(context)，避免目录属主是 shell")
+    fun destDir(destRel: String = DEST_REL): File =
+        File(
+            Environment.getExternalStorageDirectory(),
+            "Android/data/pub.miku.neuralstem/files/$destRel",
+        )
+
+    /** 列出目标目录里已导入的 NCM（由 App 自己创建目录 → 可正常读）。 */
+    fun listImported(context: Context, destRel: String = DEST_REL): List<File> =
+        destDir(context, destRel).listFiles { f -> f.isFile && f.name.endsWith(".ncm", true) }
+            ?.sortedBy { it.name } ?: emptyList()
+
+    /** 兼容旧签名。 */
+    @Deprecated("用 listImported(context)")
     fun listImported(destRel: String = DEST_REL): List<File> =
         destDir(destRel).listFiles { f -> f.isFile && f.name.endsWith(".ncm", true) }
             ?.sortedBy { it.name } ?: emptyList()
@@ -380,9 +430,141 @@ object NcmImporter {
         return sb.toString()
     }
 
-    /** sh() 的总超时（毫秒）。列目录/复制单个文件都是秒级，15s 足够。 */
+    /** sh() 的总超时（毫秒）。列目录是秒级；复制用更长的 [COPY_TIMEOUT_MS]。 */
     private const val TIMEOUT_MS = 15_000L
 
     /** Android 11+ 才需要 Shizuku（10 及以下可直接读 Android/data）。 */
     fun needsShizuku(): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
+
+    // ================= ★方案 A：用 stdout 传字节（2026-10-25 真机定型） =================
+
+    /** 单文件传输超时（大无损文件可能 100MB+，给 5 分钟）。 */
+    private const val COPY_TIMEOUT_MS = 300_000L
+
+    /**
+     * ★把一个 NCM 文件的**字节**从 shell 层取回来，写成 App 自己的文件。
+     *
+     * ## 为何必须走 stdout（而不是直接 `cp`）
+     * 真机实测了两条路都不行：
+     *
+     * | 做法 | 结果 |
+     * |---|---|
+     * | `cp` 到 `/sdcard/Music/NCM/` | 成功，但属主是 `u0_a147 media_rw`，App 打开报 `EACCES` |
+     * | 在那里 `chmod 644` | 返回 0 但**权限不变**（`/sdcard` 是 FUSE 虚拟化，chmod 是空操作）|
+     * | `cp` 到 App 外部私有目录 | 成功，但属主是 **`shell`**，App 仍 `Permission denied` |
+     *
+     * 根本矛盾：**shell 写出来的文件，属主就是 shell；非 root 无法改变属主。**
+     * ⇒ 只能让 **App 自己写**：shell 端 `cat` 文件到 stdout，App 边读边写入自己的目录。
+     * 这样文件的属主天然是 App 自己，读写无任何限制。
+     *
+     * ## 实现要点
+     * - 用 `cat` 而非 `cp`，**不走任何落盘中转**
+     * - 不用 `bufferedReader`（会做字符解码，二进制会坏）→ 直接读 [Process.getInputStream] 字节流
+     * - 边读边写，内存占用只有缓冲区大小（不需先把整个文件读进内存）
+     *
+     * @return 写入的目标文件；失败返回 null（原因写 [diag]）
+     */
+    fun pullFileToAppStorage(srcPath: String, destDir: File): File? {
+        val name = srcPath.substringAfterLast('/')
+        if (!destDir.exists()) destDir.mkdirs()
+        val out = File(destDir, name)
+        val tmp = File(destDir, "$name.part")
+
+        return try {
+            val process = newShizukuProcess(arrayOf("sh", "-c", "cat \"$srcPath\""))
+            var total = 0L
+            tmp.outputStream().use { fos ->
+                val ins = process.inputStream
+                val buf = ByteArray(64 * 1024)
+                val deadline = System.currentTimeMillis() + COPY_TIMEOUT_MS
+                while (true) {
+                    if (System.currentTimeMillis() > deadline) error("传输超时")
+                    val n = ins.read(buf)
+                    if (n <= 0) break
+                    fos.write(buf, 0, n)
+                    total += n
+                }
+            }
+            runCatching { process.destroy() }
+            if (total <= 0L) error("0 字节")
+            if (out.exists()) out.delete()
+            if (!tmp.renameTo(out)) error("rename 失败")
+            out
+        } catch (t: Throwable) {
+            lastError = "$name: ${t.javaClass.simpleName}: ${t.message}"
+            runCatching { tmp.delete() }
+            Log.e(TAG, "pull failed: $srcPath", t)
+            null
+        }
+    }
+
+    /** 最近一次 pull 的错误（供 UI/诊断读取）。 */
+    @Volatile
+    var lastError: String? = null
+        private set
+
+    /**
+     * 用 Shizuku 把一个文件**直接读成字节数组**（不落盘）。
+     *
+     * 用途：批量扫描编码时需要读很多文件，落盘再读太浪费。
+     * 代价：整个文件进内存（一首 15-40MB，扫 20 首逐个读即可，不并行）。
+     */
+    fun readBytesViaShizuku(srcPath: String): ByteArray? = runCatching {
+        val process = newShizukuProcess(arrayOf("sh", "-c", "cat \"$srcPath\""))
+        val bytes = process.inputStream.use { it.readBytes() }
+        runCatching { process.destroy() }
+        if (bytes.isEmpty()) error("0 字节")
+        bytes
+    }.onFailure {
+        lastError = "readBytes: ${it.javaClass.simpleName}: ${it.message}"
+        Log.w(TAG, "readBytes failed: $srcPath", it)
+    }.getOrNull()
+
+    /**
+     * 建一个 Shizuku 远程进程（可拿二进制流）。
+     *
+     * 与 [sh] 同思路，但**不读 String**：返回 [Process] 让调用方自己读字节。
+     */
+    private fun newShizukuProcess(argv: Array<String>): Process {
+        val shizukuCls = Class.forName("rikka.shizuku.Shizuku")
+        val serviceBinder = shizukuCls.getMethod("getBinder").invoke(null) as? android.os.IBinder
+            ?: error("Shizuku binder 为空（未运行？）")
+        val stubCls = Class.forName("moe.shizuku.server.IShizukuService\$Stub")
+        val service = stubCls.getMethod("asInterface", android.os.IBinder::class.java)
+            .invoke(null, serviceBinder) ?: error("IShizukuService 转换失败")
+        val remoteProcess = service.javaClass.getMethod(
+            "newProcess",
+            Array<String>::class.java,
+            Array<String>::class.java,
+            String::class.java,
+        ).invoke(service, argv, null, null) ?: error("newProcess 返回 null")
+        val rpCls = Class.forName("rikka.shizuku.ShizukuRemoteProcess")
+        val ctor = rpCls.getDeclaredConstructor(
+            Class.forName("moe.shizuku.server.IRemoteProcess"),
+        ).apply { isAccessible = true }
+        return ctor.newInstance(remoteProcess) as Process
+    }
+
+    /**
+     * 批量把 NCM 拉进 App 自己的存储。
+     *
+     * 逐个 [pullFileToAppStorage]，汇总成果。
+     */
+    fun importByPull(context: Context, files: List<String>, destRel: String = DEST_REL): ImportResult {
+        val destDir = destDir(context, destRel)
+        val copied = mutableListOf<String>()
+        val failed = mutableListOf<Pair<String, String>>()
+        for (src in files) {
+            val name = src.substringAfterLast('/')
+            // ★把异常信息带进 failed（不然只看到“pull 失败”没法排查）
+            runCatching { pullFileToAppStorage(src, destDir) }
+                .onSuccess { f ->
+                    if (f != null) copied += f.absolutePath
+                    else failed += name to "pull 返回 null（见 diag）"
+                }
+                .onFailure { e -> failed += name to (e.message ?: e.javaClass.simpleName) }
+        }
+        Log.i(TAG, "importByPull: copied=${copied.size} failed=${failed.size} dest=${destDir.absolutePath}")
+        return ImportResult(copied, failed, destDir.absolutePath)
+    }
 }
