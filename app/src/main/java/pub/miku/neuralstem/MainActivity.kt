@@ -680,36 +680,46 @@ class MainActivity : ComponentActivity() {
                                     val opened = acls.getMethod("open").invoke(dec) as Boolean
                                     step("5. open=$opened")
                                     if (opened) {
-                                        // ★先用第一帧初始化解码器（否则 ctx 全零 → 输出恒空）
-                                        val ph = acls.getMethod("parseHeader", ByteArray::class.java)
-                                            .invoke(dec, samples[0]) as Boolean
-                                        step("5b. parseHeader=$ph")
+                                        // ★按官方顺序初始化：parse_header(1) → parse_header(0)
+                                        val ph = acls.getMethod(
+                                            "initSequence", ByteArray::class.java,
+                                        ).invoke(dec, samples[0]) as Int
+                                        step("5b. initSequence rc=$ph")
 
-                                        val decodeM = acls.getMethod("decodeFrame", ByteArray::class.java)
-                                        var ok = 0; var fail = 0; var empty = 0; var totalPcm = 0L
-                                        var firstPcm: ByteArray? = null
-                                        // ★依次喂**不同**的帧（不是同一帧 30 次）：
-                                        //   第 1 帧通常只是 sequence header，size=0是正常的。
-                                        for (s in samples.take(60)) {
-                                            val bb = s as ByteArray
-                                            val pcm = decodeM.invoke(dec, bb) as ByteArray?
+                                        // ★只跑一轮（之前 bug：先跑 samples.take(60) 再跑 samples，
+                                        //   重复喂同一批 → 解码器状态被搞环 → 第 61 帧 native 崩溃）
+                                        val t0all = System.currentTimeMillis()
+                                        val decodeAll =
+                                            acls.getMethod("decodeFrame", ByteArray::class.java)
+                                        var allPcm = 0L; var nOk = 0; var nEmpty2 = 0; var nFail2 = 0
+                                        var firstChunk: ByteArray? = null
+                                        val limit = a1?.toIntOrNull() ?: 200
+                                        for (s in samples.take(limit)) {
+                                            val pcm = decodeAll.invoke(dec, s) as ByteArray?
                                             when {
-                                                pcm == null -> fail++
-                                                pcm.isEmpty() -> empty++
+                                                pcm == null -> nFail2++
+                                                pcm.isEmpty() -> nEmpty2++
                                                 else -> {
-                                                    ok++; totalPcm += pcm.size
-                                                    if (firstPcm == null) firstPcm = pcm
+                                                    nOk++; allPcm += pcm.size
+                                                    if (firstChunk == null) firstChunk = pcm
                                                 }
                                             }
                                         }
-                                        step("6. decode: ok=$ok empty=$empty fail=$fail pcmBytes=$totalPcm")
-                                        firstPcm?.let { p ->
-                                            step("   firstPcm=${p.size}B head=${
-                                                p.take(16).joinToString(" ") { "%02x".format(it) }
-                                            }")
-                                            // 判断是否全零（真解码 vs 静音）
-                                            val nonZero = p.count { it != 0.toByte() }
-                                            step("   nonZeroBytes=$nonZero / ${p.size}")
+                                        val msAll = System.currentTimeMillis() - t0all
+                                        val audioSec = durMs / 1000.0
+                                        val rtf = if (msAll > 0) audioSec / (msAll / 1000.0) else 0.0
+                                        step("7. 全曲解码: ok=$nOk empty=$nEmpty2 fail=$nFail2")
+                                        step("   pcmBytes=$allPcm")
+                                        step(
+                                            "   cost=${msAll}ms audio=${durMs}ms RTF=${
+                                                "%.2f".format(rtf)
+                                            }×",
+                                        )
+                                        firstChunk?.let { f ->
+                                            val b = f.size
+                                            step("   framePCM=${b}B → 2ch=${
+                                                b / 4
+                                            } samples, 6ch=${b / 12}, 8ch=${b / 16}")
                                         }
                                         runCatching { acls.getMethod("close").invoke(dec) }
                                     }
