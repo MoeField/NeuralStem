@@ -58,6 +58,29 @@ class Avs3AudioDecoder : Closeable {
     }
 
     /**
+     * ★用**第一帧**初始化解码器（解析 sequence header）。
+     *
+     * ## 为何必须调
+     * `open()` 只做了 `calloc`（全零）。而 `avs3_decode` 靠 ctx 里的
+     * 采样率/帧长/声道数算输出大小 —— 全零时输出恒为空。
+     * `parse_header` 从码流解析并填好这些字段。
+     *
+     * 实测日志（成功时）：
+     * ```
+     * parse_header: len=2415 -> rc=1 offset=0 out2=0
+     *   ctx: sampleRate=44100 totalSamples=... frameSize=1024 channels=2 required=...
+     * ```
+     */
+    fun parseHeader(firstFrame: ByteArray): Boolean {
+        if (handle == 0L) return false
+        val rc = runCatching { nativeParseHeader(handle, firstFrame) }
+            .onFailure { Log.e(TAG, "parseHeader EXCEPTION", it) }
+            .getOrDefault(-99)
+        Log.i(TAG, "parseHeader rc=$rc")
+        return rc == 0
+    }
+
+    /**
      * 解码一帧 av3a 码流。
      *
      * @param frame 裸 av3a 帧（不含 ADTS/MP4 头）
@@ -105,6 +128,7 @@ class Avs3AudioDecoder : Closeable {
     private external fun nativeInit(): Int
     private external fun nativeCreate(): Long
     private external fun nativeDestroy(handle: Long)
+    private external fun nativeParseHeader(handle: Long, firstFrame: ByteArray): Int
     private external fun nativeDecode(
         handle: Long,
         inBytes: ByteArray,
