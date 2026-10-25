@@ -72,8 +72,8 @@ import pub.miku.neuralstem.spike.TierRegistry
  * 注：★⑨ EQ 开关已从本页移除（EQ 仅由「混音」页提供）。
  */
 
-/** 设置页内部的三个页面。 */
-private enum class SettingsPage { ROOT, MODELS, POLICY }
+/** 设置页内部的页面。 */
+private enum class SettingsPage { ROOT, MODELS, POLICY, NCM }
 
 @Composable
 fun SettingsScreen(
@@ -107,12 +107,42 @@ fun SettingsScreen(
             modifier = modifier,
             onBack = { page = SettingsPage.ROOT },
         )
+        // ★NCM 导入页：靠 AndroidView 承载 ncm 源集里的 ComposeView。
+        //   为何不直接调 @Composable：它编译期需要 Composer 参数，反射调不了；
+        //   而 main 源集又不能直接 import（默认构建不编译 ncm 源集）。
+        //   故由 ncm 源集提供一个普通 Java/Android 入口 `NcmImportViewHolder.build(ctx, onBack)`。
+        SettingsPage.NCM -> androidx.compose.ui.viewinterop.AndroidView(
+            modifier = modifier.fillMaxSize(),
+            factory = { c ->
+                runCatching {
+                    val cls = Class.forName(
+                        "pub.miku.neuralstem.experimental.ncm.NcmImportViewHolder",
+                    )
+                    val inst = cls.getField("INSTANCE").get(null)
+                    cls.getMethod(
+                        "build",
+                        android.content.Context::class.java,
+                        Runnable::class.java,
+                    ).invoke(inst, c, Runnable { page = SettingsPage.ROOT }) as android.view.View
+                }.getOrElse {
+                    android.widget.TextView(c).apply {
+                        text = "NCM 导入不可用：${it.message}"
+                        setPadding(60, 60, 60, 60)
+                    }
+                }
+            },
+        )
         SettingsPage.ROOT -> SettingsRoot(
             modifier = modifier,
             vm = vm,
             st = st,
             onOpenModels = { page = SettingsPage.MODELS },
             onOpenPolicy = { page = SettingsPage.POLICY },
+            onOpenNcm = if (pub.miku.neuralstem.BuildConfig.WITH_NCM) {
+                { page = SettingsPage.NCM }
+            } else {
+                null
+            },
         )
     }
 }
@@ -124,6 +154,8 @@ private fun SettingsRoot(
     st: SettingsViewModel.UiState,
     onOpenModels: () -> Unit,
     onOpenPolicy: () -> Unit,
+    /** ★NCM 导入入口；null = 不显示（默认构建 / 未启用 NCM）。 */
+    onOpenNcm: (() -> Unit)? = null,
 ) {
     val ctx = LocalContext.current
 
@@ -245,6 +277,16 @@ private fun SettingsRoot(
             ),
             onClick = onOpenPolicy,
         )
+
+        // ---- ▸ NCM 导入（仅 with_ncm 构建；默认构建 onOpenNcm == null 不显示）----
+        if (onOpenNcm != null) {
+            HorizontalDivider()
+            EntryRow(
+                title = "NCM 导入",
+                subtitle = "从网易云音乐导入加密的 .ncm 文件（需 Shizuku）",
+                onClick = onOpenNcm,
+            )
+        }
 
         HorizontalDivider()
 
