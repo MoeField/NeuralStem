@@ -275,6 +275,39 @@ class MainActivity : ComponentActivity() {
                 playerVm.play()
             }
             "exitsmt" -> playerVm.exitMultiTrack()
+            // ★ncmtest：NCM 解码验证（仅在 -Pwith_ncm=true 构建中存在）。
+            //   a0 = .ncm 绝对路径。结果写 TAG=NcmVerify。
+            //
+            // ## 为何用反射而不是直接引用
+            // `NcmVerifier` 位于 `src/ncm/` 源集，只有 `-Pwith_ncm=true` 时才被加进
+            // `main` 源集。若直接 import，默认构建（with_ncm=false）会**编译失败**。
+            // 反射让 main 源集零编译期依赖，两种构建都能编译。
+            "ncmtest" -> {
+                if (a0 == null) {
+                    Log.w("TestCmd", "ncmtest 需要 a0=.ncm 文件路径")
+                } else if (!BuildConfig.WITH_NCM) {
+                    Log.w(
+                        "TestCmd",
+                        "ncmtest 不可用：本 APK 未启用 NCM 模块（需 -Pwith_ncm=true 构建）",
+                    )
+                } else {
+                    val t0 = SystemClock.elapsedRealtime()
+                    runCatching {
+                        val cls = Class.forName("pub.miku.neuralstem.experimental.ncm.NcmVerifier")
+                        val inst = cls.getField("INSTANCE").get(null)
+                        // verifyAndReport(path, outDir)：结果写 filesDir，adb run-as 直接读。
+                        // 为何不用 logcat：vivo/Android16 吞 app 日志（坑 52）。
+                        val m = cls.getMethod(
+                            "verifyAndReport",
+                            String::class.java,
+                            String::class.java,
+                        )
+                        val result = m.invoke(inst, a0, filesDir.absolutePath)
+                        Log.i("TestCmd", "NCM_RESULT $result")
+                    }.onFailure { Log.e("TestCmd", "ncmtest 失败", it) }
+                    Log.i("TestCmd", "ncmtest done in ${SystemClock.elapsedRealtime() - t0}ms")
+                }
+            }
             // ★dlmodel：批量下载模型（自动化用，避免 UI 逐个点击 19 次）。
             //   a0 = "all" 或逗号分隔的 ModelPack.id（如 "uvr-9482,uvr-kara"）。
             //   结果写 TAG=ModelDl，并同步进 TestLog（屏上可见）。
