@@ -70,6 +70,54 @@ object NcmVerifier {
     }
 
     /**
+     * **性能基准**：读文件 + 解密 + 格式嗅探，重复多轮取中位数。
+     *
+     * ## 为何要做
+     * 接线到播放链路前必须知道「解密一个 N 分钟歌要多少 ms」：
+     * - 若耗时 ≪ 曲子时长 → 可以**一次性解到内存**，实现简单
+     * - 若接近甚至超过 → 必须做**流式解密 + 边播**
+     *
+     * 纯解密是 O(n) 字节 XOR，理论上很便宜；但基凖能实测，不猜。
+     */
+    fun benchmark(ncmPath: String, rounds: Int = 3): String {
+        val f = File(ncmPath)
+        if (!f.exists()) return "benchmark: 文件不存在 $ncmPath"
+        val times = ArrayList<Long>(rounds)
+        var audioLen = 0
+        var fmt = "?"
+        var durationMs = 0L
+        repeat(rounds) {
+            val t0 = System.nanoTime()
+            runCatching {
+                f.inputStream().use { ins ->
+                    val d = NcmDecoder.decode(ins)
+                    audioLen = d.audioBytes.size
+                    fmt = d.format
+                }
+            }.onFailure { return "benchmark 失败: ${it.message}" }
+            times += (System.nanoTime() - t0) / 1_000_000
+        }
+        val med = times.sorted()[times.size / 2]
+        val sourceMb = f.length() / 1_048_576.0
+        val mbPerSec = if (med > 0) sourceMb / (med / 1000.0) else 0.0
+        val sb = StringBuilder()
+        sb.append("BENCH_NCM | file=").append(f.name)
+        sb.append(" | src=").append("%.1f".format(sourceMb)).append("MB")
+        sb.append(" | audio=").append("%.1f".format(audioLen / 1_048_576.0)).append("MB")
+        sb.append(" | fmt=").append(fmt)
+        sb.append(" | 解密 中位数=").append(med).append("ms")
+        sb.append(" | 吞吐=").append("%.0f".format(mbPerSec)).append("MB/s")
+        sb.append(" | 全部=").append(times)
+        val s = sb.toString()
+        Log.i(TAG, s)
+        TestLog.log(TAG, s)
+        runCatching {
+            File(File(ncmPath).parentFile ?: File("/"), "ncmbench.txt").writeText(s)
+        }
+        return s
+    }
+
+    /**
      * 验证并**把结果写到 [outDir]/ncmtest_result.txt**。
      *
      * ## 为何还要写文件
