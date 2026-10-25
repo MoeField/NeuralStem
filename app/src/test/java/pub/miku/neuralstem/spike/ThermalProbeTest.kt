@@ -67,22 +67,35 @@ class ThermalProbeTest {
     // ---------------- 真降频 ----------------
 
     @Test
-    fun `大核降到 50% 且不在空闲 → 可疑`() {
+    fun `大核降到 50% 且不在空闲`() {
         val s = snap(thermal = 0, big = 0.50f)
         assertFalse(s.idle)
         assertTrue("大核 < 80% 且有负载 → 真降频", s.suspect)
     }
 
     @Test
-    fun `热状态 MODERATE 即使大核 100% 也判可疑`() {
-        // BF00A 实测形态：热状态 2 但大核可能仍高（小核被压）
+    fun `热状态不参与判定（BF00A 热状态粘滞）`() {
+        // BF00A 冷却 7 分钟后：CPU 已 37°C、大核能顶满，但 Thermal Status 仍报 2。
+        // 若热状态参与判定 → 会误报全部数据不可信。
         val s = snap(thermal = 2, big = 1.0f)
-        assertTrue("热状态 ≥ MODERATE 本身就不可信", s.suspect)
+        assertFalse("大核能顶满就算可信，不看热状态", s.suspect)
     }
 
     @Test
-    fun `热状态 SEVERE 判可疑`() {
-        assertTrue(snap(thermal = 3, big = 0.9f).suspect)
+    fun `热状态 MODERATE 且大核被压 → 可疑（靠频率判出）`() {
+        val s = snap(thermal = 2, big = 0.55f)
+        assertTrue(s.suspect)
+    }
+
+    @Test
+    fun `温度高了但频率正常 → 不判可疑（应用读不到温度，不作为依据）`() {
+        val s = ThermalProbe.Snapshot(
+            thermalStatus = 0,
+            maxTempC = 60f,
+            freqRatio = 0.95f,
+            allRatios = listOf(0.4f, 0.95f),
+        )
+        assertFalse("频率正常就不判可疑", s.suspect)
     }
 
     // ---------------- 边界 ----------------
@@ -119,7 +132,7 @@ class ThermalProbeTest {
         val s = snap(thermal = 2, big = 0.5f)
         val text = s.describe()
         assertTrue("应含 SUSPECT 标记", text.contains("SUSPECT"))
-        assertTrue("应含热状态名", text.contains("MODERATE"))
+        assertTrue("应含热状态名（仅展示）", text.contains("MODERATE"))
     }
 
     @Test
