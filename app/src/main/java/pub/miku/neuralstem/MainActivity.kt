@@ -680,6 +680,11 @@ class MainActivity : ComponentActivity() {
                                     val opened = acls.getMethod("open").invoke(dec) as Boolean
                                     step("5. open=$opened")
                                     if (opened) {
+                                        // ★先用第一帧初始化解码器（否则 ctx 全零 → 输出恒空）
+                                        val ph = acls.getMethod("parseHeader", ByteArray::class.java)
+                                            .invoke(dec, samples[0]) as Boolean
+                                        step("5b. parseHeader=$ph")
+
                                         val decodeM = acls.getMethod("decodeFrame", ByteArray::class.java)
                                         var ok = 0; var fail = 0; var empty = 0; var totalPcm = 0L
                                         var firstPcm: ByteArray? = null

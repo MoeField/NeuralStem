@@ -51,10 +51,44 @@ typedef int   (*fn_decode)(void *dec, const void *in, int inLen,
                            void *out, int *outSize1, int *outSize2);
 typedef void  (*fn_destroy)(void *dec);
 
-static fn_create  p_create  = NULL;
-static fn_decode  p_decode  = NULL;
-static fn_destroy p_destroy = NULL;
-static int        g_ready   = 0;
+/**
+ * ★`parse_header` 签名（反汇编推出，它也导出）
+ *
+ * ```c
+ * int parse_header(void* ctx,          // x0 - 解码器 ctx（会被填字段）
+ *                  const void* buf,    // x1 - 码流
+ *                  int len,            // w2 - 长度（必须 > 8）
+ *                  int* outOffset,     // x4 - 被置 0 / 可能在扫同步码时写
+ *                  void* out2);        // x5 - 另一输出（可 NULL）
+ * ```
+ *
+ * ## 为何必须先调它（这才是之前解码全 0 的根因）
+ * `avs3_create_decoder()` 只做 `calloc(1, 320)`，**全零**。
+ * 而 `Avs3InitDecoder` 从 ctx 里读参数算每帧期望大小：
+ * ```asm
+ * b02c: ldr x8, [x0,#0x8]    ; 采样率
+ * b030: ldr x9, [x0,#0x18]   ; 总采样数
+ * b048: ldr h1, [x0,#0x4c]   ; 声道数
+ * b068: str w8, [x0,#0x50]   ; requiredBytes = f(上面三个)
+ * ```
+ * 全零 → `requiredBytes=0` → `*outSize1 = frameSize*channels*2 = 0`。
+ *
+ * `parse_header` 就是那个**从码流解析并填 ctx** 的函数：
+ * ```asm
+ * 1f38: str  x0, [x19,#0x8]    ; ctx->sampleRate
+ * 1f48: strh w0, [x19,#0x4c]   ; ctx->channels
+ * 2070: str  x10,[x19,#0x18]   ; ctx->totalSamples
+ * 20b4: str  w2, [x19,#0x50]   ; ctx->requiredBytes
+ * ```
+ */
+typedef int (*fn_parse_header)(void *ctx, const void *buf, int len,
+                               int *outOffset, void *out2);
+
+static fn_create       p_create       = NULL;
+static fn_decode       p_decode       = NULL;
+static fn_destroy      p_destroy      = NULL;
+static fn_parse_header p_parse_header = NULL;
+static int             g_ready        = 0;
 
 /* 一次解码最多输出的 PCM 字节数（按 8 声道 × 2048 帧 × 2B 估，留余量） */
 #define MAX_PCM_BYTES (256 * 1024)
@@ -78,16 +112,18 @@ static int ensure_loaded(void) {
         LOGE("dlopen(libAVS3AudioDec.so) failed: %s", dlerror());
         return -1;
     }
-    p_create  = (fn_create)  dlsym(h, "avs3_create_decoder");
-    p_decode  = (fn_decode)  dlsym(h, "avs3_decode");
-    p_destroy = (fn_destroy) dlsym(h, "avs3_destroy_decoder");
+    p_create       = (fn_create)       dlsym(h, "avs3_create_decoder");
+    p_decode       = (fn_decode)       dlsym(h, "avs3_decode");
+    p_destroy      = (fn_destroy)      dlsym(h, "avs3_destroy_decoder");
+    p_parse_header = (fn_parse_header) dlsym(h, "parse_header");
     if (!p_create || !p_decode || !p_destroy) {
         LOGE("dlsym failed: create=%p decode=%p destroy=%p",
              (void *) p_create, (void *) p_decode, (void *) p_destroy);
         return -2;
     }
     g_ready = 1;
-    LOGI("AVS3 decoder loaded (create=%p decode=%p)", (void *) p_create, (void *) p_decode);
+    LOGI("AVS3 decoder loaded (create=%p decode=%p parse_header=%p)",
+         (void *) p_create, (void *) p_decode, (void *) p_parse_header);
     return 0;
 }
 
@@ -98,6 +134,48 @@ JNIEXPORT jint JNICALL
 Java_pub_miku_neuralstem_experimental_ncm_Avs3AudioDecoder_nativeInit(JNIEnv *env, jclass clazz) {
     (void) env; (void) clazz;
     return ensure_loaded();
+}
+
+/**
+ * ★用第一帧初始化解码器（解析 sequence header 填 ctx 字段）。
+ *
+ * **必须在首次 decode 之前调用**，否则 ctx 全零 → 解码输出恒为空。
+ *
+ * @return 0 成功；<0 失败
+ */
+JNIEXPORT jint JNICALL
+Java_pub_miku_neuralstem_experimental_ncm_Avs3AudioDecoder_nativeParseHeader(
+        JNIEnv *env, jclass clazz, jlong handle, jbyteArray firstFrame) {
+    (void) clazz;
+    if (ensure_loaded() != 0) return -1;
+    if (p_parse_header == NULL) {
+        LOGE("parse_header 未导出（这个库版本不支持）");
+        return -2;
+    }
+    if (handle == 0 || firstFrame == NULL) return -1;
+
+    jsize len = (*env)->GetArrayLength(env, firstFrame);
+    jbyte *buf = (*env)->GetByteArrayElements(env, firstFrame, NULL);
+    if (!buf) return -1;
+
+    int offset = 0;
+    int out2 = 0;
+    int rc = p_parse_header((void *) (uintptr_t) handle, buf, (int) len, &offset, &out2);
+    (*env)->ReleaseByteArrayElements(env, firstFrame, buf, JNI_ABORT);
+
+    LOGI("parse_header: len=%d -> rc=%d offset=%d out2=%d", (int) len, rc, offset, out2);
+    if (rc <= 0) return -3;
+
+    /* 顺手把 ctx 里的关键字段读出来（验证 parse 真的填了） */
+    unsigned char *ctx = (unsigned char *) (uintptr_t) handle;
+    long sampleRate = *(long *) (ctx + 0x8);
+    long totalSamples = *(long *) (ctx + 0x18);
+    short frameSize = *(short *) (ctx + 0x2c);
+    short channels = *(short *) (ctx + 0x4c);
+    int required = *(int *) (ctx + 0x50);
+    LOGI("  ctx: sampleRate=%ld totalSamples=%ld frameSize=%d channels=%d required=%d",
+         sampleRate, totalSamples, (int) frameSize, (int) channels, required);
+    return 0;
 }
 
 /** 建解码器，返回 opaque handle（0 = 失败）。 */
