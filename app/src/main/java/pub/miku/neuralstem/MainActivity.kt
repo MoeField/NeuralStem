@@ -671,58 +671,37 @@ class MainActivity : ComponentActivity() {
                                     "pub.miku.neuralstem.experimental.ncm.Avs3AudioDecoder",
                                 )
                                 val dec = acls.getConstructor().newInstance()
-                                // Kotlin 的 `val available` 编译后是 `getAvailable()`
-                                val avail = acls.getMethod("getAvailable").invoke(dec) as Boolean
-                                step("4. decoder available=$avail")
-                                if (!avail) {
-                                    step("   ❌ AVS3 库不可用（仅 arm64-v8a）")
-                                } else {
-                                    val opened = acls.getMethod("open").invoke(dec) as Boolean
-                                    step("5. open=$opened")
-                                    if (opened) {
-                                        // ★按官方顺序初始化：parse_header(1) → parse_header(0)
-                                        val ph = acls.getMethod(
-                                            "initSequence", ByteArray::class.java,
-                                        ).invoke(dec, samples[0]) as Int
-                                        step("5b. initSequence rc=$ph")
-
-                                        // ★只跑一轮（之前 bug：先跑 samples.take(60) 再跑 samples，
-                                        //   重复喂同一批 → 解码器状态被搞环 → 第 61 帧 native 崩溃）
-                                        val t0all = System.currentTimeMillis()
-                                        val decodeAll =
-                                            acls.getMethod("decodeFrame", ByteArray::class.java)
-                                        var allPcm = 0L; var nOk = 0; var nEmpty2 = 0; var nFail2 = 0
-                                        var firstChunk: ByteArray? = null
-                                        val limit = a1?.toIntOrNull() ?: 200
-                                        for (s in samples.take(limit)) {
-                                            val pcm = decodeAll.invoke(dec, s) as ByteArray?
-                                            when {
-                                                pcm == null -> nFail2++
-                                                pcm.isEmpty() -> nEmpty2++
-                                                else -> {
-                                                    nOk++; allPcm += pcm.size
-                                                    if (firstChunk == null) firstChunk = pcm
-                                                }
+                                // ★无论走到哪个分支，都要保证 native 句柄被释放（否则泄露 + 下次跑干扰）
+                                try {
+                                    // Kotlin 的 `val available` 编译后是 `getAvailable()`
+                                    val avail = acls.getMethod("getAvailable").invoke(dec) as Boolean
+                                    step("4. decoder available=$avail")
+                                    if (!avail) {
+                                        step("   ❌ AVS3 库不可用（仅 arm64-v8a）")
+                                    } else {
+                                        val opened = acls.getMethod("open").invoke(dec) as Boolean
+                                        step("5. open=$opened")
+                                        if (!opened) {
+                                            step("   ❌ open 失败（nativeCreate 返回 0）")
+                                        } else {
+                                            // ★按官方顺序初始化：parse_header(1) → parse_header(0)
+                                            //   返回值：0 = 成功，负数 = 失败（内部已按 rc==1 才算成功判定）
+                                            val ph = acls.getMethod(
+                                                "initSequence", ByteArray::class.java,
+                                            ).invoke(dec, samples[0]) as Int
+                                            step("5b. initSequence rc=$ph (0=成功)")
+                                            if (ph != 0) {
+                                                step("   ⚠ init 失败，解码已跳过")
+                                            } else {
+                                                decodeAndReport(acls, dec, samples, durMs, a1, sb)
+                                                Log.i("TestCmd", "AVS3TEST\n$sb")
                                             }
                                         }
-                                        val msAll = System.currentTimeMillis() - t0all
-                                        val audioSec = durMs / 1000.0
-                                        val rtf = if (msAll > 0) audioSec / (msAll / 1000.0) else 0.0
-                                        step("7. 全曲解码: ok=$nOk empty=$nEmpty2 fail=$nFail2")
-                                        step("   pcmBytes=$allPcm")
-                                        step(
-                                            "   cost=${msAll}ms audio=${durMs}ms RTF=${
-                                                "%.2f".format(rtf)
-                                            }×",
-                                        )
-                                        firstChunk?.let { f ->
-                                            val b = f.size
-                                            step("   framePCM=${b}B → 2ch=${
-                                                b / 4
-                                            } samples, 6ch=${b / 12}, 8ch=${b / 16}")
-                                        }
-                                        runCatching { acls.getMethod("close").invoke(dec) }
                                     }
+                                } finally {
+                                    // ★资源释放放在 finally：available=false / open=false /
+                                    //   init 失败 / 中途抛异常 四种路径都会执行到这里。
+                                    runCatching { acls.getMethod("close").invoke(dec) }
                                 }
                             }
                         }.onFailure { step("ERR: $it") }
@@ -758,5 +737,198 @@ class MainActivity : ComponentActivity() {
             } else Log.w("TestCmd", "ncccheck 需要 a0=音频路径")
             else -> Log.w("TestCmd", "未知命令: ${cmd.name}（--es cmd help 查看清单）")
         }
+    }
+
+    /**
+     * ★AVS3 解码 + 统计 + 存证（`avs3test` 分支的实体部分）。
+     *
+     * 拆成独立方法而不是放在分支里，是因为那里已经是 3 层 lambda 嵌套，
+     * 再塞逻辑会根本看不清括号归属。参数全用反射对象（Class/Method），
+     * 保持 main 源集零编译期依赖。
+     *
+     * ## 两个不可变的约束
+     * 1. **必须从 `samples[0]` 开始连续喂** —— AVS3 是有状态解码器，跳过前几帧
+     *    会直接搞坏它内部参考帧/熵上下文，后面全是噪音。
+     * 2. **只跑一轮** —— 之前 bug：先跑 `samples.take(60)` 再跑 `samples`，
+     *    同一批数据被喂两遍，解码器状态被搞环 → 第 61 帧 native 崩溃。
+     *
+     * @param a1 帧数限制（`--es a1 200`），缺省 200
+     */
+    private fun decodeAndReport(
+        acls: Class<*>,
+        dec: Any,
+        samples: List<ByteArray>,
+        durMs: Long,
+        a1: String?,
+        sb: StringBuilder,
+    ) {
+        fun step(s: String) {
+            sb.append(s).append('\n')
+            runCatching { File(filesDir, "ncmtest_result.txt").writeText(sb.toString()) }
+        }
+
+        val decodeAll = acls.getMethod("decodeFrame", ByteArray::class.java)
+        val limit = a1?.toIntOrNull() ?: 200
+        val frames = samples.take(limit)
+        val t0 = System.currentTimeMillis()
+        var ok = 0
+        var empty = 0
+        var fail = 0
+        var pcmBytes = 0L
+        var firstChunk: ByteArray? = null
+        var emptyHeadLogged = false
+
+        for ((i, s) in frames.withIndex()) {
+            val pcm = decodeAll.invoke(dec, s) as ByteArray?
+            when {
+                pcm == null -> fail++
+                pcm.isEmpty() -> {
+                    empty++
+                    // ★前几帧空是正常的（含 sequence header），但若一开始就大量空
+                    //   就要怀疑 access unit 切错了 —— 记一行头信息供人判断。
+                    if (!emptyHeadLogged && i < 3) {
+                        emptyHeadLogged = true
+                        step(
+                            "   frame[$i] EMPTY（native 返回 0=无输出/DATA_NOT_ENOUGH）" +
+                                " inLen=${s.size}B head=${
+                                    s.take(9).joinToString(" ") { "%02x".format(it) }
+                                }",
+                        )
+                    }
+                }
+                else -> {
+                    ok++
+                    pcmBytes += pcm.size
+                    if (firstChunk == null) firstChunk = pcm
+                }
+            }
+        }
+        val costMs = System.currentTimeMillis() - t0
+        val audioSec = durMs / 1000.0
+        val rtf = if (costMs > 0) audioSec / (costMs / 1000.0) else 0.0
+
+        step("6. 解码: frames=${frames.size} ok=$ok empty=$empty fail=$fail")
+        step("   pcmBytes=$pcmBytes")
+        step("   cost=${costMs}ms audio=${durMs}ms RTF=${"%.2f".format(rtf)}×")
+
+        // ★推断声道数：pcmBytes / 帧数 / frameLength。
+        //   包一层非空判断，否则全空帧时会除零（且 Kotlin 里 Int 除零是抛异常）。
+        val outFrames = if (ok > 0) ok else 0
+        if (outFrames > 0 && pcmBytes > 0) {
+            val avgBytes = pcmBytes.toDouble() / outFrames
+            step("   avgFramePCM=${avgBytes.toInt()}B")
+            for (fl in intArrayOf(1024, 2048)) {
+                step(
+                    "   若 frameLength=$fl → 反推声道 = ${
+                        "%.2f".format(avgBytes / (fl * 2))
+                    }（12ch 应为 ${12 * fl * 2}B/帧）",
+                )
+            }
+            // 首帧按各声道数假设的采样点数（b/2/声道数）
+            firstChunk?.let { f ->
+                step(
+                    "   首帧 ${f.size}B → samples: 2ch=${
+                        f.size / 4
+                    } 6ch=${f.size / 12} 8ch=${f.size / 16} 10ch=${f.size / 20} 12ch=${f.size / 24}",
+                )
+                val nz = f.count { it != 0.toByte() }
+                step(
+                    "   首帧 head=${f.take(16).joinToString(" ") { "%02x".format(it) }}",
+                )
+                step(
+                    "   首帧 nonZero=$nz/${f.size} = ${
+                        "%.1f".format(nz * 100.0 / f.size)
+                    }%${if (nz == 0) "（全零：解码器未真正出音）" else ""}",
+                )
+            }
+        } else if (pcmBytes > 0) {
+            // ok==0 但 pcmBytes>0 不可能，这里只是防御；写上便于发现异常。
+            step("   ⚠ ok=$ok 但 pcmBytes=$pcmBytes，计数异常")
+        }
+
+        // ★写一个可播的 probe wav：固定按 48kHz 假设 + 声道数按每帧字节数反推。
+        //   目的是能 `adb pull` 出来直接在 Mac 上听，而不是只看数字。
+        if (pcmBytes > 0) {
+            val chBytes = (pcmBytes / frames.size).toInt()
+            val framesInPcm = (pcmBytes / (2 * maxOf(1, guessChannels(chBytes)))).toInt()
+            step("   probe: 按 48kHz 输出前 $framesInPcm 帧（约 ${framesInPcm / 48000.0}s）")
+            runCatching {
+                writeProbeWav(pcmBytes, frames, decodeAll, dec)
+                step("   probe wav → filesDir/avs3_probe.wav")
+            }.onFailure { step("   probe wav 失败: $it") }
+        }
+    }
+
+    /**
+     * 把 PCM 写成 `files/avs3_probe.wav`，方便直接 `adb pull` 到 Mac 上播。
+     *
+     * ★声道数是**猜**的：官方库没导出声道信息（`Avs3DecoderLibGetConfig` 不在 ABI 里），
+     *   只能从「每帧字节数 / 2 / frameLength」反推。这里取 1024 作为 frameLength 假设，
+     *   因为 AVS3-P3 主流是 1024。猜错的话听感会是变速/变调，但能立刻听出「有没有声音」。
+     */
+    private fun writeProbeWav(
+        pcmBytes: Long,
+        frames: List<ByteArray>,
+        decodeAll: java.lang.reflect.Method,
+        dec: Any,
+    ) {
+        val sampleRate = 48000
+        val chGuess = guessChannels((pcmBytes / frames.size).toInt())
+        // 只取前 2 秒（避免文件过大），不足则全取
+        val maxBytes = sampleRate * chGuess * 2 * 2
+        val pcm = java.io.ByteArrayOutputStream()
+        var total = 0
+        for (s in frames) {
+            if (total >= maxBytes) break
+            val chunk = decodeAll.invoke(dec, s) as ByteArray?
+            if (chunk == null || chunk.isEmpty()) continue
+            pcm.write(chunk)
+            total += chunk.size
+        }
+        if (total == 0) return
+        File(filesDir, "avs3_probe.wav").outputStream().use { out ->
+            val dataLen = total
+            val hdr = java.nio.ByteBuffer.allocate(44).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+            hdr.put("RIFF".toByteArray(Charsets.US_ASCII))
+            hdr.putInt(36 + dataLen)
+            hdr.put("WAVE".toByteArray(Charsets.US_ASCII))
+            hdr.put("fmt ".toByteArray(Charsets.US_ASCII))
+            hdr.putInt(16)                                   // PCM 格式块大小
+            hdr.putShort(1)                                  // PCM
+            hdr.putShort(chGuess.toShort())                  // 声道数
+            hdr.putInt(sampleRate)
+            hdr.putInt(sampleRate * chGuess * 2)             // 字节率
+            hdr.putShort((chGuess * 2).toShort())            // 块对齐
+            hdr.putShort(16)                                 // 位深
+            hdr.put("data".toByteArray(Charsets.US_ASCII))
+            hdr.putInt(dataLen)
+            out.write(hdr.array())
+            pcm.writeTo(out)
+        }
+        Log.i("TestCmd", "avs3_probe.wav: $total bytes, ${chGuess}ch@$sampleRate")
+    }
+
+    /**
+     * 从「每帧 PCM 字节数」反推声道数（在最接近的候选里选）。
+     *
+     * 每帧字节 = 声道数 × frameLength × 2。frameLength 取 1024（AVS3-P3 主流），
+     * 即 frameLenHint = 2048 B/声道/帧。候选声道用规范里的 2/6/8/10/12/24 几档，
+     * 取相对误差最小的那个 —— 只能猜，不能保证（库没暴露 config）。
+     */
+    private fun guessChannels(bytesPerFrame: Int): Int {
+        if (bytesPerFrame <= 0) return 2
+        val frameLenHint = 1024 * 2
+        val chans = intArrayOf(2, 6, 8, 10, 12, 24)
+        var best = 2
+        var bestErr = Double.MAX_VALUE
+        for (ch in chans) {
+            val expected = ch * frameLenHint
+            val err = kotlin.math.abs(expected - bytesPerFrame).toDouble() / expected
+            if (err < bestErr) {
+                bestErr = err
+                best = ch
+            }
+        }
+        return best
     }
 }
