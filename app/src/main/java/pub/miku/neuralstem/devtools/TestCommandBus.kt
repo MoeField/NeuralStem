@@ -79,6 +79,7 @@ object TestCommandBus {
           exitsmt                     退出多轨
           dlmodel a0=all|<packId,...> 下载模型（all=全部；或逗号分隔的 pack id）
           dlstatus                    打印下载进度（指 dlmodel 的屏上日志）
+          ncmtest a0=<path>           验证 NCM 解码（仅 -Pwith_ncm=true 构建可用）
         例:
           adb shell am start-service -n pub.miku.neuralstem/.devtools.TestCommandService --es cmd seek --es a0 62000
           adb shell am start-service -n pub.miku.neuralstem/.devtools.TestCommandService --es cmd help
