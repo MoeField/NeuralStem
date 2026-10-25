@@ -113,14 +113,59 @@ static fn_decode       p_decode       = NULL;
 static fn_decode_float p_decode_float = NULL;
 static int             g_ready        = 0;
 
+/*
+ * ============================================================================
+ * ★ 自编译版（2026-10-26）：直接静态链接 avs3dec/ 源码
+ * ============================================================================
+ * 厂商预编译的 libAVS3AudioDec.so 在 AArch64 上有一处代码生成 bug（详见
+ * doc/.memory.md §8.5.3），第一次 decode 必崩。反正源码就在仓库里，用我们的
+ * NDK 工具链重编一遍，同样的逻辑就会生成正确的寻址指令。
+ *
+ * 这里把符号直接指到静态库里的实现，**不再经过 dlopen**。
+ * 好处：不依赖 jniLibs 里的那份坏 .so，也不会出现「两份同名符号」的冲突。
+ *
+ * 为什么用 `#if` 而不是在 CMake 里做宏：桥在 x86_64 上也要能编过（abiFilters
+ * 里有 x86_64），而 avs3dec 只在 arm64-v8a 编译，用 CMake 传进来更干净。
+ */
+#if defined(NEURALSTEM_AVS3_BUILTIN) && NEURALSTEM_AVS3_BUILTIN
+/* 官方头文件（avs3dec/include/avs3_decoder_interface.h）已经声明了这 5 个函数，
+ * 直接使用就能拿到正确的原型，不需要再手写 typedef。
+ *
+ * 注意：官方签名用的是 `AVS3DecoderHandle`（= `struct avs3_main_decoder_structure *`）
+ * 而不是 `void *`。直接赋值给 `fn_*` 会报 -Wincompatible-function-pointer-types，
+ * 所以这里统一显式转换一次（类型本身兼容：都是指针，只是带不带具体结构体标签）。 */
+#include "avs3_decoder_interface.h"
+
+static void bind_builtin(void) {
+    p_create       = (fn_create)       avs3_create_decoder;
+    p_destroy      = (fn_destroy)      avs3_destroy_decoder;
+    p_parse_header = (fn_parse_header) parse_header;
+    p_decode       = (fn_decode)       avs3_decode;
+    p_decode_float = (fn_decode_float) avs3_decode_float;
+}
+#endif
+
 /**
  * 加载解码库并解析符号。返回 0 成功，负数为错误码。
  *
- * 用 dlopen 而非直接链接：缺库时能给出明确错误，而不是进程启动崩溃。
+ * 优先用**自编译实现**（NEURALSTEM_AVS3_BUILTIN）；
+ * 未启用时才回退到 dlopen jniLibs 里的预编译 .so。
+ * 回退路径保留是为了：① 能在 x86_64 上编过；② 需要对比两份实现时方便。
  */
 static int ensure_loaded(void) {
     if (g_ready) return 0;
 
+#if defined(NEURALSTEM_AVS3_BUILTIN) && NEURALSTEM_AVS3_BUILTIN
+    bind_builtin();
+    if (!p_create || !p_destroy || !p_parse_header || !p_decode) {
+        LOGE("自编译 AVS3 符号缺失（静态链接异常）");
+        return -2;
+    }
+    g_ready = 1;
+    LOGI("AVS3 loaded (BUILTIN，自编译版；float API %s)",
+         p_decode_float ? "yes" : "no");
+    return 0;
+#else
     void *h = dlopen("libAVS3AudioDec.so", RTLD_NOW | RTLD_LOCAL);
     if (!h) {
         LOGE("dlopen(libAVS3AudioDec.so) failed: %s", dlerror());
@@ -139,8 +184,10 @@ static int ensure_loaded(void) {
         return -2;
     }
     g_ready = 1;
-    LOGI("AVS3 loaded (float API %s)", p_decode_float ? "yes" : "no");
+    LOGI("AVS3 loaded (dlopen 预编译版，已弃用；float API %s)",
+         p_decode_float ? "yes" : "no");
     return 0;
+#endif
 }
 
 /* ==================== JNI 导出 ==================== */
@@ -339,6 +386,27 @@ Java_pub_miku_neuralstem_experimental_ncm_Avs3AudioDecoder_nativeDecode(
     int rc = p_decode((void *) (uintptr_t) handle,
                       (unsigned char *) in, (int) inLen,
                       (unsigned char *) out, &lenOut, &lenConsumed);
+
+    /*
+     * ★诊断（2026-10-26）：`avs3_decode` **不做任何码流校验**，
+     *   `bytesPerFrame` 完全由帧头推出的比特率决定（见 decoder.c）。
+     *   所以 lenConsumed 是判断「帧边界对不对」的唯一信号：
+     *   - lenConsumed == inLen 且 == 2422 → 切分正确
+     *   - lenConsumed 远大于/小于 inLen → 比特率与码流不自洽
+     *   只在开头打几行，避刷屏。
+     */
+    {
+        static int s_diag;
+        if (s_diag < 6) {
+            LOGI("decode#%d inLen=%d rc=%d lenOut=%d lenConsumed=%d head=%02x%02x%02x%02x%02x%02x%02x%02x",
+                 s_diag, (int) inLen, rc, lenOut, lenConsumed,
+                 (unsigned char) in[0], (unsigned char) in[1],
+                 (unsigned char) in[2], (unsigned char) in[3],
+                 (unsigned char) in[4], (unsigned char) in[5],
+                 (unsigned char) in[6], (unsigned char) in[7]);
+            s_diag++;
+        }
+    }
 
     (*env)->ReleaseByteArrayElements(env, inBytes, in, JNI_ABORT);
     (*env)->ReleaseByteArrayElements(env, outPcm, out, 0);

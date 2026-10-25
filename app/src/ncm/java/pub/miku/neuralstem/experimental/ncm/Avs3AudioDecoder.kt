@@ -147,8 +147,16 @@ class Avs3AudioDecoder : Closeable {
             outBuf = ByteArray(cap * 2)
             Log.i(TAG, "outBuf 扩容到 ${cap * 2}")
         }
+        // ★把库实际消费的字节数留给调用方（诊断用）：
+        //   avs3_decode 不校验码流，bytesPerFrame 完全由帧头比特率决定，
+        //   所以「消费字节数 vs 喂进去的字节数」是判断帧边界的唯一信号。
+        lastConsumed = outInfo[1]
         return out.copyOf(n)
     }
+
+    /** 上一帧库实际消费的输入字节数（{@link decodeFrame} 后有效）。 */
+    var lastConsumed: Int = 0
+        private set
 
     /** 拿到 PCM 后，用这个判断是否需要重采样/声道转换。 */
     fun lastFrameBytes(): Int = outInfo[0]
