@@ -1,5 +1,10 @@
 cmake_minimum_required(VERSION 3.22)
-project(neuralstem_spike LANGUAGES C)
+# ★ LANGUAGES 加 CXX（2026-10-25）：
+#   AVS3 预编译库 libVMFPlatForm.so 依赖 libc++_shared.so。
+#   只启 C 语言时，CMake 不会配置 C++ STL → gradle 不会打包 libc++_shared.so
+#   → dlopen 报 `library "libc++_shared.so" not found`。
+#   加上 CXX 后 AGP 会自动把它放进 APK。
+project(neuralstem_spike LANGUAGES C CXX)
 
 set(SHERPA_LIB_DIR ${CMAKE_SOURCE_DIR}/sherpa-libs/${ANDROID_ABI})
 
@@ -42,4 +47,23 @@ if(EXISTS ${ORT_LIB_DIR}/libonnxruntime.so)
     target_compile_options(neuralstem_ort PRIVATE -O2)
 else()
     message(WARNING "ort-libs/${ANDROID_ABI}/libonnxruntime.so 不存在，跳过 neuralstem_ort 目标")
+endif()
+
+# ============================================================================
+# ★AVS3-P3 (av3a) 音频解码 JNI 桥（仅 arm64-v8a）
+#
+# 依赖两个**预编译** .so（放在 app/src/main/jniLibs/arm64-v8a/）：
+#   libAVS3AudioDec.so  324KB  核心解码器
+#   libVMFPlatForm.so   185KB  平台层
+# 来源：github.com/Dreamello/av3a
+#
+# 两者不参与链接——本桥用 dlopen 运行时加载，
+# 好处：缺库时返回错误码而不是进程启动崩溃。
+# ============================================================================
+if(ANDROID_ABI STREQUAL "arm64-v8a")
+    add_library(neuralstem_avs3 SHARED avs3_audio_bridge.c)
+    target_link_libraries(neuralstem_avs3 log dl)
+    target_compile_options(neuralstem_avs3 PRIVATE -O2)
+else()
+    message(STATUS "AVS3 桥仅支持 arm64-v8a，当前 ${ANDROID_ABI} 跳过")
 endif()
