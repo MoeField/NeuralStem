@@ -777,9 +777,43 @@ class MainActivity : ComponentActivity() {
         var pcmBytes = 0L
         var firstChunk: ByteArray? = null
         var emptyHeadLogged = false
+        val consumedList = ArrayList<Int>()
+        val inLenList = ArrayList<Int>()
 
+        /*
+         * ★★ 关键修正（2026-10-26，实测坐实）：
+         * `avs3_decode` 吃的是**纯帧载荷**，不包括帧头。
+         *
+         * 实测证据：MP4 每个样本 = 2415B（= 7B 帧头 + 2408B 载荷），
+         * 而库返回 `lenConsumed = 2408` —— **恰好是去掉 7B 帧头后的长度**。
+         * 之前我们把整份 2415B 喂进去，库只读前 2408B，
+         * 于是每一帧都从「错位 7 字节」的位置开始解，自然全部是垃圾
+         * （表现为满幅削波噪声，96.9% 样本贴 ±32767）。
+         *
+         * 另外根据官方 decoder.c，`Avs3InitDecoder` 里的 `bitsPerFrame`
+         * **也不含** `NBITS_FRAME_HEADER_MC`，两边口径一致。
+         */
+        var headerBytes = -1
         for ((i, s) in frames.withIndex()) {
-            val pcm = decodeAll.invoke(dec, s) as ByteArray?
+            // 首次调用时用库返回的 consumed 反推帧头长度，之后复用。
+            val payload = if (headerBytes > 0 && s.size > headerBytes) {
+                s.copyOfRange(headerBytes, s.size)
+            } else {
+                s
+            }
+            val pcm = decodeAll.invoke(dec, payload) as ByteArray?
+            // ★把库实际消费的字节数也收下来（诊断帧边界用）。
+            //   avs3_decode 不校验码流，bytesPerFrame 完全由帧头比特率决定，
+            //   consumed 与 inLen 不相等就说明「帧头推出的帧长」与「实际样本切分」不自洽。
+            inLenList.add(s.size)
+            val consumed = runCatching {
+                acls.getMethod("getLastConsumed").invoke(dec) as Int
+            }.getOrDefault(-1)
+            consumedList.add(consumed)
+            // 首帧：拿 consumed 反推帧头长度（样本大小 - 库期望的载荷大小）
+            if (headerBytes < 0 && consumed > 0 && s.size > consumed) {
+                headerBytes = s.size - consumed
+            }
             when {
                 pcm == null -> fail++
                 pcm.isEmpty() -> {
@@ -789,10 +823,9 @@ class MainActivity : ComponentActivity() {
                     if (!emptyHeadLogged && i < 3) {
                         emptyHeadLogged = true
                         step(
-                            "   frame[$i] EMPTY（native 返回 0=无输出/DATA_NOT_ENOUGH）" +
-                                " inLen=${s.size}B head=${
-                                    s.take(9).joinToString(" ") { "%02x".format(it) }
-                                }",
+                            "   frame[" + i + "] EMPTY（native 返回 0=无输出/DATA_NOT_ENOUGH）" +
+                                " inLen=" + s.size + "B head=" +
+                                s.take(9).joinToString(" ") { "%02x".format(it) },
                         )
                     }
                 }
@@ -810,6 +843,21 @@ class MainActivity : ComponentActivity() {
         step("6. 解码: frames=${frames.size} ok=$ok empty=$empty fail=$fail")
         step("   pcmBytes=$pcmBytes")
         step("   cost=${costMs}ms audio=${durMs}ms RTF=${"%.2f".format(rtf)}×")
+
+        // ★帧边界诊断：avs3_decode 不校验码流，bytesPerFrame 完全由帧头比特率决定。
+        //   consumed == inLen == 2422 ⇒ 切分正确；否则帧头与样本切分不自洽，
+        //   会导致 decoder 把垃圾当码流解 → 输出满幅削波噪声。
+        if (consumedList.isNotEmpty()) {
+            val firstC = consumedList.first()
+            val firstIn = inLenList.first()
+            val allSame = consumedList.distinct().size == 1
+            step(
+                "7. 帧边界: consumed=${firstC}B 样本=${firstIn}B 推断帧头=${headerBytes}B 全部相同=$allSame",
+            )
+            if (headerBytes > 0) {
+                step("   ✓ 已按 ${headerBytes}B 帧头切离：喂给库的载荷 = ${firstIn - headerBytes}B = 库期望的 $firstC B")
+            }
+        }
 
         // ★推断声道数：pcmBytes / 帧数 / frameLength。
         //   包一层非空判断，否则全空帧时会除零（且 Kotlin 里 Int 除零是抛异常）。
@@ -853,7 +901,7 @@ class MainActivity : ComponentActivity() {
             val framesInPcm = (pcmBytes / (2 * maxOf(1, guessChannels(chBytes)))).toInt()
             step("   probe: 按 48kHz 输出前 $framesInPcm 帧（约 ${framesInPcm / 48000.0}s）")
             runCatching {
-                writeProbeWav(pcmBytes, frames, decodeAll, dec)
+                writeProbeWav(pcmBytes, frames, decodeAll, dec, headerBytes)
                 step("   probe wav → filesDir/avs3_probe.wav")
             }.onFailure { step("   probe wav 失败: $it") }
         }
@@ -871,6 +919,7 @@ class MainActivity : ComponentActivity() {
         frames: List<ByteArray>,
         decodeAll: java.lang.reflect.Method,
         dec: Any,
+        headerBytes: Int,
     ) {
         val sampleRate = 48000
         val chGuess = guessChannels((pcmBytes / frames.size).toInt())
@@ -880,7 +929,13 @@ class MainActivity : ComponentActivity() {
         var total = 0
         for (s in frames) {
             if (total >= maxBytes) break
-            val chunk = decodeAll.invoke(dec, s) as ByteArray?
+            // ★同样要跳帧头（见 decodeAndReport 里的说明）
+            val payload = if (headerBytes > 0 && s.size > headerBytes) {
+                s.copyOfRange(headerBytes, s.size)
+            } else {
+                s
+            }
+            val chunk = decodeAll.invoke(dec, payload) as ByteArray?
             if (chunk == null || chunk.isEmpty()) continue
             pcm.write(chunk)
             total += chunk.size
