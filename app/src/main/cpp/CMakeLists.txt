@@ -116,6 +116,13 @@ if(ANDROID_ABI STREQUAL "arm64-v8a" AND EXISTS ${AVS3DEC_DIR}/src/decoder.c)
     # 输出名改成 libavs3self.so，与预编译的 libAVS3AudioDec.so 共存不冲突。
     set_target_properties(avs3self PROPERTIES OUTPUT_NAME "avs3self")
 
+    # ★桥需要 dat 结构体头文件（读 numChansOutput / outputFs 做下混）：
+    #   有源码时用真实结构体字段，没源码时回退到 static_assert 实测的偏移。
+    target_include_directories(neuralstem_avs3 PRIVATE
+        ${AVS3DEC_DIR}/include
+        ${AVS3DEC_DIR}/common)
+    target_compile_definitions(neuralstem_avs3 PRIVATE NEURALSTEM_AVS3_HEADERS=1)
+
     message(STATUS "AVS3 自编译解码器：${ANDROID_ABI}，${AVS3DEC_SRCS} 个源文件 → libavs3self.so")
 else()
     # ★这里只是“静默跳过”，不算错误。

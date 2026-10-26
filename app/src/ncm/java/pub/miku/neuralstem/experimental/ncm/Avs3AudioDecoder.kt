@@ -158,6 +158,25 @@ class Avs3AudioDecoder : Closeable {
     var lastConsumed: Int = 0
         private set
 
+    /**
+     * 源声道数（实测 12 = `MC_7_1_4` 空间音频）。
+     *
+     * 从解码器结构体里读 `numChansOutput` —— 官方库**没有导出 getConfig 符号**，
+     * 只能按结构体偏移读（偏移是 static_assert 实测的，不是猜的，见 native 注释）。
+     *
+     * @return >0 声道数；-1 未知（尚未 `initSequence`，或值不合理）
+     */
+    fun sourceChannels(): Int {
+        if (handle == 0L) return -1
+        return runCatching { nativeGetChannels(handle) }.getOrDefault(-1)
+    }
+
+    /** 解码器输出的采样率（实测 44100）。@return >0；-1 未知 */
+    fun sourceSampleRate(): Int {
+        if (handle == 0L) return -1
+        return runCatching { nativeGetSampleRate(handle) }.getOrDefault(-1)
+    }
+
     /** 拿到 PCM 后，用这个判断是否需要重采样/声道转换。 */
     fun lastFrameBytes(): Int = outInfo[0]
 
@@ -173,6 +192,8 @@ class Avs3AudioDecoder : Closeable {
     private external fun nativeDestroy(handle: Long)
     private external fun nativeParseHeader(handle: Long, frame: ByteArray, isInitFrame: Int): Int
     private external fun nativeInitSequence(handle: Long, headerFrame: ByteArray): Int
+    private external fun nativeGetChannels(handle: Long): Int
+    private external fun nativeGetSampleRate(handle: Long): Int
     private external fun nativeDecode(
         handle: Long,
         inBytes: ByteArray,

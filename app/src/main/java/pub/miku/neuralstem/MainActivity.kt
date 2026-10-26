@@ -695,6 +695,216 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
+            // ★avs3play：端到端验证「AVS3 → 解码 → 12ch 下混 → 立体声 WAV」
+            //   与 avs3test 的区别：avs3test 只验证「能解出 PCM」，
+            //   avs3play 验证「下混逻辑对不对」（输出立体声、能用 ffmpeg 验电平）。
+            //   a0 = "auto"（自动取第一个 m4a）或具体路径
+            //   a1 = 帧数限制（缺省全曲）
+            "avs3play" -> {
+                if (!BuildConfig.WITH_NCM) {
+                    Log.w("TestCmd", "avs3play 不可用：未启用 NCM 模块")
+                } else {
+                    lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                        val sb = StringBuilder()
+                        fun step(s: String) {
+                            sb.append(s).append('\n')
+                            runCatching {
+                                File(filesDir, "ncmtest_result.txt").writeText(sb.toString())
+                            }
+                        }
+                        runCatching {
+                            // 1) 找文件：优先 a0，否则自动找第一个 m4a
+                            // ★a0 支持 "b64:<base64>" 形式：文件名含空格/括号时,
+                            //   `am start-service --es` 会把路径拆成多个参数。
+                            //   先用 base64 编码再传，端内解回来。
+                            val a0Decoded = if (a0 != null && a0.startsWith("b64:")) {
+                                runCatching {
+                                    String(
+                                        android.util.Base64.decode(
+                                            a0.removePrefix("b64:"),
+                                            android.util.Base64.DEFAULT,
+                                        ),
+                                        Charsets.UTF_8,
+                                    )
+                                }.getOrNull()
+                            } else {
+                                a0
+                            }
+                            val path = when {
+                                a0Decoded != null && a0Decoded != "auto" -> a0Decoded
+                                else -> runCatching {
+                                    val icls = Class.forName(
+                                        "pub.miku.neuralstem.experimental.ncm.NcmImporter",
+                                    )
+                                    val inst = icls.getField("INSTANCE").get(null)
+                                    val dirs = icls.getMethod("findSourceDirs").invoke(inst) as List<*>
+                                    val d = dirs.firstOrNull() as? String
+                                    val list = d?.let {
+                                        icls.getMethod(
+                                            "listNcm", String::class.java,
+                                            Boolean::class.javaPrimitiveType,
+                                        ).invoke(inst, it, true) as? List<*>
+                                    }
+                                    list?.firstOrNull { e ->
+                                        (e!!.javaClass.getMethod("getExt").invoke(e) as String) == "m4a"
+                                    }?.let { e ->
+                                        e.javaClass.getMethod("getAbsolutePath").invoke(e) as String
+                                    }
+                                }.getOrNull()
+                            }
+                            if (path == null) {
+                                step("❌ 找不到 m4a 文件")
+                                return@launch
+                            }
+                            step("1. 源文件：${File(path).name}")
+
+                            // 2) 通过 Shizuku 拉回来（私有目录不能直读）
+                            val bytes = runCatching {
+                                val icls = Class.forName(
+                                    "pub.miku.neuralstem.experimental.ncm.NcmImporter",
+                                )
+                                val inst = icls.getField("INSTANCE").get(null)
+                                icls.getMethod(
+                                    "readBytesViaShizuku", String::class.java,
+                                ).invoke(inst, path) as? ByteArray
+                            }.getOrNull()
+                            if (bytes == null) {
+                                step("❌ 读取失败（Shizuku 未授权？）")
+                                return@launch
+                            }
+                            step("2. 已读取 ${bytes.size / 1_048_576.0}MB")
+
+                            // 3) MP4 提取音频样本
+                            val ecls = Class.forName(
+                                "pub.miku.neuralstem.experimental.ncm.Mp4TrackExtractor",
+                            )
+                            val einst = ecls.getField("INSTANCE").get(null)
+                            val res = ecls.getMethod("extractSamples", ByteArray::class.java)
+                                .invoke(einst, bytes)
+                            if (res == null) {
+                                step("❌ MP4 提取失败")
+                                return@launch
+                            }
+                            @Suppress("UNCHECKED_CAST")
+                            val samples = res.javaClass.getMethod("getSamples").invoke(res)
+                                as List<ByteArray>
+                            val durMs = res.javaClass.getMethod("durationMs").invoke(res) as Long
+                            step("3. 提取 ${samples.size} 帧，${durMs}ms")
+
+                            // 4) 解码 + 下混
+                            val acls = Class.forName(
+                                "pub.miku.neuralstem.experimental.ncm.Avs3AudioDecoder",
+                            )
+                            acls.getConstructor().newInstance().let { dec ->
+                                val opened = acls.getMethod("open").invoke(dec) as Boolean
+                                if (!opened) {
+                                    step("❌ 解码器不可用（没跑 tools/fetch-avs3.sh？）")
+                                    return@launch
+                                }
+                                val initRc = acls.getMethod("initSequence", ByteArray::class.java)
+                                    .invoke(dec, samples[0]) as Int
+                                step("4. initSequence rc=$initRc")
+                                if (initRc != 0) {
+                                    step("❌ 初始化失败")
+                                    return@launch
+                                }
+
+                                val limit = a1?.toIntOrNull() ?: samples.size
+                                val use = samples.take(limit)
+                                val t0 = System.currentTimeMillis()
+
+                                val dcls = Class.forName(
+                                    "pub.miku.neuralstem.experimental.ncm.Avs3PcmDecoder",
+                                )
+                                val dinst = dcls.getField("INSTANCE").get(null)
+                                // 参数：(decoder, frames, headerBytes, sampleRate,
+                                //        sourceChannels, downmix, onProgress, isCancelled)
+                                val bs775 = Class.forName(
+                                    "pub.miku.neuralstem.experimental.ncm.Avs3PcmDecoder\$Downmix",
+                                ).enumConstants.first { it.toString() == "BS775" }
+                                val result = dcls.getMethod(
+                                    "decodeAll",
+                                    acls, List::class.java, Int::class.javaPrimitiveType,
+                                    Int::class.javaPrimitiveType, Int::class.javaPrimitiveType,
+                                    bs775.javaClass, Class.forName(
+                                        "pub.miku.neuralstem.experimental.ncm.Avs3PcmDecoder\$ProgressListener",
+                                    ), Function0::class.java,
+                                ).invoke(
+                                    dinst, dec, use, 7, 44100, 12, bs775, null,
+                                    // isCancelled: () -> Boolean
+                                    object : Function0<Boolean> {
+                                        override fun invoke(): Boolean = false
+                                    },
+                                )
+                                val ms = System.currentTimeMillis() - t0
+                                if (result == null) {
+                                    step("❌ 解码返回 null")
+                                    return@launch
+                                }
+                                val rc = result.javaClass
+                                val pcm = rc.getMethod("getPcm").invoke(result) as ByteArray
+                                val ch = rc.getMethod("getChannels").invoke(result) as Int
+                                val srcCh = rc.getMethod("getSourceChannels").invoke(result) as Int
+                                val frames = rc.getMethod("getFrames").invoke(result) as Int
+                                val skipped = rc.getMethod("getSkippedFrames").invoke(result) as Int
+                                val outDur = rc.getMethod("getDurationMs").invoke(result) as Long
+                                step("5. 解码完成：${ms}ms，源 ${srcCh}ch → 输出 ${ch}ch")
+                                step("   pcm=${pcm.size / 1_048_576.0}MB frames=$frames dur=${outDur}ms skipped=$skipped")
+
+                                // 6) 写 WAV 供 Mac 侧验证音质
+                                //   （不走 WavIo：那是 Float/frame 导向的流式接口，
+                                //     这里直接写 44 字节头 + 裸 PCM16 更直白。）
+                                val wav = File(filesDir, "avs3_stereo.wav")
+                                wav.outputStream().use { out ->
+                                    val hdr = java.nio.ByteBuffer.allocate(44)
+                                        .order(java.nio.ByteOrder.LITTLE_ENDIAN)
+                                    val byteRate = 44100 * ch * 2
+                                    hdr.put("RIFF".toByteArray(Charsets.US_ASCII))
+                                    hdr.putInt(36 + pcm.size)
+                                    hdr.put("WAVE".toByteArray(Charsets.US_ASCII))
+                                    hdr.put("fmt ".toByteArray(Charsets.US_ASCII))
+                                    hdr.putInt(16)
+                                    hdr.putShort(1)
+                                    hdr.putShort(ch.toShort())
+                                    hdr.putInt(44100)
+                                    hdr.putInt(byteRate)
+                                    hdr.putShort((ch * 2).toShort())
+                                    hdr.putShort(16)
+                                    hdr.put("data".toByteArray(Charsets.US_ASCII))
+                                    hdr.putInt(pcm.size)
+                                    out.write(hdr.array())
+                                    out.write(pcm)
+                                }
+                                step("6. WAV → ${wav.name}（${wav.length() / 1_048_576.0}MB）")
+
+                                // 7) 存入 Store，拿 uri（下一步接播放器用）
+                                val scls = Class.forName(
+                                    "pub.miku.neuralstem.experimental.ncm.Avs3PcmStore",
+                                )
+                                val sinst = scls.getField("INSTANCE").get(null)
+                                val ecls2 = Class.forName(
+                                    "pub.miku.neuralstem.experimental.ncm.Avs3PcmStore\$Entry",
+                                )
+                                val key = "demo_${frames}"
+                                val entry = ecls2.getConstructor(
+                                    ByteArray::class.java, Int::class.javaPrimitiveType,
+                                    Int::class.javaPrimitiveType, Long::class.javaPrimitiveType,
+                                ).newInstance(pcm, 44100, ch, outDur)
+                                scls.getMethod(
+                                    "put", String::class.java, ecls2,
+                                ).invoke(sinst, key, entry)
+                                step("7. Store key=$key，占用 ${scls.getMethod("usedMb").invoke(sinst)}MB")
+                                step("8. uri = avs3pcm://$key")
+                                runCatching { acls.getMethod("close").invoke(dec) }
+                            }
+                        }.onFailure {
+                            step("ERR: ${it.javaClass.simpleName}: ${it.message}")
+                            Log.e("TestCmd", "avs3play 失败", it)
+                        }
+                        Log.i("TestCmd", "AVS3PLAY\n$sb")
+                    }
+                }
+            }
             // ★avs3test：端到端验证 AVS3 解码（ncm → m4a → 裸流 → PCM）
             //   a0 = .ncm 路径
             "avs3test" -> {

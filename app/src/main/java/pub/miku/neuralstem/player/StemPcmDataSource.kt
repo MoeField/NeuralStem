@@ -272,6 +272,13 @@ class StemStreamFactory(
          * 所以只能重复定义）。改一边要同步另一边。
          */
         const val NCM_SCHEME = "ncm"
+
+        /**
+         * AVS3 解码后 PCM 的 uri scheme（`avs3pcm://<key>`）。
+         *
+         * 与 `Avs3PcmDataSource.SCHEME` 保持一致（同上，只能重复定义）。
+         */
+        const val AVS3PCM_SCHEME = "avs3pcm"
     }
 
     override fun createDataSource(): DataSource = DispatchingDataSource(upstream)
@@ -324,6 +331,41 @@ class StemStreamFactory(
                     cls.getDeclaredConstructor().newInstance() as DataSource
                 }.getOrElse {
                     throw IOException("NCM 数据源不可用（未启用 with_ncm 构建？）", it)
+                }
+                delegate = d
+                return d.open(dataSpec)
+            }
+            // ★AVS3-P3 解码后的 PCM（仅 -Pwith_ncm=true 构建）。
+            //   `avs3pcm://<key>` → Avs3PcmDataSource，把已经解好的立体声 PCM
+            //   包成 WAV 流 → 复用 WavExtractor + 变速/EQ/后台播放全套。
+            //   字节数据放在 Avs3PcmStore 里，uri 只带 key。
+            if (scheme == AVS3PCM_SCHEME) {
+                isStem = false
+                Log.i(StemPcmDataSource.TAG_STEM, "dispatch: AVS3PCM uri=${dataSpec.uri}")
+                val d = runCatching {
+                    val cls = Class.forName(
+                        "pub.miku.neuralstem.experimental.ncm.Avs3PcmDataSource",
+                    )
+                    // Avs3PcmDataSource 的构造器带 (pcm, sampleRate, channels)，
+                    // 所以走 Store 拿数据后用 Factory 建。
+                    val store = Class.forName(
+                        "pub.miku.neuralstem.experimental.ncm.Avs3PcmStore",
+                    )
+                    val inst = store.getField("INSTANCE").get(null)
+                    val key = dataSpec.uri.lastPathSegment ?: dataSpec.uri.host ?: ""
+                    val entry = store.getMethod("get", String::class.java).invoke(inst, key)
+                        ?: throw IOException("Avs3PcmStore 里没有 key=$key")
+                    val ec = entry.javaClass
+                    val pcm = ec.getMethod("getPcm").invoke(entry) as ByteArray
+                    val sr = ec.getMethod("getSampleRate").invoke(entry) as Int
+                    val ch = ec.getMethod("getChannels").invoke(entry) as Int
+                    val ctor = cls.getDeclaredConstructor(
+                        ByteArray::class.java, Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!,
+                    )
+                    ctor.isAccessible = true
+                    ctor.newInstance(pcm, sr, ch) as DataSource
+                }.getOrElse {
+                    throw IOException("AVS3 PCM 数据源不可用", it)
                 }
                 delegate = d
                 return d.open(dataSpec)
