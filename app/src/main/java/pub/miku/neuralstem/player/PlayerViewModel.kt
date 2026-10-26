@@ -590,10 +590,32 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 _state.value = _state.value.copy(waveform = null, cover = null)
                 mediaItem?.localConfiguration?.uri?.let { uri ->
-                    waveformExtractor.extractAsync(AudioSource.MediaUri(uri))
+                    waveformExtractor.extractAsync(waveformSourceFor(uri))
                     coverExtractor.extractAsync(uri)
                 }
             }
+
+            /**
+             * ★选择波形来源（2026-10-26）。
+             *
+             * ## 为何不能直接用 uri
+             * `MediaExtractor` 不认识 `ncm://`（真机实测 16ms 就挂
+             * `IOException: Failed to instantiate extractor`）→ 波形**完全空白**。
+             * 而 NCM 解密后的字节就在 `NcmPlaybackStore` 里，拿来即可。
+             *
+             * ## 其余源照旧
+             * - AVS3 `.m4a` → `doLoad` 收到的是**缓存 WAV**，`MediaExtractor` 原生支持（实测 OK）
+             * - 普通 mp3/flac → `content://`，直接解
+             */
+            private fun waveformSourceFor(uri: Uri): AudioSource =
+                if (uri.scheme == "ncm") {
+                    AudioSource.RawBytes(
+                        bytesProvider = { Avs3Bridge.ncmBytesOf(uri) },
+                        cacheKey = uri.toString(),
+                    )
+                } else {
+                    AudioSource.MediaUri(uri)
+                }
 
             override fun onPlayerError(error: PlaybackException) {
                 // ★bug C 傅底 —— 致命错误（ERROR_CODE_TIMEOUT）自动重建 pipeline。

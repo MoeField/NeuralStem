@@ -61,12 +61,42 @@ object WaveformCache {
 
     private fun cacheFile(context: Context, uri: Uri): File? {
         val stamp = stampFor(context, uri) ?: return null
-        val key = (uri.toString() + "|" + stamp).hashCode().toUInt().toString(16)
-        return File(dir(context), "wf_$key.bin")
+        return fileForStamp(context, uri.toString(), stamp)
+    }
+
+    /**
+     * ★按「稳定 key + stamp」定位缓存文件（2026-10-26）。
+     *
+     * ## 为何需要字符串 key
+     * `ncm://<key>` 不是真实文件，[stampFor] 取不到 size/mtime → 永远不缓存。
+     * 而 NCM 的波形提取正是走这条路径（见 `AudioSource.RawBytes`）。
+     * 所以给它一个不依赖文件系统的入口。
+     */
+    private fun fileForStamp(context: Context, key: String, stamp: String): File {
+        val h = (key + "|" + stamp).hashCode().toUInt().toString(16)
+        return File(dir(context), "wf_$h.bin")
+    }
+
+    /**
+     * 按字符串 key 取缓存。
+     *
+     * @param key 稳定标识（如 `ncm://5fda704`）
+     * @param stamp 内容指纹（如字节长度）；内容变了则失效
+     */
+    fun load(context: Context, key: String, stamp: String): WaveformData? =
+        loadFile(fileForStamp(context, key, stamp))
+
+    /** 按字符串 key 存缓存。 */
+    fun save(context: Context, key: String, stamp: String, wf: WaveformData) {
+        saveFile(fileForStamp(context, key, stamp), wf)
     }
 
     fun load(context: Context, uri: Uri): WaveformData? {
         val f = cacheFile(context, uri) ?: return null
+        return loadFile(f)
+    }
+
+    private fun loadFile(f: File): WaveformData? {
         if (!f.exists()) return null
         return runCatching {
             DataInputStream(f.inputStream().buffered()).use { ins ->
@@ -89,6 +119,10 @@ object WaveformCache {
 
     fun save(context: Context, uri: Uri, wf: WaveformData) {
         val f = cacheFile(context, uri) ?: return
+        saveFile(f, wf)
+    }
+
+    private fun saveFile(f: File, wf: WaveformData) {
         // ★⑭c：写入前自洽校验——pointCount 应与 (totalFrames / (sr/50)) 相符（±1），
         //   否则视为“半截”包络，**拒绝写入**（防坏缓存污染）。
         if (!isSelfConsistent(wf)) {
