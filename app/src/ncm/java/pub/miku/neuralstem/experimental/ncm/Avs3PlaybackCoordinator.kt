@@ -3,6 +3,7 @@ package pub.miku.neuralstem.experimental.ncm
 import android.app.Application
 import android.net.Uri
 import android.util.Log
+import pub.miku.neuralstem.playlist.MediaSourceReader
 import java.io.File
 
 /**
@@ -60,9 +61,17 @@ object Avs3PlaybackCoordinator {
      * ## 为何要快
      * 每次切歌都会调，不能阻塞。只读文件头 256KB（moov 通常在前部）。
      */
-    fun isAvs3Source(uri: Uri): Boolean {
-        val path = uri.path ?: return false
-        return isAvs3Path(path)
+    fun isAvs3Source(context: android.content.Context, uri: Uri): Boolean {
+        if (!isAvs3Name(uri)) return false
+        val head = MediaSourceReader.readHead(context, uri) ?: return false
+        if (head.isEmpty()) return false
+        return runCatching { Mp4CodecProbe.probeCodec(head) == "av3a" }.getOrDefault(false)
+    }
+
+    /** 是不是 `.m4a`（按名字，不读内容）。 */
+    fun isAvs3Name(uri: Uri): Boolean {
+        val name = uri.lastPathSegment ?: return false
+        return name.lowercase().endsWith(".m4a")
     }
 
     /**
@@ -77,68 +86,56 @@ object Avs3PlaybackCoordinator {
      */
     fun isAvs3Path(path: String): Boolean {
         if (!path.lowercase().endsWith(".m4a")) return false
-        val head = readHeadOf(path, 256 * 1024) ?: return false
+        // 私有目录（netease://）仍走 Shizuku；普通文件直接读。
+        val f = File(path)
+        val head = if (f.exists() && f.canRead()) {
+            runCatching { f.inputStream().use { it.readNBytes(256 * 1024) } }.getOrNull()
+        } else {
+            runCatching { NcmImporter.readHead(path, 256 * 1024) }.getOrNull()
+        } ?: return false
         if (head.isEmpty()) return false
         return runCatching { Mp4CodecProbe.probeCodec(head) == "av3a" }.getOrDefault(false)
     }
 
     /**
-     * 读文件前 [maxBytes] 字节（自动选择 File 或 Shizuku）。失败返回 null。
-     */
-    private fun readHeadOf(path: String, maxBytes: Int): ByteArray? {
-        val f = File(path)
-        // 能直接读就用 File（快，且不需要 Shizuku）
-        if (f.exists() && f.canRead()) {
-            return runCatching {
-                f.inputStream().use { ins ->
-                    val cap = minOf(f.length(), maxBytes.toLong()).toInt()
-                    val buf = ByteArray(cap)
-                    var off = 0
-                    while (off < cap) {
-                        val n = ins.read(buf, off, cap - off)
-                        if (n <= 0) break
-                        off += n
-                    }
-                    if (off < cap) buf.copyOf(off) else buf
-                }
-            }.getOrNull()
-        }
-        // 私有目录 → 借 Shizuku
-        return runCatching { NcmImporter.readHead(path, maxBytes) }.getOrNull()
-    }
-
-    /**
-     * 读源文件的完整字节（自动选择 File 或 Shizuku）。
+     * 读源文件的完整字节。
+     *
+     * ## 三条通道
+     * - `content://` → [MediaSourceReader]（`ContentResolver.openInputStream()`）
+     * - `file://` → 直接读
+     * - 私有目录（App 读不到）→ 借 Shizuku 的 `cat`
      *
      * @return null = 读不到（无权限 / 文件不存在）
      */
-    fun readSourceBytes(path: String): ByteArray? {
-        val f = File(path)
-        if (f.exists() && f.canRead()) {
+    fun readSourceBytes(context: android.content.Context, uri: Uri): ByteArray? {
+        val f = uri.path?.let { File(it) }
+        if (f != null && f.exists() && f.canRead()) {
             return runCatching { f.readBytes() }.getOrNull()
         }
-        return runCatching { NcmImporter.readBytesViaShizuku(path) }.getOrNull()
+        if (uri.scheme == "file" && f != null) {
+            // 文件不存在或不可读 → 私有目录，走 Shizuku
+            return runCatching { NcmImporter.readBytesViaShizuku(f.absolutePath) }.getOrNull()
+        }
+        return MediaSourceReader.readBytes(context, uri)
     }
 
     /**
      * 把源 uri 转成「可播放的 uri」。
      *
-     * @param srcUri 源文件 uri（`file://...`）
-     * @param srcPath 源文件绝对路径（用于算缓存键）
+     * @param srcUri 源文件 uri（`content://` 或 `file://`）
      * @param onProgress 解码进度（仅在真需要解码时回调）
      * @param shouldCancel 定期询问是否应中止（由状态机决策驱动）
      */
     fun prepare(
         context: Application,
         srcUri: Uri,
-        srcPath: String,
         onProgress: Progress? = null,
         shouldCancel: () -> Boolean = { false },
     ): Prepared {
         // 1) 缓存优先
-        val stat = fileStat(srcPath)
+        val stat = MediaSourceReader.stat(context, srcUri)
         if (stat != null) {
-            val key = Avs3PcmCache.keyFor(srcPath, stat[0], stat[1])
+            val key = Avs3PcmCache.keyFor(srcUri.toString(), stat[0], stat[1])
             Avs3PcmCache.get(context, key)?.let {
                 Log.i(TAG, "缓存命中 $key → ${it.name}")
                 return Prepared.Ready(Uri.fromFile(it))
@@ -146,7 +143,7 @@ object Avs3PlaybackCoordinator {
         }
 
         // 2) 解码
-        val cached = decodeAndCache(context, srcPath, onProgress, shouldCancel)
+        val cached = decodeAndCache(context, srcUri, onProgress, shouldCancel)
             ?: return Prepared.Failed("解码失败（解码器不可用或文件不是有效 AVS3）")
 
         return Prepared.Ready(Uri.fromFile(cached))
@@ -155,15 +152,15 @@ object Avs3PlaybackCoordinator {
     /** 解一首并写缓存，返回缓存文件；失败返回 null。 */
     fun decodeAndCache(
         context: Application,
-        srcPath: String,
+        srcUri: Uri,
         onProgress: Progress?,
         shouldCancel: () -> Boolean,
     ): File? {
-        val stat = fileStat(srcPath) ?: run {
-            Log.w(TAG, "拿不到 $srcPath 的 size/mtime，无法建缓存键")
+        val stat = MediaSourceReader.stat(context, srcUri) ?: run {
+            Log.w(TAG, "拿不到 $srcUri 的 size/mtime，无法建缓存键")
             return null
         }
-        val key = Avs3PcmCache.keyFor(srcPath, stat[0], stat[1])
+        val key = Avs3PcmCache.keyFor(srcUri.toString(), stat[0], stat[1])
 
         // 可能预解码刚跑完，先看一眼
         Avs3PcmCache.get(context, key)?.let {
@@ -173,11 +170,11 @@ object Avs3PlaybackCoordinator {
 
         var decoder: Avs3AudioDecoder? = null
         return try {
-            // ★readSourceBytes：自动选 File 或 Shizuku。
+            // ★readSourceBytes：自动选 content:// / File / Shizuku。
             //   网易云私有目录 App 读不了（实测 Permission denied），
             //   必须借 Shizuku 的 cat。
-            val bytes = readSourceBytes(srcPath) ?: run {
-                Log.w(TAG, "读不到源文件（无权限？需要 Shizuku）：$srcPath")
+            val bytes = readSourceBytes(context, srcUri) ?: run {
+                Log.w(TAG, "读不到源文件（无权限？需要 Shizuku）：$srcUri")
                 return null
             }
             val track = Mp4TrackExtractor.extractSamples(bytes) ?: run {
@@ -208,7 +205,7 @@ object Avs3PlaybackCoordinator {
                 sourceChannels = srcCh,
                 downmix = Avs3PcmDecoder.Downmix.BS775,
                 onProgress = { done, _ ->
-                    onProgress?.onProgress(srcPath, done * 100 / total)
+                    onProgress?.onProgress(srcUri.toString(), done * 100 / total)
                 },
                 isCancelled = shouldCancel,
             ) ?: run {
@@ -221,23 +218,11 @@ object Avs3PlaybackCoordinator {
                 .decodeCacheLimitBytes()
             Avs3PcmCache.put(context, key, wav, limit)
         } catch (t: Throwable) {
-            Log.w(TAG, "解码失败 $srcPath", t)
+            Log.w(TAG, "解码失败 $srcUri", t)
             null
         } finally {
             runCatching { decoder?.close() }
         }
-    }
-
-    /**
-     * 取 size + mtime，用于建缓存键。
-     *
-     * 本地文件直接拿；私有目录走 Shizuku 的 `stat`。
-     */
-    private fun fileStat(path: String): LongArray? {
-        val f = File(path)
-        if (f.exists()) return longArrayOf(f.length(), f.lastModified())
-        // 私有目录：App 看不到，借 Shizuku
-        return runCatching { NcmImporter.statFor(path) }.getOrNull()
     }
 
     /**
@@ -259,6 +244,7 @@ object Avs3PlaybackCoordinator {
                 pub.miku.neuralstem.player.NeteaseUriCodec.decode(uri.toString())
             }
             "file" -> uri.path
+            // content:// 没有传统意义上的“路径”；调用方应直接用 uri（见 MediaSourceReader）。
             else -> null
         }
     }

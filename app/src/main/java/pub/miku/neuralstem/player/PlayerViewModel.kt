@@ -914,11 +914,11 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             if (realPath == null) {
                 Log.w(TAG, "netease:// 解析失败：$uri")
             } else if (realPath.endsWith(".ncm", ignoreCase = true)) {
-                loadNcm(realPath, displayName, startPositionMs)
+                loadNcm(Uri.fromFile(java.io.File(realPath)), displayName, startPositionMs)
                 return
             } else {
                 val realUri = Uri.fromFile(java.io.File(realPath))
-                if (Avs3Bridge.shouldIntercept(realUri)) {
+                if (Avs3Bridge.shouldIntercept(getApplication(), realUri)) {
                     loadAvs3(realUri, displayName, startPositionMs)
                     return
                 }
@@ -926,7 +926,25 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
 
-        if (Avs3Bridge.shouldIntercept(uri)) {
+        // ★SAF 导入的文件：uri 是 `content://`，**不能**转成 file:// 绝对路径。
+        //   本包 targetSdk=37（Android 14+ 强制分区存储），SAF 的 tree 授权
+        //   只对 content:// 通道有效，转绝对路径后必然 EACCES。
+        //   真机实测："能看到但放不了"（ERROR_CODE_IO_NO_PERMISSION）。
+        //   读取统一走 MediaSourceReader（ContentResolver.openInputStream）。
+        if (uri.scheme == "content") {
+            val lower = displayName.lowercase()
+            if (lower.endsWith(".ncm")) {
+                loadNcm(uri, displayName, startPositionMs)
+                return
+            }
+            if (lower.endsWith(".m4a") && Avs3Bridge.shouldIntercept(getApplication(), uri)) {
+                loadAvs3(uri, displayName, startPositionMs)
+                return
+            }
+            // 其余内容（mp3/flac 等）：ExoPlayer 原生支持 content://，直接放行。
+        }
+
+        if (Avs3Bridge.shouldIntercept(getApplication(), uri)) {
             loadAvs3(uri, displayName, startPositionMs)
             return
         }
@@ -959,7 +977,6 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     private fun loadAvs3(uri: Uri, displayName: String, startPositionMs: Long) {
         decodeJob?.cancel()
         decodeJob = viewModelScope.launch {
-            val path = uri.path ?: return@launch
             val app = getApplication<Application>()
 
             // 1) 先决策旧任务（收尾 vs 立即取消）
@@ -980,7 +997,6 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                 Avs3Bridge.prepare(
                     app = app,
                     srcUri = uri,
-                    srcPath = path,
                     onProgress = { id, pct ->
                         session.onAvs3Progress(id, pct)
                         syncAvs3ToUi()
@@ -1030,11 +1046,11 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
      * 那时就是“解密 + 解码”，进度条画的是解码那段。
      * 解出 flac/mp3 时几乎瞬完（100–200ms 解密），进度条一闪而过。
      */
-    private fun loadNcm(srcPath: String, displayName: String, startPositionMs: Long) {
+    private fun loadNcm(srcUri: Uri, displayName: String, startPositionMs: Long) {
         decodeJob?.cancel()
         decodeJob = viewModelScope.launch {
             val app = getApplication<Application>()
-            val fakeUri = "ncm:$srcPath"   // 仅用作状态机里的标识
+            val fakeUri = "ncm:$srcUri"   // 仅用作状态机里的标识
 
             val letOldFinish = session.requestAvs3Decode()
             session.beginAvs3Decode(fakeUri, displayName)
@@ -1044,7 +1060,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             val result = withContext(Dispatchers.IO) {
                 Avs3Bridge.prepareNcm(
                     app = app,
-                    srcPath = srcPath,
+                    srcUri = srcUri,
                     onProgress = { pct ->
                         session.onAvs3Progress(fakeUri, pct)
                         syncAvs3ToUi()

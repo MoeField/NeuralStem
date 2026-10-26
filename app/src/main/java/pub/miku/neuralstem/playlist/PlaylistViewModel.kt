@@ -269,9 +269,14 @@ class PlaylistViewModel(app: Application) : AndroidViewModel(app) {
      *
      * 后者更符合“我看到一首歌，想加进现有列表”的直觉。
      *
-     * ## 真实路径处理
-     * 与 `scanAudio` 一致：`.m4a` / `.ncm` 必须解析成真实路径，
-     * 否则 AVS3 解码与 NCM 解密都做不了。
+     * ## 为什么保留 `content://` 而不转真实路径（2026-10-26 修正）
+     * 旧版对 `.m4a` / `.ncm` 用 [SafPathResolver] 转成 `file:///storage/...` 绝对路径，
+     * 理由是「AVS3 解码要 `File.readBytes()`」。
+     * 但本包 `targetSdk=37`，Android 14+ 强制分区存储：
+     * **SAF 的 `tree/...` 授权只对 `content://` 通道有效，对 `file://` 完全无效** →
+     * 真机 `EACCES (Permission denied)`，歌"能看到但放不了"。
+     * 现在读取统一走 [MediaSourceReader]（`ContentResolver.openInputStream()`），
+     * 所以这里**原样保留 `content://`**。
      */
     suspend fun importFiles(uris: List<Uri>, intoListId: String? = null) {
         if (uris.isEmpty()) return
@@ -288,14 +293,8 @@ class PlaylistViewModel(app: Application) : AndroidViewModel(app) {
                     return@mapNotNull null
                 }
 
-                val uriStr = if (SafPathResolver.needsRealPath(name)) {
-                    SafPathResolver.resolve(ctx, u)?.let {
-                        Uri.fromFile(java.io.File(it)).toString()
-                    } ?: u.toString()
-                } else {
-                    u.toString()
-                }
-                PlaylistStore.TrackRef(uriStr, name)
+                // ★保留 content://（见上方注释）。file:// 传进来的（如播放器"导入音频"）也原样保留。
+                PlaylistStore.TrackRef(u.toString(), name)
             }
         }
         Log.i(TAG, "importFiles: ${found.size}/${uris.size} 首可导入")
@@ -321,14 +320,19 @@ class PlaylistViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * 递归扫描 Tree URI 下的音频文件。
      *
-     * ## 为何要处理真实路径（2026-10-26）
-     * SAF 拿到的是 `content://`。普通的 mp3/flac 可以直接用，
-     * 但 **AVS3（.m4a）与 NCM（.ncm）必须有真实路径**：
-     * - AVS3 解码要 `File.readBytes()`
-     * - NCM 解密要路径（还要跟 `netease://` 体系对得上）
+     * ## 为何**不再**转换真实路径（2026-10-26 修正）
+     * 旧版对 `.m4a` / `.ncm` 走 [SafPathResolver] 转 `file://` 绝对路径，
+     * 理由是「AVS3 解码要 `File.readBytes()` / NCM 解密要路径」。
      *
-     * 所以对这两类尝试 `SafPathResolver` 解析；
-     * 解析不了就退回 `content://`（至少能加进歌单，播不了时 UI 会提示）。
+     * 但真机实测（BF00A，targetSdk=37）：转成绝对路径后**必然 `EACCES`**，
+     * 因为 Android 14+ 的分区存储下，SAF 的 `tree/...` 授权只对 `content://` 通道有效，
+     * 不覆盖 `file://` 走内核 `open()` 的路径。
+     *
+     * 现在统一由 [MediaSourceReader] 经 `ContentResolver.openInputStream()` 读取，
+     * 所以这里**一律保留 `content://`**。
+     *
+     * > 唯一例外：`netease://`（网易云私有目录需 Shizuku）不经过这里，
+     * > 由 `NeteasePlaylistImporter`（ncm 源集）单独产生。
      */
     private fun scanAudio(ctx: Context, treeUri: Uri): List<PlaylistStore.TrackRef> {
         val root = DocumentFile.fromTreeUri(ctx, treeUri) ?: run {
@@ -361,22 +365,8 @@ class PlaylistViewModel(app: Application) : AndroidViewModel(app) {
                     continue
                 }
 
-                // ★需要真实路径的（AVS3 / NCM）优先解析
-                val uriStr = if (SafPathResolver.needsRealPath(name)) {
-                    val real = SafPathResolver.resolve(ctx, f.uri)
-                    if (real != null) {
-                        Log.i(TAG, "scanAudio: 真实路径 $real")
-                        Uri.fromFile(java.io.File(real)).toString()
-                    } else {
-                        // 解析不了：保留 content://，至少可见
-                        Log.w(TAG, "scanAudio: 需真实路径但解析失败，退回 content://: $name")
-                        f.uri.toString()
-                    }
-                } else {
-                    f.uri.toString()
-                }
-
-                out.add(PlaylistStore.TrackRef(uriStr, name))
+                // ★一律保留 content://（读取走 MediaSourceReader）。
+                out.add(PlaylistStore.TrackRef(f.uri.toString(), name))
             }
         }
         walk(root, 0)

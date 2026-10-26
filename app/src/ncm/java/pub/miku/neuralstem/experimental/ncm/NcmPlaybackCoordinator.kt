@@ -3,6 +3,7 @@ package pub.miku.neuralstem.experimental.ncm
 import android.app.Application
 import android.net.Uri
 import android.util.Log
+import pub.miku.neuralstem.playlist.MediaSourceReader
 import java.io.File
 
 /**
@@ -55,20 +56,17 @@ object NcmPlaybackCoordinator {
      * ⚠️ **阻塞调用**（解密 100–200ms + 可能的 AVS3 解码几十秒），
      * 必须在 `Dispatchers.IO` 里跑。
      *
-     * @param srcPath .ncm 绝对路径（可能在私有目录，自动走 Shizuku）
+     * @param srcUri `.ncm` 的 uri（`content://` 走 ContentResolver；
+     *   `file://` 可能在私有目录，自动降级到 Shizuku）
      */
     fun prepare(
         app: Application,
-        srcPath: String,
+        srcUri: Uri,
         onProgress: Progress? = null,
         shouldCancel: () -> Boolean = { false },
     ): Prepared {
-        // 1) 读源文件（可能在私有目录）
-        val raw = runCatching {
-            val f = File(srcPath)
-            if (f.exists() && f.canRead()) f.readBytes()
-            else NcmImporter.readBytesViaShizuku(srcPath)
-        }.getOrNull() ?: return Prepared.Failed("读不到 .ncm 文件")
+        // 1) 读源文件（content:// / 普通 file / 私有目录 file 三条通道）
+        val raw = readSource(app, srcUri) ?: return Prepared.Failed("读不到 .ncm 文件")
 
         // 2) 解密
         val decoded = runCatching { NcmDecoder.decode(raw.inputStream()) }
@@ -80,7 +78,7 @@ object NcmPlaybackCoordinator {
         return when (val plan = NcmPlaybackPlanner.decide(decoded.format, audio)) {
             is NcmPlaybackPlanner.Plan.Native -> {
                 // 原生格式：字节放 store，uri 带 key（格式由 store 记录）
-                val key = cacheKeyFor(srcPath)
+                val key = cacheKeyFor(srcUri)
                 NcmPlaybackStore.put(key, audio, plan.format)
                 Log.i(TAG, "原生可播（${plan.format}）→ ncm://$key")
                 Prepared.Ready(NcmMemoryDataSource.uriFor(key))
@@ -89,15 +87,15 @@ object NcmPlaybackCoordinator {
             is NcmPlaybackPlanner.Plan.Avs3 -> {
                 // AVS3：复用已有的解码链（与独立 .m4a 的完全同一套）
                 Log.i(TAG, "m4a 里是 av3a → 走 AVS3 解码")
-                // 先把解密结果落成临时 m4a，让 AVS3 链能按统一路径处理
-                val tmp = File(app.cacheDir, "ncm_avs3_${cacheKeyFor(srcPath)}.m4a")
+                // 先把解密结果落成临时 m4a，让 AVS3 链能按统一 uri 处理。
+                // ★注意：这是 App **私有** cacheDir，权限没问题，继续用 file://。
+                val tmp = File(app.cacheDir, "ncm_avs3_${cacheKeyFor(srcUri)}.m4a")
                 runCatching { tmp.writeBytes(audio) }
                     .getOrElse { return Prepared.Failed("写临时文件失败") }
 
                 val res = Avs3PlaybackCoordinator.prepare(
                     context = app,
                     srcUri = Uri.fromFile(tmp),
-                    srcPath = tmp.absolutePath,
                     onProgress = { _, pct -> onProgress?.onProgress(pct) },
                     shouldCancel = shouldCancel,
                 )
@@ -116,8 +114,27 @@ object NcmPlaybackCoordinator {
         }
     }
 
-    /** 由源路径生成稳定 key（同一首歌重复打开能复用 store 条目）。 */
-    private fun cacheKeyFor(srcPath: String): String =
-        srcPath.hashCode().toUInt().toString(16) +
-            "_" + File(srcPath).name.hashCode().toUInt().toString(16)
+    /**
+     * 读 `.ncm` 源文件的完整字节。
+     *
+     * 三条通道：
+     * - `content://` → [MediaSourceReader]（SAF 导入的文件；Android 14+ 下唯一可行的路）
+     * - 可读的 `file://` → 直接读
+     * - 不可读的 `file://` → 网易云私有目录，借 Shizuku 的 `cat`
+     */
+    private fun readSource(app: Application, srcUri: Uri): ByteArray? {
+        val path = srcUri.path
+        if (srcUri.scheme == "file" && path != null) {
+            val f = File(path)
+            if (f.exists() && f.canRead()) {
+                return runCatching { f.readBytes() }.getOrNull()
+            }
+            return runCatching { NcmImporter.readBytesViaShizuku(path) }.getOrNull()
+        }
+        return MediaSourceReader.readBytes(app, srcUri)
+    }
+
+    /** 由源 uri 生成稳定 key（同一首歌重复打开能复用 store 条目）。 */
+    private fun cacheKeyFor(srcUri: Uri): String =
+        srcUri.toString().hashCode().toUInt().toString(16)
 }
