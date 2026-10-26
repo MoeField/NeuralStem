@@ -6,6 +6,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -25,6 +26,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -68,6 +70,15 @@ fun PlaylistScreen(
     // ★ 当前播放曲的 uri —— **高亮按 uri（曲目身份）**，排序/删其它曲后仍正确。
     currentUri: String? = null,
 ) {
+    /**
+     * ★分段加载的页大小。
+     *
+     * 为何是 100：实测默认歌单有 **1002 首**。
+     * 一次性组合 1002 个 Row（每个含 3 个 TextButton）会卡好几秒；
+     * 100 个约 300 个按钮，在低端机上仍然流畅。
+     */
+    val PAGE = 100
+
     val lists by vm.lists.collectAsState()
     // ★R1：当前选中歌单（单一真源，来自 VM；恒存在）。
     val selectedListId by vm.selectedListId.collectAsState()
@@ -78,6 +89,14 @@ fun PlaylistScreen(
     LaunchedEffect(selectedListId) { vm.reload() }
     var newName by remember { mutableStateOf("") }
     var expandedId by remember { mutableStateOf<String?>(null) }
+    // ★2026-10-26：每个歌单当前展示多少首（分段加载）。
+    //   实测默认歌单有 1002 首，全部组合会卡好几秒 —— 先显示 100，可点「再加载」。
+    val trackLimit = remember { mutableStateMapOf<String, Int>() }
+    // 收起时重置该歌单的分段计数（下次展开又是前 100 首）
+    LaunchedEffect(expandedId) {
+        if (expandedId == null) trackLimit.clear()
+    }
+
 
     val pickFolder = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocumentTree()
@@ -198,8 +217,22 @@ fun PlaylistScreen(
                             }) { Text(if (expandedId == p.id) "▴" else "▾") }
                         }
 
+                        /*
+                         * ★2026-10-26 性能修正：以前会**一次性组合全部曲目**。
+                         * 实测歌单有 **1002 首** —— 建 1002 个 Row
+                         * （每个又含 3 个 TextButton）会卡好几秒。
+                         *
+                         * 为何不 flatten 成外层 LazyColumn 的 item：
+                         * 曲目嵌在 Card→Column 里，拿不到外层的 LazyListScope
+                         * （Compose 会报 “cannot be called with an implicit receiver”）；
+                         * 而嵌套 LazyColumn 会同方向嵌套滚动（直接抛异常）。
+                         *
+                         * 所以用**分段展开**：先只渲染前 [PAGE] 首，
+                         * 底部给一个「再加载」按钮。
+                         */
                         if (expandedId == p.id) {
-                            p.tracks.forEachIndexed { idx, t ->
+                            val shown = minOf(p.tracks.size, trackLimit[p.id] ?: PAGE)
+                            p.tracks.take(shown).forEachIndexed { idx, t ->
                                 Row(
                                     modifier = Modifier.fillMaxWidth()
                                         .clickable { onPlayTrack(p.id, idx) }
@@ -207,18 +240,36 @@ fun PlaylistScreen(
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
-                                    // ★ 高亮按“曲目身份（uri）”而非 index：排序/删其它曲后仍正确。
+                                    // 高亮按"曲目身份（uri）"而非 index
                                     val isCurrent = p.id == selectedListId &&
                                         (if (currentUri != null) t.uri == currentUri
                                         else idx == currentTrackIndex)
-                                    Text(
-                                        (if (isCurrent) "▶ " else "") + t.title,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = if (isCurrent) MaterialTheme.colorScheme.primary
-                                        else MaterialTheme.colorScheme.onSurface,
-                                        modifier = Modifier.weight(1f),
-                                    )
-                                    // 排序：仅**文件歌单**可排（文件夹歌单随外部文件夹）
+
+                                    // 拆成「歌名 / 艺人 + 状态」两行（见 TrackTitleFormatter）
+                                    val fmt = TrackTitleFormatter.format(t.title)
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            (if (isCurrent) "▶ " else "") + fmt.title,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = if (isCurrent) MaterialTheme.colorScheme.primary
+                                            else MaterialTheme.colorScheme.onSurface,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                        if (fmt.hasArtist || fmt.badge.isNotEmpty()) {
+                                            Text(
+                                                listOfNotNull(
+                                                    fmt.artist.ifBlank { null },
+                                                    fmt.badge.ifBlank { null },
+                                                ).joinToString("  "),
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                            )
+                                        }
+                                    }
+                                    // 排序：仅**文件歌单**可排
                                     if (p.type == PlaylistStore.ListType.FILE) {
                                         TextButton(
                                             onClick = { vm.moveTrack(p.id, idx, idx - 1); onTrackMoved(p.id, idx, idx - 1) },
@@ -228,7 +279,6 @@ fun PlaylistScreen(
                                             onClick = { vm.moveTrack(p.id, idx, idx + 1); onTrackMoved(p.id, idx, idx + 1) },
                                             enabled = idx < p.tracks.size - 1,
                                         ) { Text("↓") }
-                                        // ★R3：移除仅**文件歌单**可用（文件夹歌单由文件管理器代劳）
                                         TextButton(onClick = {
                                             vm.removeTrack(p.id, t.uri)
                                             onTrackRemoved(p.id, t.uri)
@@ -238,6 +288,19 @@ fun PlaylistScreen(
                                     }
                                 }
                             }
+
+                            if (shown < p.tracks.size) {
+                                TextButton(
+                                    onClick = { trackLimit[p.id] = shown + PAGE },
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Text(
+                                        "再加载 ${minOf(PAGE, p.tracks.size - shown)} 首" +
+                                            "（还有 ${p.tracks.size - shown} 首）",
+                                    )
+                                }
+                            }
+
                             if (p.folderUri != null) {
                                 TextButton(onClick = { scope.launch { vm.rescanFolder(p.id) } }) {
                                     Text(stringResource(R.string.pl_rescan))
