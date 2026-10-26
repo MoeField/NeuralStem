@@ -716,27 +716,37 @@ class MainActivity : ComponentActivity() {
                         val files = d.listFiles()
                         step("2. File API 看到文件数：${files?.size ?: -1}（-1 = 无权限，正常）")
 
-                        // ★SAF 视角：这才是真实导入用的路径
-                        val treeUri = android.net.Uri.parse(
-                            "content://com.android.externalstorage.documents/tree/" +
-                                "primary%3ADownload%2FNSImportTest",
-                        )
-                        val docDir = androidx.documentfile.provider.DocumentFile
-                            .fromTreeUri(application, treeUri)
-                        step("3. SAF DocumentFile=$docDir  可列出=${docDir != null}")
-                        docDir?.listFiles()?.forEach { f ->
-                            val name = f.name ?: "?"
-                            val kind = if (pub.miku.neuralstem.playlist.AudioFileTypes.isAudio(name)) {
-                                "收录"
-                            } else "跳过"
-                            val needPath = pub.miku.neuralstem.playlist.SafPathResolver
-                                .needsRealPath(name)
-                            val realPath = runCatching {
-                                pub.miku.neuralstem.playlist.SafPathResolver
-                                    .resolve(application, f.uri)
+                        // ★SAF 视角：从**已持久化的授权**里拿 tree uri（真实场景）
+                        //   ★只能处理 tree/ 类型的授权：`document/`（单文件）传进
+                        //   fromTreeUri 会抛 IllegalArgumentException，
+                        //   而且**会中断整个循环**（之前就栽在这）。
+                        val treeUris = contentResolver.persistedUriPermissions
+                            .filter { it.isReadPermission }
+                            .map { it.uri.toString() }
+                            .filter { it.contains("/tree/") }
+                        step("\n=== tree 授权 (" + treeUris.size + " 个) ===")
+                        treeUris.forEach { step("   " + it) }
+
+                        for (treeStr in treeUris) {
+                            val treeUri = android.net.Uri.parse(treeStr)
+                            val docDir = runCatching {
+                                androidx.documentfile.provider.DocumentFile
+                                    .fromTreeUri(application, treeUri)
                             }.getOrNull()
-                            step("   [" + kind + "] " + name)
-                            step("        needPath=" + needPath + " real=" + (realPath ?: "解析失败"))
+                            step("\n--- " + (docDir?.name ?: "null") + "  (" + treeStr.take(55) + ")")
+                            val kids = docDir?.listFiles() ?: emptyArray()
+                            step("    子项数=" + kids.size)
+                            kids.forEach { f ->
+                                val name = f.name ?: "?"
+                                val kind = if (pub.miku.neuralstem.playlist.AudioFileTypes
+                                        .isAudio(name)) "收录" else "跳过"
+                                val real = runCatching {
+                                    pub.miku.neuralstem.playlist.SafPathResolver
+                                        .resolve(application, f.uri)
+                                }.getOrNull()
+                                step("      [" + kind + "] " + name)
+                                step("          real=" + (real ?: "null"))
+                            }
                         }
 
                         // 直接调顶层对象（不再是 private 方法 → 不用反射）
