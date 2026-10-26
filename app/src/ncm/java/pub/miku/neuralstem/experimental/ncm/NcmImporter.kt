@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.Build
 import android.os.Environment
 import android.util.Log
+import java.io.ByteArrayOutputStream
 import java.io.File
 
 /**
@@ -76,13 +77,24 @@ object NcmImporter {
         data class Ready(val shizukuVersion: String) : Status
     }
 
-    /** 一个可导入的 NCM 文件。 */
+    /** 一个可导入的音乐文件（可能是加密 .ncm，也可能是不加密的 m4a/flac/mp3）。 */
     data class Entry(
         val name: String,
         val sizeBytes: Long,
         /** 绝对路径（在私有目录里）。 */
         val absolutePath: String,
-    )
+    ) {
+        /** 小写扩展名（不含点）。 */
+        val ext: String get() = name.substringAfterLast('.', "").lowercase()
+
+        /**
+         * 是否是需要解密的 NCM 容器。
+         *
+         * 为 false 时（m4a/flac/mp3）代表**可以直接交给 ExoPlayer 播**，
+         * 只需把它从私有目录拉出来即可——这正是“有些歌没加密”的那批。
+         */
+        val isEncrypted: Boolean get() = ext == "ncm"
+    }
 
     /** 一次导入的结果。 */
     data class ImportResult(
@@ -220,26 +232,40 @@ object NcmImporter {
     fun drainDiagnostics(): String = diagBuf.toString().also { diagBuf.clear() }
 
     /**
-     * 列出某个目录下的 `.ncm` 文件（带大小）。
+     * 列出某个目录下的网易云音乐文件（带大小）。
      *
-     * ## ★ 必须批量拿大小（2026-10-25 真机踩到）
+     * ## ★ 为什么不再只认 .ncm（2026-10-26）
+     * 真机实测网易云私有目录的构成：
+     * ```
+     * 732 × .ncm    73%   加密容器，需要解密
+     * 220 × .m4a    22%   部分是不加密的（**也可能是 av3a，需逐个查 codec**）
+     *  45 × .flac    4.5% 不加密，Android 原生能播
+     *   4 × .mp3     0.4% 不加密，Android 原生能播
+     * ```
+     * 原来只过滤 `*.ncm` → **269 个文件（27%）被白白挡在外面**，
+     * 而这些恰恰是“无需任何解密就能播”的那批。
+     *
+     * ## 必须批量拿大小（2026-10-25 真机踩到）
      * 初版对每个文件单独 `stat -c %s` → 407 个文件就要 **407 次 shell**，
      * 每次跨 binder 往返 ~30-50ms → 总耗时 **20 秒以上**，UI 卡住。
+     * 现在用**一条** `find -printf` 批量拿全部。
      *
-     * 现在用**一条** `stat -c '%s\t%n'` 批量拿全部。
+     * @param dir 源目录（网易云私有目录）
+     * @param audioOnly true（默认）= 所有音频扩展名；false = 只留 .ncm（兼容旧行为）
      */
-    fun listNcm(dir: String): List<Entry> {
+    fun listNcm(dir: String, audioOnly: Boolean = true): List<Entry> {
+        val filter = if (audioOnly) AUDIO_FIND_EXPR else "-iname '*.ncm'"
         // ★用 find -printf（不用 glob）：
         //   文件名常含空格（如 `Daft Punk - Veridis Quo.ncm`），
         //   `stat ... *.ncm` 展开后被拆成多个参数 → 失败。
         //   `find -printf '%s\t%f\n'` 每个文件一行，名字带空格也安全。
         val raw = runCatching {
-            sh("find \"$dir\" -maxdepth 1 -type f -iname '*.ncm' -printf '%s\\t%f\\n' 2>/dev/null")
+            sh("find \"$dir\" -maxdepth 1 -type f \\( $filter \\) -printf '%s\\t%f\\n' 2>/dev/null")
         }.getOrNull()
         if (raw.isNullOrBlank()) {
             // 回退：toybox 的 find 可能不支持 -printf → 用 ls -l 解析
             diag("find -printf 不可用，回退 ls -l")
-            return listNcmByLs(dir)
+            return listNcmByLs(dir, audioOnly)
         }
         return raw.lineSequence()
             .map { it.trim() }
@@ -249,31 +275,89 @@ object NcmImporter {
                 if (tab <= 0) return@mapNotNull null
                 val size = line.substring(0, tab).toLongOrNull() ?: 0L
                 val name = line.substring(tab + 1)
-                if (!name.endsWith(".ncm", ignoreCase = true)) return@mapNotNull null
+                if (!isMusicFile(name)) return@mapNotNull null
+                if (!audioOnly && !name.endsWith(".ncm", ignoreCase = true)) return@mapNotNull null
                 Entry(name, size, "$dir/$name")
             }
             .sortedBy { it.name }
             .toList()
     }
 
+    /**
+     * 这些扩展名都是网易云可能落盘的音频。
+     *
+     * 注：`.m4a` 里**也可能**是 AVS3-P3（`av3a` codec），
+     *     所以“扩展名能认”不等于“能播”，播放前仍需查 codec tag。
+     */
+    val AUDIO_EXTS = listOf("ncm", "m4a", "flac", "mp3", "ogg", "wav", "aac", "ape")
+
+    /** 供 `find` 用的表达式串（拼在 `\(  ...  \)` 里）。 */
+    private val AUDIO_FIND_EXPR: String =
+        AUDIO_EXTS.joinToString(" -o ") { "-iname '*.$it'" }
+
+    private fun isMusicFile(name: String): Boolean {
+        val lower = name.lowercase()
+        return AUDIO_EXTS.any { lower.endsWith(".$it") }
+    }
+
     /** 回退方案：解析 `ls -l`（toybox 的 find 无 -printf 时用）。 */
-    private fun listNcmByLs(dir: String): List<Entry> {
+    private fun listNcmByLs(dir: String, audioOnly: Boolean): List<Entry> {
         val raw = runCatching { sh("ls -l \"$dir\" 2>/dev/null") }.getOrDefault("")
         val out = mutableListOf<Entry>()
         for (line in raw.lineSequence()) {
-            if (!line.contains(".ncm", ignoreCase = true)) continue
             // 形如：-rwxrwx--- 1 root media_rw 20161389 2026-09-18 20:50 名字.ncm
             val parts = line.trim().split(Regex("\\s+"), limit = 9)
             if (parts.size < 9) continue
             val size = parts[4].toLongOrNull() ?: 0L
             val name = parts[8]
-            if (!name.endsWith(".ncm", ignoreCase = true)) continue
+            if (!isMusicFile(name)) continue
+            if (!audioOnly && !name.endsWith(".ncm", ignoreCase = true)) continue
             out += Entry(name, size, "$dir/$name")
         }
         return out.sortedBy { it.name }
     }
 
     // ---------------- 复制 ----------------
+
+    /**
+     * 用 Shizuku 读一个文件的**前 n 字节**，转成十六进制串（诊断用）。
+     *
+     * 不直接 `File.read`：源文件在网易云私有目录，App 无权限读。
+     * `od` 的输出格式：`0000000 0000 001c 6674 7970`，这里把字段 2.. 拼起来。
+     */
+    fun headHex(path: String, n: Int = 16): String = runCatching {
+        val out = sh("od -An -tx1 -N $n \"$path\" 2>/dev/null")
+        out.split(Regex("\\s+")).filter { it.length == 2 }.joinToString(" ") { it.lowercase() }
+    }.getOrDefault("?")
+
+    /**
+     * 读文件**前 n 字节**的原始字节（诊断用）。
+     *
+     * ## 为何不用 readBytesViaShizuku 直接读整个文件
+     * 同目录下 m4a 均 20-30MB，遍历 269 个就要拉 5GB 过 binder，
+     * 而识别 codec 只需 MP4 的 `moov`（通常在前几百 KB）。
+     * 这里用 `dd` 只取头部；**注意无音轨文件可能 moov 在尾部**，
+     * 那种情况会返回 unknown，属于已知局限（统计时单列）。
+     */
+    fun readHead(path: String, n: Int): ByteArray = runCatching {
+        // ★必须走 newShizukuProcess（拿二进制流）。
+        //   `sh()` 内部用 bufferedReader 读，会把非 UTF-8 字节变成替换符，
+        //   MP4 是二进制，走字符流直接报废。
+        val process = newShizukuProcess(
+            arrayOf("sh", "-c", "dd if=\"$path\" bs=4096 count=${(n + 4095) / 4096} 2>/dev/null"),
+        )
+        val out = ByteArrayOutputStream(minOf(n, 256 * 1024))
+        process.inputStream.use { ins ->
+            val buf = ByteArray(4096)
+            while (out.size() < n) {
+                val r = ins.read(buf)
+                if (r <= 0) break
+                out.write(buf, 0, minOf(r, n - out.size()))
+            }
+        }
+        runCatching { process.destroy() }
+        out.toByteArray()
+    }.getOrDefault(ByteArray(0))
 
     /**
      * 把指定的 NCM 复制到**本应用的外部私有目录**。
