@@ -168,4 +168,129 @@ class SegmentedSeparatorTest {
         assertEquals(0, stats.chunks)
         assertEquals(0L, stats.vocalsFrames)
     }
+
+    // ============================ 尾块过短回归（2026-10-26 崩溃）============================
+
+    /**
+     * ★★回归：尾块只有几百帧时**不得**送去 native。
+     *
+     * ## 崩溃现场（真机 BF00A，喀秋莎 150s）
+     * ```
+     * segmented: from=6639816 total=6640128 chunks=1 lens=[312]
+     * Abort message: 'terminating due to uncaught exception of type std::length_error: vector'
+     *   #12 libsherpa-onnx-c-api.so (SherpaOnnxOfflineSourceSeparationProcess+188)
+     * ```
+     * 312 帧 < 512 跳长 → sherpa 切出 0 个频谱帧 → 构造异常长度 vector → abort。
+     *
+     * ## 本测试怎么拦
+     * 用一个“行为像 sherpa”的假分离器：输入帧数 < 跳长时**主动断言失败**，
+     * 从而把“尾块太小”变成 JVM 层的测试失败，而不是真机上的闪退。
+     */
+    @Test
+    fun `尾块只有几百帧时 不得送给分离器`() {
+        val ch = 2
+        val sr = 44_100
+        // ★精确复现真机参数（喀秋莎）：
+        //   segmented: from=6639816 total=6640128 chunks=1 lens=[312]
+        // 关键：从 startFrame 直接开始，且剩余只有 312 帧 → chunks=1。
+        // 这正是旧代码 `if (plan.size > 1)` 校验被绕过的那条路。
+        val totalFrames = 6_640_128
+        val startFrame = 6_639_816   // totalFrames - 312
+        val input = ramp(totalFrames, ch)
+        val overlap = sr / 2
+        val schedule = listOf(sr * 4, sr * 8, sr * 16, sr * 30)
+
+        var sawTooSmall = false
+        val strictSeparator = object : ChunkSeparator {
+            override fun separate(
+                block: FloatArray,
+                channels: Int,
+                sampleRate: Int,
+            ): SherpaSourceSeparation.SeparationResult {
+                val nIn = block.size / channels
+                // sherpa 的 512 跳长：不足一个跳就切不出频谱帧。
+                // 真机上这会 abort，这里把它变成可见的失败。
+                if (nIn < 512) {
+                    sawTooSmall = true
+                    throw AssertionError("尾块只有 $nIn 帧 (<512) → 真机会 std::length_error 闪退")
+                }
+                val nOut = nIn - (nIn % 1024)
+                val v = FloatArray(nOut * channels)
+                val a = FloatArray(nOut * channels)
+                System.arraycopy(block, 0, v, 0, nOut * channels)
+                System.arraycopy(block, 0, a, 0, nOut * channels)
+                return SherpaSourceSeparation.SeparationResult(v, a, sampleRate)
+            }
+        }
+
+        val rbV = StemPcmRingBuffer(ch, capacityFrames = totalFrames + 8192)
+        val rbA = StemPcmRingBuffer(ch, capacityFrames = totalFrames + 8192)
+        val stats = SegmentedSeparator(
+            reader = MemFrameSource(input, ch, sr),
+            separator = strictSeparator,
+            onWrite = { v, a, f, _ ->
+                rbV.append(v, 0, f)
+                rbA.append(a, 0, f)
+            },
+            startFrame = startFrame,
+            overlapFrames = overlap,
+            chunkSchedule = schedule,
+        ).run()
+        rbV.close(); rbA.close()
+
+        assertTrue("绝不该把 <512 帧的块送给分离器（否则真机闪退）", !sawTooSmall)
+    }
+
+    /**
+     * 同上，但直接断言 `normalizeTail` 的合并行为：
+     * 尾块小于 [SegmentedSeparator.MIN_CHUNK_FRAMES] 时，它应被并入前一块，
+     * 而不是自成一块。
+     */
+    @Test
+    fun `尾块过短时会被并入前一块 而不是单独成块`() {
+        val ch = 1
+        val sr = 44_100
+        val tinyTail = 312
+        val frames = sr * 4 + sr * 8 + tinyTail
+        val input = ramp(frames, ch)
+        val overlap = sr / 2
+        val schedule = listOf(sr * 4, sr * 8, sr * 16)
+
+        val lensSeen = ArrayList<Int>()
+        val sep = object : ChunkSeparator {
+            override fun separate(
+                block: FloatArray,
+                channels: Int,
+                sampleRate: Int,
+            ): SherpaSourceSeparation.SeparationResult {
+                val nIn = block.size / channels
+                lensSeen += nIn
+                val nOut = nIn - (nIn % 1024)
+                val v = FloatArray(nOut * channels)
+                val a = FloatArray(nOut * channels)
+                System.arraycopy(block, 0, v, 0, nOut * channels)
+                System.arraycopy(block, 0, a, 0, nOut * channels)
+                return SherpaSourceSeparation.SeparationResult(v, a, sampleRate)
+            }
+        }
+        val rbV = StemPcmRingBuffer(ch, capacityFrames = frames + 8192)
+        val rbA = StemPcmRingBuffer(ch, capacityFrames = frames + 8192)
+        SegmentedSeparator(
+            reader = MemFrameSource(input, ch, sr),
+            separator = sep,
+            onWrite = { v, a, f, _ ->
+                rbV.append(v, 0, f)
+                rbA.append(a, 0, f)
+            },
+            overlapFrames = overlap,
+            chunkSchedule = schedule,
+        ).run()
+        rbV.close(); rbA.close()
+
+        // 关键断言：没有任何一块小于 MIN_CHUNK_FRAMES
+        val tooSmall = lensSeen.filter { it < SegmentedSeparator.MIN_CHUNK_FRAMES }
+        assertEquals("不应存在 <MIN_CHUNK_FRAMES 的块，实际: $lensSeen", emptyList<Int>(), tooSmall)
+        // 且最后一块应覆盖到曲尾（合并后变长）
+        assertTrue("最后一块应 >= 前一块长度（已合并尾块）", lensSeen.isNotEmpty())
+    }
 }

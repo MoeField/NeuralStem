@@ -111,10 +111,31 @@ class SegmentedSeparator(
             }
         }
 
+        // ★尾块不得短于 MIN_CHUNK_FRAMES（2026-10-26 真实崩溃修复，见下方注释）。
+        //
+        // ## 崩溃现场（真机 BF00A，喀秋莎 150s）
+        // ```
+        // segmented: from=6639816 total=6640128 chunks=1 lens=[312]
+        // Abort message: 'terminating due to uncaught exception of type std::length_error: vector'
+        //   #12 libsherpa-onnx-c-api.so (SherpaOnnxOfflineSourceSeparationProcess+188)
+        //   #13 libneuralstem_spike.so (nativeSeparate+272)
+        // ```
+        //
+        // ## 根因
+        // sherpa 内部按 **512 跳长**做 STFT。312 帧 → 切出 **0 个频谱帧** →
+        // 它去构造长度 0（或负数换算）的 vector → `std::length_error`。
+        // 而上面那段 `require` **只在 `plan.size > 1` 时生效**，
+        // 于是“只剩一个超小尾块”的情况被放过去了。
+        //
+        // ## 修法
+        // 尾块过短就**并入前一块**（把前一块延长到曲尾），而不是单独成块。
+        // 合并后只多算几百帧，代价远小于崩溃。
+        val plan2 = normalizeTail(plan, totalFrames)
+
         Log.i(
             TAG,
             "segmented: from=$from total=$totalFrames ch=$channels sr=$sampleRate " +
-                "overlap=$overlapFrames chunks=${plan.size} lens=${plan.take(6).map { it.len }}",
+                "overlap=$overlapFrames chunks=${plan2.size} lens=${plan2.take(6).map { it.len }}",
         )
 
         // pending 尾（与 StreamingSeparator 同索引约定：下标 0 = 下一块起点）。
@@ -126,7 +147,7 @@ class SegmentedSeparator(
         var firstEmitted = false
         // ★Step 2：统计实际写出的帧数（两轨等长，共用一个计数）。
         var writtenFrames = 0L
-        plan.forEachIndexed { idx, c ->
+        plan2.forEachIndexed { idx, c ->
             // ★取消支持：`run()` 是同步阻塞代码（在 Dispatchers.IO 里跑），
             //   协程的 `job.cancel()` 只能标记状态，**无法中断正在执行的阻塞调用**。
             //   因此每个块开始前主动查一次 —— 否则用户点「取消分离」要等到整首跑完才生效。
@@ -134,7 +155,7 @@ class SegmentedSeparator(
                 throw CancellationException("segmented separation cancelled at chunk #$idx")
             }
             val isFirst = idx == 0
-            val isLast = idx == plan.lastIndex
+            val isLast = idx == plan2.lastIndex
             val hop = c.hop
             val block = reader.readFrames(c.start, c.len)
             require(block.isNotEmpty()) { "empty read at ${c.start}" }
@@ -299,6 +320,71 @@ class SegmentedSeparator(
         return w
     }
 
+    /**
+     * ★把过短的**尾块**并入前一块（2026-10-26 崩溃修复）。
+     *
+     * ## 为什么必须做
+     * sherpa 内部按 **512 跳长**做 STFT。当尾块只有 312 帧（不到 1 个跳长）时，
+     * 它切出 **0 个频谱帧** → 构造长度 0 / 负数换算的 vector →
+     * `std::length_error` → **SIGABRT 直接闪退**（真机实测，喀秋莎 150s）。
+     *
+     * ## 为何不在 native 侧拦
+     * `std::length_error` 是 C++ 异常，会直接 abort 进程，
+     * JNI 层根本回不来（不行就无处可捕获）。必须在**送进去之前**就保证块够长。
+     *
+     * ## 阈值
+     * [MIN_CHUNK_FRAMES] = 1 秒（44100 帧）。它 ≫ 512跳长（足够切出频谱帧），
+     * 又远小于最小块 4s，不会误伤正常块。
+     *
+     * ## 合并方式
+     * 把**前一块延长到曲尾**（`len` 变大），而不是删除尾块 ——
+     * 否则会丢掉最后那几百帧音频。
+     */
+    private fun normalizeTail(plan: List<Plan>, totalFrames: Int): List<Plan> {
+        if (plan.isEmpty()) return plan
+
+        // ★只有一块且它就很小（真机正是这种情况：chunks=1 lens=[312]）
+        //
+        // 此时**无法合并**（没有“前一块”）。但也不能就这么送进去 —— 会 abort。
+        // 办法：**向前扩张**起点，让这一块够长。
+        // 多算几百毫秒音频，比闪退好得多；而且这段本来就要算（属于“补缺口”）。
+        if (plan.size == 1) {
+            val only = plan.first()
+            if (only.len >= MIN_CHUNK_FRAMES) return plan
+            val newStart = (only.start + only.len - MIN_CHUNK_FRAMES)
+                .coerceAtLeast(0)
+            // 仍不够（整首就短于 MIN）→ 只能报错，绝不送进去崩进程。
+            val newLen = totalFrames - newStart
+            if (newLen < MIN_CHUNK_FRAMES) {
+                throw IllegalArgumentException(
+                    "单块只有 ${only.len} 帧（< MIN_CHUNK_FRAMES=$MIN_CHUNK_FRAMES）：" +
+                        "sherpa 会因切不出频谱帧而 std::length_error 闪退。" +
+                        "start=${only.start} total=$totalFrames",
+                )
+            }
+            Log.i(
+                TAG,
+                "normalizeTail: 单块只有 ${only.len} 帧（< $MIN_CHUNK_FRAMES）" +
+                    "→ 向前扩张 start=${only.start}→$newStart，len→$newLen",
+            )
+            return listOf(Plan(newStart, newLen, newLen - overlapFrames))
+        }
+
+        val last = plan.last()
+        if (last.len >= MIN_CHUNK_FRAMES) return plan
+
+        // 多块：把最后两块合并（保留前一块的 start，长度延伸到曲尾）。
+        val prev = plan[plan.size - 2]
+        val mergedLen = totalFrames - prev.start
+        val merged = Plan(prev.start, mergedLen, mergedLen - overlapFrames)
+        Log.i(
+            TAG,
+            "normalizeTail: 尾块只有 ${last.len} 帧（< $MIN_CHUNK_FRAMES）→ 并入前一块，" +
+                "len=${prev.len}→$mergedLen",
+        )
+        return plan.subList(0, plan.size - 2) + merged
+    }
+
     private fun buildPlan(from: Int, totalFrames: Int): List<Plan> {
         if (from >= totalFrames) return emptyList()
         val schedule = chunkSchedule
@@ -333,6 +419,16 @@ class SegmentedSeparator(
         private const val TAG = "SegmentedSep"
         /** 0.5s @44.1kHz —— G-3 决策（覆盖块边界失真）。 */
         const val DEFAULT_OVERLAP_FRAMES = 22_050
+
+        /**
+         * ★单块最小帧数（1 秒 @44.1kHz）。
+         *
+         * ## 为何存在（2026-10-26 崩溃修复）
+         * sherpa 内部按 **512 跳长**做 STFT。块短到不到一个跳长（实测尾块只有 312 帧）时
+         * 切出 **0 个频谱帧** → 构造异常长度的 vector → `std::length_error` →
+         * **SIGABRT 直接闪退**。这个值是“足够切出频谱帧”的安全下限。
+         */
+        const val MIN_CHUNK_FRAMES = 44_100
 
         /** G-3 默认递增块：4s→8s→16s→30s（帧）。 */
         fun defaultSchedule(sampleRate: Int): List<Int> {
