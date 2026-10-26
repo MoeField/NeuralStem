@@ -19,6 +19,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -98,6 +99,29 @@ fun PlaylistScreen(
     }
 
 
+    /**
+     * ★2026-10-26：单曲导入（之前只有文件夹导入，想加一首得建整个文件夹）。
+     *
+     * 为何用 `OpenMultipleDocuments` 而不是 `OpenDocument`：
+     * 一次能选多首，且不改变用户已有习惯（单选也能用）。
+     */
+    val pickFiles = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris ->
+        if (uris.isNullOrEmpty()) return@rememberLauncherForActivityResult
+        uris.forEach { u ->
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    u,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                )
+            }
+        }
+        scope.launch {
+            vm.importFiles(uris, intoListId = selectedListId)
+        }
+    }
+
     val pickFolder = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocumentTree()
     ) { uri ->
@@ -143,25 +167,47 @@ fun PlaylistScreen(
             }) { Text(stringResource(R.string.pl_create), maxLines = 1) }
         }
         val importBtn: @Composable () -> Unit = {
-            Button(onClick = { pickFolder.launch(null) }) {
+            // ★2026-10-26：文件夹导入（新建文件夹歌单）
+            OutlinedButton(onClick = { pickFolder.launch(null) }) {
                 Text(stringResource(R.string.pl_import_folder), maxLines = 1)
             }
         }
+        // ★2026-10-26：单曲/多选导入（追加到**当前选中**歌单）
+        val importFilesBtn: @Composable () -> Unit = {
+            OutlinedButton(onClick = {
+                // MIME 里包含 ncm：系统选择器默认不认，得显式列出
+                pickFiles.launch(
+                    arrayOf(
+                        "audio/*",
+                        "application/ogg",
+                        "application/x-flac",
+                        // NCM 没有标准 MIME，用通配让它可选
+                        "application/octet-stream",
+                    ),
+                )
+            }) {
+                Text("导入单曲", maxLines = 1)
+            }
+        }
         if (isLandscape) {
-            // 横屏：三件挤一行
+            // 横屏：四件挤一行
             Row(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 nameField(Modifier.weight(1f))
                 createBtn()
+                importFilesBtn()
                 importBtn()
             }
         } else {
-            // 竖屏：命名单独一行；两个按钮一行
+            // 竖屏：命名单独一行；按钮分两行（三个按钮一行太挤）
             nameField(Modifier.fillMaxWidth())
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 createBtn()
+                importFilesBtn()
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 importBtn()
             }
         }

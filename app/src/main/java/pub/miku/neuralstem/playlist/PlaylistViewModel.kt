@@ -240,6 +240,56 @@ class PlaylistViewModel(app: Application) : AndroidViewModel(app) {
         importFolder(Uri.parse(f), intoListId = listId)
     }
 
+    // ---------------- 单曲导入（2026-10-26）----------------
+
+    /**
+     * 把选中的若干文件加进歌单。
+     *
+     * ## 与文件夹导入的区别
+     * - 文件夹导入 → **新建**一个文件夹歌单（随外部文件同步）
+     * - 单曲导入 → 追加进**当前选中**的歌单（不创建新歌单）
+     *
+     * 后者更符合“我看到一首歌，想加进现有列表”的直觉。
+     *
+     * ## 真实路径处理
+     * 与 `scanAudio` 一致：`.m4a` / `.ncm` 必须解析成真实路径，
+     * 否则 AVS3 解码与 NCM 解密都做不了。
+     */
+    suspend fun importFiles(uris: List<Uri>, intoListId: String? = null) {
+        if (uris.isEmpty()) return
+        val ctx = getApplication<Application>()
+
+        val found = withContext(Dispatchers.IO) {
+            uris.mapNotNull { u ->
+                val name = runCatching {
+                    DocumentFile.fromSingleUri(ctx, u)?.name
+                }.getOrNull() ?: u.lastPathSegment ?: return@mapNotNull null
+
+                if (!isAudio(name)) {
+                    Log.i(TAG, "importFiles 跳过非音频：$name")
+                    return@mapNotNull null
+                }
+
+                val uriStr = if (SafPathResolver.needsRealPath(name)) {
+                    SafPathResolver.resolve(ctx, u)?.let {
+                        Uri.fromFile(java.io.File(it)).toString()
+                    } ?: u.toString()
+                } else {
+                    u.toString()
+                }
+                PlaylistStore.TrackRef(uriStr, name)
+            }
+        }
+        Log.i(TAG, "importFiles: ${found.size}/${uris.size} 首可导入")
+        if (found.isEmpty()) return
+
+        val targetId = intoListId ?: selectedListId.value
+        _lists.value = _lists.value.map { p ->
+            if (p.id == targetId) p.copy(tracks = mergeDistinct(p.tracks, found)) else p
+        }
+        persist()
+    }
+
     private fun mergeDistinct(
         old: List<PlaylistStore.TrackRef>,
         new: List<PlaylistStore.TrackRef>,
@@ -250,27 +300,62 @@ class PlaylistViewModel(app: Application) : AndroidViewModel(app) {
         return byUri.values.toList()
     }
 
-    /** 递归扫描 Tree URI 下的音频文件。 */
+    /**
+     * 递归扫描 Tree URI 下的音频文件。
+     *
+     * ## 为何要处理真实路径（2026-10-26）
+     * SAF 拿到的是 `content://`。普通的 mp3/flac 可以直接用，
+     * 但 **AVS3（.m4a）与 NCM（.ncm）必须有真实路径**：
+     * - AVS3 解码要 `File.readBytes()`
+     * - NCM 解密要路径（还要跟 `netease://` 体系对得上）
+     *
+     * 所以对这两类尝试 `SafPathResolver` 解析；
+     * 解析不了就退回 `content://`（至少能加进歌单，播不了时 UI 会提示）。
+     */
     private fun scanAudio(ctx: Context, treeUri: Uri): List<PlaylistStore.TrackRef> {
         val root = DocumentFile.fromTreeUri(ctx, treeUri) ?: return emptyList()
         val out = ArrayList<PlaylistStore.TrackRef>()
+
         fun walk(dir: DocumentFile) {
             for (f in dir.listFiles()) {
-                if (f.isDirectory) walk(f)
-                else if (f.isFile && isAudio(f.name ?: "")) {
-                    out.add(PlaylistStore.TrackRef(f.uri.toString(), f.name ?: "unknown"))
+                if (f.isDirectory) {
+                    walk(f)
+                    continue
                 }
+                if (!f.isFile) continue
+                val name = f.name ?: continue
+                if (!isAudio(name)) continue
+
+                // ★需要真实路径的（AVS3 / NCM）优先解析
+                val uriStr = if (SafPathResolver.needsRealPath(name)) {
+                    val real = SafPathResolver.resolve(ctx, f.uri)
+                    if (real != null) {
+                        android.net.Uri.fromFile(java.io.File(real)).toString()
+                    } else {
+                        // 解析不了：保留 content://，至少可见
+                        Log.w(TAG, "需要真实路径但解析失败，退回 content://: $name")
+                        f.uri.toString()
+                    }
+                } else {
+                    f.uri.toString()
+                }
+
+                out.add(PlaylistStore.TrackRef(uriStr, name))
             }
         }
         walk(root)
         return out
     }
 
-    private fun isAudio(name: String): Boolean {
-        val n = name.lowercase()
-        return listOf(".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg")
-            .any { n.endsWith(it) }
-    }
+    /**
+     * 是不是音频扩展名。
+     *
+     * ★2026-10-26：实现搬到 [AudioFileTypes]（顶层对象，可 JVM 单测）。
+     * 以前是 `private fun`，导致“文件夹导入”与“单曲导入”
+     * 各维护一份白名单，而且没法测 —— 实测就因为漏了 `.ncm`
+     * 让 732 首网易云的歌全部进不了歌单。
+     */
+    private fun isAudio(name: String): Boolean = AudioFileTypes.isAudio(name)
 
     companion object {
         private const val TAG = "PlaylistVm"

@@ -696,6 +696,68 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
+            // ★importtest：验证导入逻辑（不依赖 SAF 人工点选）。
+            //   a0 = 目录路径。会调用真实的 scanAudio/isAudio/SafPathResolver 逻辑。
+            "importtest" -> {
+                lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                    val sb = StringBuilder()
+                    fun step(s: String) {
+                        sb.append(s).append('\n')
+                        runCatching { File(filesDir, "ncmtest_result.txt").writeText(sb.toString()) }
+                    }
+                    runCatching {
+                        val dir = a0 ?: "/sdcard/Download/NSImportTest"
+                        step("1. 目标目录：$dir")
+                        val d = File(dir)
+                        // ★注意：Android 11+ 分区存储下，App 用 File API 看不到
+                        //   Download 里的非媒体文件（权限 rw-rw---- media_rw）。
+                        //   所以这里 listFiles 可能为 null —— 这是预期行为，
+                        //   真实导入必须走 SAF（DocumentFile）。
+                        val files = d.listFiles()
+                        step("2. File API 看到文件数：${files?.size ?: -1}（-1 = 无权限，正常）")
+
+                        // ★SAF 视角：这才是真实导入用的路径
+                        val treeUri = android.net.Uri.parse(
+                            "content://com.android.externalstorage.documents/tree/" +
+                                "primary%3ADownload%2FNSImportTest",
+                        )
+                        val docDir = androidx.documentfile.provider.DocumentFile
+                            .fromTreeUri(application, treeUri)
+                        step("3. SAF DocumentFile=$docDir  可列出=${docDir != null}")
+                        docDir?.listFiles()?.forEach { f ->
+                            val name = f.name ?: "?"
+                            val kind = if (pub.miku.neuralstem.playlist.AudioFileTypes.isAudio(name)) {
+                                "收录"
+                            } else "跳过"
+                            val needPath = pub.miku.neuralstem.playlist.SafPathResolver
+                                .needsRealPath(name)
+                            val realPath = runCatching {
+                                pub.miku.neuralstem.playlist.SafPathResolver
+                                    .resolve(application, f.uri)
+                            }.getOrNull()
+                            step("   [" + kind + "] " + name)
+                            step("        needPath=" + needPath + " real=" + (realPath ?: "解析失败"))
+                        }
+
+                        // 直接调顶层对象（不再是 private 方法 → 不用反射）
+                        step("\n3. 白名单判定（AudioFileTypes）：")
+                        for (n in listOf("a.ncm", "b.m4a", "c.mp3", "d.flac", "e.txt", "f.ogg")) {
+                            val ok = pub.miku.neuralstem.playlist.AudioFileTypes.isAudio(n)
+                            val mark = if (ok) "收录" else "跳过"
+                            step("   " + n + " -> " + mark)
+                        }
+
+                        // 验证 SafPathResolver 的 needsRealPath
+                        step("\n4. 需要真实路径的：")
+                        for (n in listOf("a.ncm", "b.m4a", "c.mp3")) {
+                            val ok = pub.miku.neuralstem.playlist.SafPathResolver.needsRealPath(n)
+                            val mark = if (ok) "需解析成 file://" else "content:// 即可"
+                            step("   " + n + " -> " + mark)
+                        }
+                    }.onFailure { step("ERR: " + it.javaClass.simpleName + ": " + it.message) }
+                    Log.i("TestCmd", "IMPORTTEST\n" + sb)
+                }
+            }
             // ★neteaseimport：扫网易云目录并写入歌单（a1 = 限制数量）。
             //   不复制文件，只存 netease:// 逻辑引用。
             "neteaseimport" -> {
