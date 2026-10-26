@@ -258,6 +258,34 @@ class SettingsRepository(app: Application) {
         Log.i(TAG, "fourTierEnabled ${tier.name} = $enabled")
     }
 
+    // ================= 解码缓存（2026-10-26）=================
+    //
+    // ## 为什么需要
+    // AVS3 解码一首 4 分钟的歌要 ~42 秒（RTF 6.6×）。
+    // 解完的 PCM 存成 WAV 后，下次打开就是秒开。
+    //
+    // ## 为何用档位而不是滑块
+    // 缓存体积差异很大（一首 4 分钟立体声 PCM16@44.1k ≈ 42MB），
+    // 用户需要的是“占多少空间”的直觉认知，而不是一个精确数值。
+    // 4 个档位（1/2/3/4 GB）足够，且避免用户调到奇数值引发困惑。
+    //
+    // ## 调小后怎么回收
+    // 不需要用户“重置软件”：下次写入缓存时自动按 LRU 淘汰到新上限以下，
+    // 用户也可以在设置里点「清除解码缓存」立即释放。
+
+    /** 解码缓存上限（GB）。默认 2。 */
+    var decodeCacheGb: Int
+        get() = prefs.getInt(KEY_DECODE_CACHE_GB, DECODE_CACHE_GB_DEFAULT)
+        set(value) {
+            val v = value.coerceIn(DECODE_CACHE_GB_MIN, DECODE_CACHE_GB_MAX)
+            prefs.edit().putInt(KEY_DECODE_CACHE_GB, v).apply()
+            Log.i(TAG, "decodeCacheGb=$v")
+        }
+
+    /** 解码缓存上限（字节）。 */
+    fun decodeCacheLimitBytes(): Long =
+        decodeCacheGb.toLong() * 1024L * 1024L * 1024L
+
     companion object {
         private const val TAG = "SettingsRepo"
         private const val PREFS = "settings"
@@ -271,6 +299,12 @@ class SettingsRepository(app: Application) {
         private const val KEY_MODEL_SOURCE = "model_source_preference"
         private const val KEY_MODEL_RESOLVED = "model_source_resolved"
         private const val KEY_DOWNLOAD_PROXY = "model_download_proxy"
+        private const val KEY_DECODE_CACHE_GB = "decode_cache_gb"
+
+        /** 解码缓存档位范围（GB）。 */
+        const val DECODE_CACHE_GB_MIN = 1
+        const val DECODE_CACHE_GB_MAX = 4
+        const val DECODE_CACHE_GB_DEFAULT = 2
 
         /**
          * ★默认 GitHub 代理前缀（实测可用）：`api.gitproxy.dev/github.com/<path>`
