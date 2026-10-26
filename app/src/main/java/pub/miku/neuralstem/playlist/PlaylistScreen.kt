@@ -125,15 +125,23 @@ fun PlaylistScreen(
     val pickFolder = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocumentTree()
     ) { uri ->
-        if (uri != null) {
+        android.util.Log.i("PlaylistVm", "pickFolder callback uri=$uri")
+        if (uri == null) {
+            android.util.Log.i("PlaylistVm", "pickFolder: 用户取消")
+        } else {
             // ★ 持久化 tree 权限：否则 app 重启/后续访问该文件夹下的子文档时
             //   会 SecurityException → 播放报 ERROR_CODE_IO_UNSPECIFIED。
-            runCatching {
+            val ok = runCatching {
                 context.contentResolver.takePersistableUriPermission(
                     uri,
                     Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
                 )
+                true
+            }.getOrElse {
+                android.util.Log.w("PlaylistVm", "takePersistableUriPermission 失败", it)
+                false
             }
+            android.util.Log.i("PlaylistVm", "pickFolder: persist=$ok，开始 importFolder")
             scope.launch {
                 // ★ 选文件夹导入 = **总是新建一个文件夹歌单**
                 vm.importFolder(uri, intoListId = null)

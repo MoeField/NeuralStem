@@ -27,6 +27,16 @@ import kotlin.math.abs
 /** 短窗口内多次“捕获”视为同一次重锚 → 替换而非累加（避免过度补偿→回弹）。 */
 private const val CAPTURE_COOLDOWN_NS = 300_000_000L   // 300ms
 
+/**
+ * ★跳变阈值（ms）：锚点位置变化超过它就不做平滑补偿，直接跟过去。
+ *
+ * 为何 1500ms：
+ * - 远大于正常抖动（实测 ~300ms）
+ * - 小于用户能感知为“拖动”的最小距离
+ * 没有这条时，拖进度条会“先到目标、又回弹到旧位置、再冲回去”（实测现象）。
+ */
+private const val JUMP_THRESHOLD_MS = 1_500f
+
 @Composable
 fun rememberSmoothPosition(
     anchorFlow: StateFlow<PlayerViewModel.UiClock?>,
@@ -66,10 +76,31 @@ fun rememberSmoothPosition(
                         delta = 0f
                     } else {
                         val capture = lastDisplay - raw
-                        // ★ 短窗口内（COOLDOWN）的多次捕获**替换**而非累加：
-                        //   重锚往往连续几帧都触发；累加会过度补偿（回弹）。
-                        val withinCooldown = (nowNs - lastCaptureNs) < CAPTURE_COOLDOWN_NS
-                        delta = if (withinCooldown) capture else delta + capture
+                        /*
+                         * ★2026-10-26 修正：**大跳变不补偿**。
+                         *
+                         * 本类的初衷是“摊平抖动”（~300ms 级别的锚点微调）。
+                         * 但用户拖进度条是 **几秒到几分钟** 的跳变 ——
+                         * 若也走补偿逻辑：
+                         *     capture = 旧显示(10s) - 新锚点(60s) = -50s
+                         *     delta = -50s  →  显示 60s + (-50s) = **10s**
+                         * 然后再逐帧衰减爬回 60s。
+                         * 这就是用户看到的“绿条先到点击处，又回弹到旧位置，再冲回去”。
+                         *
+                         * 阈值取 1500ms：远大于正常抖动（实测 ~300ms），
+                         * 又小于用户能感知为“拖动”的最小距离。
+                         */
+                        val isJump = abs(capture) > JUMP_THRESHOLD_MS
+                        if (isJump) {
+                            // 跳变：立即跟随，不做平滑过渡
+                            delta = 0f
+                        } else {
+                            // ★ 短窗口内的多次捕获**替换**而非累加：
+                            //   重锚往往连续几帧都触发；累加会过度补偿（回弹）。
+                            val withinCooldown =
+                                (nowNs - lastCaptureNs) < CAPTURE_COOLDOWN_NS
+                            delta = if (withinCooldown) capture else delta + capture
+                        }
                         lastCaptureNs = nowNs
                     }
                     lastAnchorKey = key

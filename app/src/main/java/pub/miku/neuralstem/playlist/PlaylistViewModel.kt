@@ -207,9 +207,27 @@ class PlaylistViewModel(app: Application) : AndroidViewModel(app) {
      */
     suspend fun importFolder(treeUri: Uri, intoListId: String? = null) {
         val ctx = getApplication<Application>()
+        // ★诊断：确认能从 tree uri 拿到目录（拿不到通常是没授权）
+        //
+        // ★2026-10-26：fromTreeUri 对**非 tree uri**（如单文件 `document/...`）
+        //   会抛 IllegalArgumentException，而不是返回 null。
+        //   之前实测就被这个坑卡住：一个错误的 uri 会让整个导入流程静默中断。
+        //   所以必须 runCatching 包住。
+        val root = runCatching { DocumentFile.fromTreeUri(ctx, treeUri) }
+            .onFailure { Log.w(TAG, "importFolder: fromTreeUri 异常 uri=$treeUri", it) }
+            .getOrNull()
+        Log.i(
+            TAG,
+            "importFolder: treeUri=$treeUri root=${root?.name} canRead=${root?.canRead()}",
+        )
+        if (root == null) {
+            Log.w(TAG, "importFolder: fromTreeUri 返回 null（未授权？）")
+            return
+        }
         val found = withContext(Dispatchers.IO) { scanAudio(ctx, treeUri) }
         Log.i(TAG, "importFolder: ${found.size} audio files from $treeUri")
-        val name = DocumentFile.fromTreeUri(ctx, treeUri)?.name ?: "导入的文件夹"
+        found.take(3).forEach { Log.i(TAG, "   例：${it.title} → ${it.uri.take(80)}") }
+        val name = root.name ?: "导入的文件夹"
         _lists.value = if (intoListId != null) {
             _lists.value.map { p ->
                 // ★ 默认歌单**永不变为 FOLDER**（它是文件歌单；即便被误传也不改）。
@@ -313,27 +331,45 @@ class PlaylistViewModel(app: Application) : AndroidViewModel(app) {
      * 解析不了就退回 `content://`（至少能加进歌单，播不了时 UI 会提示）。
      */
     private fun scanAudio(ctx: Context, treeUri: Uri): List<PlaylistStore.TrackRef> {
-        val root = DocumentFile.fromTreeUri(ctx, treeUri) ?: return emptyList()
+        val root = DocumentFile.fromTreeUri(ctx, treeUri) ?: run {
+            Log.w(TAG, "scanAudio: fromTreeUri(null)")
+            return emptyList()
+        }
         val out = ArrayList<PlaylistStore.TrackRef>()
 
-        fun walk(dir: DocumentFile) {
-            for (f in dir.listFiles()) {
+        fun walk(dir: DocumentFile, depth: Int) {
+            // listFiles 在没授权时返回空数组（不抛异常）—— 必须打出来，
+            // 否则表现为“导入后什么都没有”，完全看不出哪里错。
+            val children = runCatching { dir.listFiles() }.getOrElse {
+                Log.w(TAG, "scanAudio: listFiles 异常 @${dir.name}", it)
+                return
+            }
+            Log.i(
+                TAG,
+                "scanAudio: walk " + "  ".repeat(depth) + (dir.name ?: "?") +
+                    " → ${children.size} 项",
+            )
+            for (f in children) {
                 if (f.isDirectory) {
-                    walk(f)
+                    walk(f, depth + 1)
                     continue
                 }
                 if (!f.isFile) continue
                 val name = f.name ?: continue
-                if (!isAudio(name)) continue
+                if (!isAudio(name)) {
+                    Log.i(TAG, "scanAudio: 跳过（非音频）$name")
+                    continue
+                }
 
                 // ★需要真实路径的（AVS3 / NCM）优先解析
                 val uriStr = if (SafPathResolver.needsRealPath(name)) {
                     val real = SafPathResolver.resolve(ctx, f.uri)
                     if (real != null) {
-                        android.net.Uri.fromFile(java.io.File(real)).toString()
+                        Log.i(TAG, "scanAudio: 真实路径 $real")
+                        Uri.fromFile(java.io.File(real)).toString()
                     } else {
                         // 解析不了：保留 content://，至少可见
-                        Log.w(TAG, "需要真实路径但解析失败，退回 content://: $name")
+                        Log.w(TAG, "scanAudio: 需真实路径但解析失败，退回 content://: $name")
                         f.uri.toString()
                     }
                 } else {
@@ -343,7 +379,7 @@ class PlaylistViewModel(app: Application) : AndroidViewModel(app) {
                 out.add(PlaylistStore.TrackRef(uriStr, name))
             }
         }
-        walk(root)
+        walk(root, 0)
         return out
     }
 
