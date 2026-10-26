@@ -28,14 +28,16 @@ import kotlin.math.abs
 private const val CAPTURE_COOLDOWN_NS = 300_000_000L   // 300ms
 
 /**
- * ★跳变阈值（ms）：锚点位置变化超过它就不做平滑补偿，直接跟过去。
+ * ★seek 跳变阈值（ms）。
  *
- * 为何 1500ms：
- * - 远大于正常抖动（实测 ~300ms）
- * - 小于用户能感知为“拖动”的最小距离
- * 没有这条时，拖进度条会“先到目标、又回弹到旧位置、再冲回去”（实测现象）。
+ * 锚点位置突变超过它就**不做平滑补偿**，直接对齐。
+ * 依据（实测）：拖进度条松手时，smooth 还在往前跑（207217ms），
+ * 而 seek 后的真值已是 200900ms；若照常补偿，会先“多跑出 6 秒”再退回来，
+ * 表现为“填充→变灰→再填”。
+ *
+ * 1000ms：远大于正常播放每帧推进（≤100ms），又小于任何有意义的 seek 距离。
  */
-private const val JUMP_THRESHOLD_MS = 1_500f
+private const val SEEK_JUMP_MS = 1_000f
 
 @Composable
 fun rememberSmoothPosition(
@@ -49,12 +51,15 @@ fun rememberSmoothPosition(
     val pos = remember { mutableFloatStateOf(0f) }
     var lastDisplay = remember { 0f }
     var lastAnchorKey = remember { Long.MIN_VALUE }
+    /** 上一帧锚点的“含外推”位置；用来识别 seek 这种**位置突变**。 */
+    var lastRaw = remember { 0f }
 
     LaunchedEffect(resetKey) {
         // 切歌：清掉旧歌的平滑状态
         pos.floatValue = 0f
         lastDisplay = 0f
         lastAnchorKey = Long.MIN_VALUE
+        lastRaw = 0f
         var delta = 0f
         var first = true
         var lastCaptureNs = 0L
@@ -71,36 +76,46 @@ fun rememberSmoothPosition(
                 //     否则会“每 100ms 就误判为锚点跳变” → 反复吞 delta → 回弹/迟滞。
                 val key = a.positionMs * 31 + a.speed.toRawBits().toLong() * 7 +
                     (if (a.isPlaying) 1L else 0L)
+                // ★2026-10-26：记住锚点上一次的“含外推”位置，用来识别 seek 跳变。
+                if (lastAnchorKey != Long.MIN_VALUE) {
+                    val prevRaw = lastRaw
+                    val jump = abs(raw - prevRaw)
+                    /*
+                     * ★★ 实测定位到的真根因（2026-10-26）：
+                     *
+                     * 拖进度条时用户看到的是 `dragProgress`（手指位置），
+                     * 而 `SmoothPosition` 里的 `lastDisplay` 在此期间**仍在向前跑**
+                     * （因为播放没停）。实测数据：
+                     *   松手瞬间：手指=200900ms（0.7124），smooth=207217ms
+                     *   松手后第1帧：raw 跳到 200900，但 delta = 207217-200900 = +6317
+                     *   显示 = 200900 + 6317 = 207217  ← 先冲到 0.7314
+                     *   然后 delta 衰减，慢慢掉回 0.7124
+                     * 这就是用户看到的“填充→变灰→再填”。
+                     *
+                     * ⇒ seek 这类**位置突变**，不能做平滑补偿：
+                     *   直接对齐到新位置，否则会先“多跑出一截”再退回来。
+                     *
+                     * 阈值 1000ms：远大于正常播放每帧推进（≤100ms），
+                     * 又小于任何有意义的 seek 距离。
+                     */
+                    if (jump > SEEK_JUMP_MS) {
+                        delta = 0f
+                        lastDisplay = raw
+                        lastRaw = raw
+                        lastAnchorKey = key
+                        pos.floatValue = raw
+                        return@withFrameNanos
+                    }
+                }
                 if (first || key != lastAnchorKey) {
                     if (first) {
                         delta = 0f
                     } else {
                         val capture = lastDisplay - raw
-                        /*
-                         * ★2026-10-26 修正：**大跳变不补偿**。
-                         *
-                         * 本类的初衷是“摊平抖动”（~300ms 级别的锚点微调）。
-                         * 但用户拖进度条是 **几秒到几分钟** 的跳变 ——
-                         * 若也走补偿逻辑：
-                         *     capture = 旧显示(10s) - 新锚点(60s) = -50s
-                         *     delta = -50s  →  显示 60s + (-50s) = **10s**
-                         * 然后再逐帧衰减爬回 60s。
-                         * 这就是用户看到的“绿条先到点击处，又回弹到旧位置，再冲回去”。
-                         *
-                         * 阈值取 1500ms：远大于正常抖动（实测 ~300ms），
-                         * 又小于用户能感知为“拖动”的最小距离。
-                         */
-                        val isJump = abs(capture) > JUMP_THRESHOLD_MS
-                        if (isJump) {
-                            // 跳变：立即跟随，不做平滑过渡
-                            delta = 0f
-                        } else {
-                            // ★ 短窗口内的多次捕获**替换**而非累加：
-                            //   重锚往往连续几帧都触发；累加会过度补偿（回弹）。
-                            val withinCooldown =
-                                (nowNs - lastCaptureNs) < CAPTURE_COOLDOWN_NS
-                            delta = if (withinCooldown) capture else delta + capture
-                        }
+                        // ★ 短窗口内（COOLDOWN）的多次捕获**替换**而非累加：
+                        //   重锚往往连续几帧都触发；累加会过度补偿（回弹）。
+                        val withinCooldown = (nowNs - lastCaptureNs) < CAPTURE_COOLDOWN_NS
+                        delta = if (withinCooldown) capture else delta + capture
                         lastCaptureNs = nowNs
                     }
                     lastAnchorKey = key
@@ -112,6 +127,7 @@ fun rememberSmoothPosition(
                 val disp = raw + delta
                 pos.floatValue = disp
                 lastDisplay = disp
+                lastRaw = raw
             }
         }
     }
