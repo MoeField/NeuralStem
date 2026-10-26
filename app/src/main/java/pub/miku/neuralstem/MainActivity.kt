@@ -552,6 +552,111 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
+            // ★ncmstat：统计源目录的文件构成（扩展名分布 + 总字节）
+            //   用途：确认「不加密的那批」（m4a/flac/mp3）到底有多少、多大，
+            //   而不是凭印象。比 ncmscan 快得多（不解密，只列目录）。
+            //   a0 = 源目录（缺省自动发现）
+            "ncmstat" -> {
+                if (!BuildConfig.WITH_NCM) {
+                    Log.w("TestCmd", "ncmstat 不可用：未启用 NCM 模块")
+                } else {
+                    lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                        val sb = StringBuilder()
+                        runCatching {
+                            val icls = Class.forName(
+                                "pub.miku.neuralstem.experimental.ncm.NcmImporter",
+                            )
+                            val iinst = icls.getField("INSTANCE").get(null)
+                            val dir = a0 ?: run {
+                                val dirs = icls.getMethod("findSourceDirs").invoke(iinst) as List<*>
+                                dirs.firstOrNull() as? String
+                            }
+                            sb.append("dir = ").append(dir).append('\n')
+                            if (dir == null) {
+                                sb.append("找不到源目录\n")
+                            } else {
+                                @Suppress("UNCHECKED_CAST")
+                                val entries = icls.getMethod(
+                                    "listNcm", String::class.java, Boolean::class.javaPrimitiveType,
+                                ).invoke(iinst, dir, true) as List<Any>
+                                sb.append("总计 ").append(entries.size).append(" 个文件\n\n")
+
+                                // 按扩展名分组（getExt / getSizeBytes / isEncrypted 是 Kotlin 属性→ getter）
+                                val byExt = LinkedHashMap<String, Pair<Int, Long>>()
+                                var enc = 0
+                                var plain = 0
+                                for (e in entries) {
+                                    val c = e.javaClass
+                                    val ext = c.getMethod("getExt").invoke(e) as String
+                                    val size = c.getMethod("getSizeBytes").invoke(e) as Long
+                                    val isEnc = c.getMethod("isEncrypted").invoke(e) as Boolean
+                                    if (isEnc) enc++ else plain++
+                                    val cur = byExt[ext] ?: (0 to 0L)
+                                    byExt[ext] = (cur.first + 1) to (cur.second + size)
+                                }
+                                byExt.entries.sortedByDescending { it.value.first }.forEach {
+                                    (ext, v) ->
+                                    sb.append("  .").append(ext.padEnd(5))
+                                        .append(" ").append(v.first.toString().padStart(4))
+                                        .append(" 个   ")
+                                        .append("%6.1f".format(v.second / 1048576.0)).append(" MB\n")
+                                }
+                                sb.append("\n加密 .ncm = ").append(enc)
+                                    .append("，不加密 = ").append(plain)
+                                    .append("（不加密的这批可以直接交给播放器）\n")
+                                // 抽样看 m4a 里的 codec（区分 av3a 与 mp4a）
+                                // ★改用 Mp4CodecProbe 按 box 结构真解析，不再看头字节
+                                sb.append("\n非 ncm 文件的 codec 分布：\n")
+                                val pcls = Class.forName(
+                                    "pub.miku.neuralstem.experimental.ncm.Mp4CodecProbe",
+                                )
+                                val pinst = pcls.getField("INSTANCE").get(null)
+                                val probe = pcls.getMethod(
+                                    "probeCodec", ByteArray::class.java,
+                                )
+                                val readFn = icls.getMethod(
+                                    "readHead", String::class.java, Int::class.javaPrimitiveType,
+                                )
+                                val codecCount = LinkedHashMap<String, Int>()
+                                val codecSample = LinkedHashMap<String, String>()
+                                var probed = 0
+                                entries.filter {
+                                    !(it.javaClass.getMethod("isEncrypted").invoke(it) as Boolean)
+                                }.forEach { e ->
+                                    val c = e.javaClass
+                                    val name = c.getMethod("getName").invoke(e) as String
+                                    val path = c.getMethod("getAbsolutePath").invoke(e) as String
+                                    val head = runCatching {
+                                        readFn.invoke(iinst, path, 256 * 1024) as ByteArray
+                                    }.getOrNull()
+                                    val codec = if (head == null) {
+                                        "read-fail"
+                                    } else {
+                                        runCatching {
+                                            probe.invoke(pinst, head) as String?
+                                        }.getOrNull() ?: "unknown"
+                                    }
+                                    probed++
+                                    codecCount[codec] = (codecCount[codec] ?: 0) + 1
+                                    if (!codecSample.containsKey(codec)) {
+                                        codecSample[codec] = name
+                                    }
+                                }
+                                codecCount.entries.sortedByDescending { it.value }.forEach {
+                                    (codec, n) ->
+                                    sb.append("  ").append(codec.padEnd(10))
+                                        .append(" ").append(n.toString().padStart(4)).append(" 个")
+                                        .append("   例：").append(codecSample[codec]?.take(45))
+                                        .append('\n')
+                                }
+                                sb.append("  （共扫了 ").append(probed).append(" 个非 ncm 文件）\n")
+                            }
+                        }.onFailure { sb.append("ERR: ").append(it).append('\n') }
+                        Log.i("TestCmd", "NCMSTAT\n$sb")
+                        runCatching { File(filesDir, "ncmtest_result.txt").writeText(sb.toString()) }
+                    }
+                }
+            }
             // ★ncmscan：批量统计 NCM 的容器/编码分布（a0 = 源目录，缺省用自动发现的第一个）
             //   用途：先搞清楚“有多少能播、多少是 AVS3”再决定要不要做解码器
             "ncmscan" -> {
