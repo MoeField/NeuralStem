@@ -189,6 +189,69 @@ static int ensure_loaded(void) {
 
 /* ==================== JNI 导出 ==================== */
 
+/*
+ * ★取解码器的配置（声道数 / 采样率 / 帧长）—— 供下混用。
+ *
+ * ## 为何需要它
+ * AVS3 是空间音频，这批文件实测是 `MC_7_1_4`，共 **12 声道**。
+ * 播放前要下混成立体声，就必须知道源声道数 ——
+ * 而官方库**没有导出任何 getConfig 符号**（`Avs3DecoderLibGetConfig`
+ * 属于 wrapper 层，不在 .so 的导出 ABI 里），只能读结构体。
+ *
+ * ## ★偏移是怎么确定的（不是猜的）
+ * `AVS3Decoder` 里混着 short / long / int32_t / 指针，LP64 下 long 是 8 字节，
+ * 手算极易错且错了不报错。这里用 **static_assert 让编译器把实际 offsetof
+ * 吐出来**（故意断言错误值，读编译器报错里的 `expression evaluates to`）：
+ *
+ *     numChansOutput  → 44 (0x2c)
+ *     frameLength     → 76 (0x4c)
+ *     outputFs        →  8 (0x08)
+ *
+ * 交叉验证：反汇编 `Avs3Decode` 里正是
+ *     ldrh w20, [x0, #0x4c]   ← frameLength
+ *     ldrh w22, [x0, #0x2c]   ← numChansOutput
+ * 与 offsetof 完全吻合。
+ *
+ * ## 安全网
+ * 读出来的值做**合理性窗口校验**（声道 1..64、采样率 8k..384k），
+ * 超出范围就返回 -1 —— 即使将来结构体变了也不会把垃圾值传给上层。
+ */
+
+/** 有源码时的精确路径（由 CMake 在检测到 avs3dec/ 时定义 NEURALSTEM_AVS3_HEADERS）。 */
+#if defined(NEURALSTEM_AVS3_HEADERS) && NEURALSTEM_AVS3_HEADERS
+#include "avs3_stat_dec.h"
+#endif
+
+JNIEXPORT jint JNICALL
+Java_pub_miku_neuralstem_experimental_ncm_Avs3AudioDecoder_nativeGetChannels(
+        JNIEnv *env, jclass clazz, jlong handle) {
+    (void) env; (void) clazz;
+    if (!handle) return -1;
+#if defined(NEURALSTEM_AVS3_HEADERS) && NEURALSTEM_AVS3_HEADERS
+    const AVS3DecoderHandle h = (AVS3DecoderHandle) (uintptr_t) handle;
+    const int16_t v = h->numChansOutput;
+    return (v >= 1 && v <= 64) ? (jint) v : -1;
+#else
+    /* 无源码：用编译器实测的偏移 0x2c。 */
+    const int16_t v = *(const int16_t *) ((const uint8_t *) (uintptr_t) handle + 0x2c);
+    return (v >= 1 && v <= 64) ? (jint) v : -1;
+#endif
+}
+
+JNIEXPORT jint JNICALL
+Java_pub_miku_neuralstem_experimental_ncm_Avs3AudioDecoder_nativeGetSampleRate(
+        JNIEnv *env, jclass clazz, jlong handle) {
+    (void) env; (void) clazz;
+    if (!handle) return -1;
+#if defined(NEURALSTEM_AVS3_HEADERS) && NEURALSTEM_AVS3_HEADERS
+    const long v = ((AVS3DecoderHandle) (uintptr_t) handle)->outputFs;
+#else
+    /* 偏移 0x08；这是个 long（LP64 = 8 字节），不是 int。 */
+    const long v = *(const long *) ((const uint8_t *) (uintptr_t) handle + 0x08);
+#endif
+    return (v >= 8000 && v <= 384000) ? (jint) v : -1;
+}
+
 JNIEXPORT jint JNICALL
 Java_pub_miku_neuralstem_experimental_ncm_Avs3AudioDecoder_nativeInit(
         JNIEnv *env, jclass clazz) {
