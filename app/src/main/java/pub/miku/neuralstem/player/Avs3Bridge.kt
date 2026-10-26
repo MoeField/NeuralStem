@@ -65,6 +65,84 @@ object Avs3Bridge {
     /** 这个 uri 是不是「网易云私有目录的逻辑引用」。 */
     fun isNeteaseUri(uri: Uri): Boolean = NeteaseUriCodec.isNetease(uri.toString())
 
+    /** 这个 uri 是不是 NCM 播放源（`ncm://<key>`，解密后的字节）。 */
+    fun isNcmUri(uri: Uri): Boolean = uri.scheme == "ncm"
+
+    /** NCM 解密结果里记录的实际格式（`flac` / `mp3` / `m4a`）；没有返回 null。 */
+    fun ncmFormatOf(uri: Uri): String? {
+        val key = uri.host ?: return null
+        return runCatching {
+            val cls = Class.forName("pub.miku.neuralstem.experimental.ncm.NcmPlaybackStore")
+            val inst = cls.getField("INSTANCE").get(null)
+            cls.getMethod("formatOf", String::class.java).invoke(inst, key) as? String
+        }.getOrNull()
+    }
+
+    /**
+     * 处理 `.ncm` 源文件（解密 + 分流 + 可能的 AVS3 解码）。
+     *
+     * ⚠️ **阻塞调用**，必须在 `Dispatchers.IO` 里跑。
+     */
+    fun prepareNcm(
+        app: Application,
+        srcPath: String,
+        onProgress: ((Int) -> Unit)?,
+        shouldCancel: () -> Boolean,
+    ): Prepared {
+        val clsName = "pub.miku.neuralstem.experimental.ncm.NcmPlaybackCoordinator"
+        if (runCatching { Class.forName(clsName) }.isFailure) {
+            return Prepared.Failed("此构建未包含 NCM 支持")
+        }
+        return runCatching {
+            val cls = Class.forName(clsName)
+            val inst = cls.getField("INSTANCE").get(null)
+            val progressCls = Class.forName("$clsName\$Progress")
+
+            val progressProxy = onProgress?.let { cb ->
+                java.lang.reflect.Proxy.newProxyInstance(
+                    progressCls.classLoader,
+                    arrayOf(progressCls),
+                ) { _, method, args ->
+                    when (method.name) {
+                        "onProgress" -> {
+                            (args?.getOrNull(0) as? Int)?.let(cb)
+                            null
+                        }
+                        "hashCode" -> System.identityHashCode(progressCls)
+                        "equals" -> false
+                        "toString" -> "NcmProgressProxy"
+                        else -> null
+                    }
+                }
+            }
+
+            val res = cls.getMethod(
+                "prepare",
+                Application::class.java,
+                String::class.java,
+                progressCls,
+                kotlin.jvm.functions.Function0::class.java,
+            ).invoke(
+                inst, app, srcPath, progressProxy,
+                object : kotlin.jvm.functions.Function0<Boolean> {
+                    override fun invoke(): Boolean = shouldCancel()
+                },
+            ) ?: return Prepared.Failed("prepare 返回 null")
+
+            val rc = res.javaClass
+            when (rc.simpleName) {
+                "Ready" -> Prepared.Ready(rc.getMethod("getUri").invoke(res) as Uri)
+                "Failed" -> Prepared.Failed(
+                    rc.getMethod("getMessage").invoke(res) as? String ?: "未知错误",
+                )
+                else -> Prepared.Failed("未知返回类型 ${rc.simpleName}")
+            }
+        }.getOrElse {
+            Log.w(TAG, "prepareNcm 反射失败", it)
+            Prepared.Failed(it.message ?: "NCM 处理失败")
+        }
+    }
+
     /**
      * 是否需要把 uri 交给 AVS3 流程处理。
      *

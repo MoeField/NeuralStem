@@ -905,18 +905,24 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         //   放在前面 → doLoad 收到的一定是已经就绪的 uri，状态机完全无感。
         //
         // ★netease:// 逻辑引用：歌单里存的就是它（App 读不了私有目录）。
-        //   先解回真实路径，再判断是不是 AVS3。
+        //   先解回真实路径，再根据扩展名/内容分流：
+        //   - .ncm → 需解密（可能解出 flac/mp3/av3a，要再分流）
+        //   - .m4a(av3a) → 直接解码
+        //   - 其他 → 原生播（但私有目录需权限，暂不支持）
         if (Avs3Bridge.isNeteaseUri(uri)) {
             val realPath = Avs3Bridge.resolvePath(uri)
             if (realPath == null) {
                 Log.w(TAG, "netease:// 解析失败：$uri")
+            } else if (realPath.endsWith(".ncm", ignoreCase = true)) {
+                loadNcm(realPath, displayName, startPositionMs)
+                return
             } else {
                 val realUri = Uri.fromFile(java.io.File(realPath))
                 if (Avs3Bridge.shouldIntercept(realUri)) {
                     loadAvs3(realUri, displayName, startPositionMs)
                     return
                 }
-                Log.i(TAG, "netease:// 非 AVS3：$realPath（原生播放需权限，暂不支持）")
+                Log.i(TAG, "netease:// 非 AVS3：$realPath（原生播需权限，暂不支持）")
             }
         }
 
@@ -1016,6 +1022,66 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * NCM 专用路径：解密 → 分流 → 得到可播 uri。
+     *
+     * ## 与 [loadAvs3] 的关系
+     * 两者共用同一个解码状态机（`Avs3Decode`）—— 因为 NCM 也可能解出 AVS3，
+     * 那时就是“解密 + 解码”，进度条画的是解码那段。
+     * 解出 flac/mp3 时几乎瞬完（100–200ms 解密），进度条一闪而过。
+     */
+    private fun loadNcm(srcPath: String, displayName: String, startPositionMs: Long) {
+        decodeJob?.cancel()
+        decodeJob = viewModelScope.launch {
+            val app = getApplication<Application>()
+            val fakeUri = "ncm:$srcPath"   // 仅用作状态机里的标识
+
+            val letOldFinish = session.requestAvs3Decode()
+            session.beginAvs3Decode(fakeUri, displayName)
+            syncAvs3ToUi()
+            if (letOldFinish) Log.i(TAG, "NCM: 旧任务进入收尾")
+
+            val result = withContext(Dispatchers.IO) {
+                Avs3Bridge.prepareNcm(
+                    app = app,
+                    srcPath = srcPath,
+                    onProgress = { pct ->
+                        session.onAvs3Progress(fakeUri, pct)
+                        syncAvs3ToUi()
+                    },
+                    shouldCancel = { !isActive },
+                )
+            }
+
+            if (!isActive) return@launch
+            if (!session.isDecodingFor(fakeUri)) {
+                Log.i(TAG, "NCM 处理完成但目标已切走，丢弃 $displayName")
+                return@launch
+            }
+
+            when (result) {
+                is Avs3Bridge.Prepared.Ready -> {
+                    session.onAvs3Done(fakeUri)
+                    syncAvs3ToUi()
+                    val p = mediaController
+                    if (p == null) {
+                        pendingLoad = { p2 ->
+                            doLoad(p2, result.uri, displayName, startPositionMs = startPositionMs)
+                        }
+                    } else {
+                        doLoad(p, result.uri, displayName, startPositionMs = startPositionMs)
+                    }
+                }
+
+                is Avs3Bridge.Prepared.Failed -> {
+                    session.onAvs3Failed(fakeUri, result.message)
+                    syncAvs3ToUi()
+                    Log.w(TAG, "NCM 不可播：$displayName（${result.message}）")
+                }
+            }
+        }
+    }
+
     /** 把状态机里的解码态搬到 UI state。 */
     private fun syncAvs3ToUi() {
         _state.value = _state.value.copy(avs3Decode = session.avs3Decode)
@@ -1041,13 +1107,26 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         // V2(N4):把曲目名放进 MediaMetadata,供系统媒体通知显示
         val item = MediaItem.Builder()
             .setUri(uri)
-            // ★NCM：`ncm://<key>` 没有文件扩展名，DefaultMediaSourceFactory 无法猜容器格式
+            // ★NCM：`ncm://<key>` 没有扩展名，DefaultMediaSourceFactory 无法猜格式
             //   → 实测读完立即 STATE_ENDED（0 字节音频）。
-            //   解密结果统一是 m4a(AAC) → 显式声明 MIME。
-            //   （仅 ncm scheme 需要；其他 scheme 保持原行为）
+            //
+            //   ★★2026-10-26 修正：以前硬编码 AUDIO_MP4，以为“解密结果统一是 m4a”。
+            //   实际上 NCM 只是容器壳 —— 实测 60 个样本里 59 个是 av3a，**1 个是 flac**。
+            //   硬编码 AUDIO_MP4 会让 flac/mp3 那批根本播不了。
+            //   现在从 NcmPlaybackStore 读出实际格式再选 MIME。
             .apply {
-                if (uri.scheme == "ncm") {
-                    setMimeType(androidx.media3.common.MimeTypes.AUDIO_MP4)
+                if (Avs3Bridge.isNcmUri(uri)) {
+                    val fmt = Avs3Bridge.ncmFormatOf(uri)
+                    val mime = when (fmt) {
+                        "flac" -> androidx.media3.common.MimeTypes.AUDIO_FLAC
+                        "mp3" -> androidx.media3.common.MimeTypes.AUDIO_MPEG
+                        "m4a" -> androidx.media3.common.MimeTypes.AUDIO_MP4
+                        // 拿不到格式（store 被 LRU 淘汰了）→ 回退到 MP4
+                        // （那是最常见的，且失败后用户会重试重新解密）
+                        else -> androidx.media3.common.MimeTypes.AUDIO_MP4
+                    }
+                    Log.i(TAG, "doLoad: ncm 格式=$fmt → MIME=$mime")
+                    setMimeType(mime)
                 }
             }
             .setMediaMetadata(

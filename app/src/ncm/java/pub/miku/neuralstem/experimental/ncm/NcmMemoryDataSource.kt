@@ -133,6 +133,10 @@ class NcmMemoryDataSource : BaseDataSource(/* isNetwork= */ false) {
  *
  * 只保留最近 [MAX_ENTRIES] 条（LRU）。一首歌 15–40MB，2 条 ≈ 80MB 上限
  * （App 已开 `largeHeap`）。
+ *
+ * ★同时记录**实际格式**：NCM 里可能是 flac/mp3/m4a，
+ *   `PlayerViewModel.doLoad()` 需要据此选正确的 MIME
+ *   （以前硬编码 AUDIO_MP4，解出 flac 的会播不了）。
  */
 object NcmPlaybackStore {
 
@@ -140,21 +144,37 @@ object NcmPlaybackStore {
 
     private const val MAX_ENTRIES = 2
 
-    private val map = object : LinkedHashMap<String, ByteArray>(4, 0.75f, true) {
+    /** 一条解密结果：字节 + 实际格式（`flac`/`mp3`/`m4a`）*/
+    data class Entry(val bytes: ByteArray, val format: String) {
+        // data class 带 ByteArray 必须重写 equals/hashCode（否则比引用）
+        override fun equals(other: Any?): Boolean {
+            if (this === other) return true
+            if (other !is Entry) return false
+            return format == other.format && bytes.contentEquals(other.bytes)
+        }
+
+        override fun hashCode(): Int = 31 * bytes.contentHashCode() + format.hashCode()
+    }
+
+    private val map = object : LinkedHashMap<String, Entry>(4, 0.75f, true) {
         override fun removeEldestEntry(
-            eldest: MutableMap.MutableEntry<String, ByteArray>?,
+            eldest: MutableMap.MutableEntry<String, Entry>?,
         ): Boolean = size > MAX_ENTRIES
     }
 
     @Synchronized
-    fun put(key: String, bytes: ByteArray): String {
-        map[key] = bytes
-        Log.i(TAG, "put $key (${bytes.size / 1_048_576.0}MB), entries=${map.size}")
+    fun put(key: String, bytes: ByteArray, format: String): String {
+        map[key] = Entry(bytes, format)
+        Log.i(TAG, "put $key (${bytes.size / 1_048_576.0}MB, $format), entries=${map.size}")
         return key
     }
 
     @Synchronized
-    fun get(key: String): ByteArray? = map[key]
+    fun get(key: String): ByteArray? = map[key]?.bytes
+
+    /** 取格式（`flac`/`mp3`/`m4a`）；没有返回 null。 */
+    @Synchronized
+    fun formatOf(key: String): String? = map[key]?.format
 
     @Synchronized
     fun contains(key: String): Boolean = map.containsKey(key)
