@@ -150,12 +150,29 @@ android {
     if (withNcm) {
         sourceSets.getByName("main").java.srcDirs("src/ncm/java")
         sourceSets.getByName("main").kotlin.srcDirs("src/ncm/java")
+        // ★Shizuku 的 ContentProvider 只在 NCM 构建里声明。
+        //
+        // ## 为何必须分开（2026-10-26 发布事故）
+        // `ContentProvider` 是 **进程启动时由系统实例化**的，与“有没有代码引用”无关。
+        // 之前 provider 写在 main 清单、而 Shizuku 依赖只在 withNcm 时加，导致公开版
+        // 启动即 `ClassNotFoundException: rikka.shizuku.ShizukuProvider` → 直接闪退。
+        //
+        // ## 做法（不拆清单文件）
+        // provider 声明**留在 main 清单**，但用 manifest placeholder 控制它的
+        // `android:enabled` —— 公开版置 false，系统就不会实例化它。
+        // 比拆两个清单简单得多，也不会出现两份清单不同步的风险。
+        // 具体见 AndroidManifest.xml 里 provider 的 android:enabled="${shizukuProviderEnabled}"。
         // 同步把 ncm 的单测也纳入（仅当启用时）
         sourceSets.getByName("test").java.srcDirs("src/ncmTest/java")
         sourceSets.getByName("test").kotlin.srcDirs("src/ncmTest/java")
     }
     defaultConfig {
         buildConfigField("boolean", "WITH_NCM", withNcm.toString())
+
+        // ★Shizuku Provider 的开关（2026-10-26 发布事故）。
+        //   公开版置 false → 系统不会实例化该 provider → 不会 ClassNotFoundException。
+        //   NCM 版置 true → 正常可用。
+        manifestPlaceholders["shizukuProviderEnabled"] = withNcm.toString()
 
         // ★把 with_ncm 传给 CMake：AVS3 桥 / 自编译解码器**只在 NCM 构建里编**。
         //

@@ -123,15 +123,36 @@
           - `exported = true` + `permission = INTERACT_ACROSS_USERS_FULL`：
             Shizuku App 需要跨用户访问它，缺了权限声明会 binder 失败
 
-          仅 `-Pwith_ncm=true` 构建实际用到（默认构建带着也无害，因为无代码引用）。
-        -->
-        <provider
-            android:name="rikka.shizuku.ShizukuProvider"
-            android:authorities="${applicationId}.shizuku"
-            android:enabled="true"
-            android:exported="true"
-            android:multiprocess="false"
-            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+          ★★ 这个 provider 由 `android:enabled="${shizukuProviderEnabled}"` 控制
+        （2026-10-26 发布事故修正）。
+
+        ## 曾经的错误认识
+        这里原本写着“默认构建带着也无害，因为无代码引用” —— **错的**。
+        `ContentProvider` 是 **Application 进程启动时由系统实例化的**，
+        与“有没有代码引用”完全无关。而 Shizuku 依赖只在 `withNcm` 时才加入，
+        于是公开版的启动流程变成：
+        ```
+        FATAL EXCEPTION: main
+        Unable to get provider rikka.shizuku.ShizukuProvider:
+          java.lang.ClassNotFoundException: Didn't find class "rikka.shizuku.ShizukuProvider"
+        ```
+        → **公开版一启动就崩，装上去根本打不开**。
+
+        ## 现在怎么做
+        留在本文清单里，但 `android:enabled` 用 manifest placeholder 控制：
+        - `with_ncm=true` → `true`（正常可用）
+        - 否则 → `false`（系统不实例化 → 不会 ClassNotFound）
+
+        为何不拆到 `src/ncm/AndroidManifest.xml`：AGP 的 manifest 是**单文件**，
+        拆开要维护两份且容易不同步；用 enabled 开关只改一行。
+    -->
+    <provider
+        android:name="rikka.shizuku.ShizukuProvider"
+        android:authorities="${applicationId}.shizuku"
+        android:enabled="${shizukuProviderEnabled}"
+        android:exported="true"
+        android:multiprocess="false"
+        android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
     </application>
 
 </manifest>
