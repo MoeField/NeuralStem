@@ -61,25 +61,63 @@ object Avs3PlaybackCoordinator {
      * 每次切歌都会调，不能阻塞。只读文件头 256KB（moov 通常在前部）。
      */
     fun isAvs3Source(uri: Uri): Boolean {
-        if (uri.scheme != "file") return false
         val path = uri.path ?: return false
+        return isAvs3Path(path)
+    }
+
+    /**
+     * 同上，但直接给文件路径（供歌单的 `netease://` 引用使用）。
+     *
+     * ## 两条读取路径
+     * - **普通文件**（如 /sdcard/Download/x.m4a）→ `File` 直接读
+     * - **网易云私有目录** → App 无权限（实测 `Permission denied`）
+     *   → 必须走 Shizuku 的 `cat`
+     *
+     * 所以判断“是不是 AVS3”也得能跨越这两条路径。
+     */
+    fun isAvs3Path(path: String): Boolean {
+        if (!path.lowercase().endsWith(".m4a")) return false
+        val head = readHeadOf(path, 256 * 1024) ?: return false
+        if (head.isEmpty()) return false
+        return runCatching { Mp4CodecProbe.probeCodec(head) == "av3a" }.getOrDefault(false)
+    }
+
+    /**
+     * 读文件前 [maxBytes] 字节（自动选择 File 或 Shizuku）。失败返回 null。
+     */
+    private fun readHeadOf(path: String, maxBytes: Int): ByteArray? {
         val f = File(path)
-        if (!f.exists() || !f.canRead()) return false
-        if (!f.name.lowercase().endsWith(".m4a")) return false
-        return runCatching {
-            val head = f.inputStream().use { ins ->
-                val cap = minOf(f.length(), 256L * 1024).toInt()
-                val buf = ByteArray(cap)
-                var off = 0
-                while (off < cap) {
-                    val n = ins.read(buf, off, cap - off)
-                    if (n <= 0) break
-                    off += n
+        // 能直接读就用 File（快，且不需要 Shizuku）
+        if (f.exists() && f.canRead()) {
+            return runCatching {
+                f.inputStream().use { ins ->
+                    val cap = minOf(f.length(), maxBytes.toLong()).toInt()
+                    val buf = ByteArray(cap)
+                    var off = 0
+                    while (off < cap) {
+                        val n = ins.read(buf, off, cap - off)
+                        if (n <= 0) break
+                        off += n
+                    }
+                    if (off < cap) buf.copyOf(off) else buf
                 }
-                if (off < cap) buf.copyOf(off) else buf
-            }
-            Mp4CodecProbe.probeCodec(head) == "av3a"
-        }.getOrDefault(false)
+            }.getOrNull()
+        }
+        // 私有目录 → 借 Shizuku
+        return runCatching { NcmImporter.readHead(path, maxBytes) }.getOrNull()
+    }
+
+    /**
+     * 读源文件的完整字节（自动选择 File 或 Shizuku）。
+     *
+     * @return null = 读不到（无权限 / 文件不存在）
+     */
+    fun readSourceBytes(path: String): ByteArray? {
+        val f = File(path)
+        if (f.exists() && f.canRead()) {
+            return runCatching { f.readBytes() }.getOrNull()
+        }
+        return runCatching { NcmImporter.readBytesViaShizuku(path) }.getOrNull()
     }
 
     /**
@@ -135,7 +173,13 @@ object Avs3PlaybackCoordinator {
 
         var decoder: Avs3AudioDecoder? = null
         return try {
-            val bytes = File(srcPath).readBytes()
+            // ★readSourceBytes：自动选 File 或 Shizuku。
+            //   网易云私有目录 App 读不了（实测 Permission denied），
+            //   必须借 Shizuku 的 cat。
+            val bytes = readSourceBytes(srcPath) ?: run {
+                Log.w(TAG, "读不到源文件（无权限？需要 Shizuku）：$srcPath")
+                return null
+            }
             val track = Mp4TrackExtractor.extractSamples(bytes) ?: run {
                 Log.w(TAG, "MP4 提取失败")
                 return null
@@ -184,10 +228,59 @@ object Avs3PlaybackCoordinator {
         }
     }
 
-    /** 取 size + mtime（本地文件直接拿，不需要 Shizuku）。 */
-    private fun fileStat(path: String): LongArray? = runCatching {
+    /**
+     * 取 size + mtime，用于建缓存键。
+     *
+     * 本地文件直接拿；私有目录走 Shizuku 的 `stat`。
+     */
+    private fun fileStat(path: String): LongArray? {
         val f = File(path)
-        if (!f.exists()) return@runCatching null
-        longArrayOf(f.length(), f.lastModified())
-    }.getOrNull()
+        if (f.exists()) return longArrayOf(f.length(), f.lastModified())
+        // 私有目录：App 看不到，借 Shizuku
+        return runCatching { NcmImporter.statFor(path) }.getOrNull()
+    }
+
+    /**
+     * 解析歌单里的“逻辑引用”为真实文件路径。
+     *
+     * ## 为何需要
+     * 网易云的歌在私有目录，App 拿不到可用的 `file://` uri，
+     * 所以歌单里只能存逻辑引用 `netease://<URL编码的绝对路径>`。
+     * 播放前再解回真实路径。
+     *
+     * 非 `netease://` 的 uri 原样返回路径（兼容已有歌单）。
+     */
+    fun resolvePath(uri: Uri): String? {
+        return when (uri.scheme) {
+            NET_SRC_SCHEME -> {
+                // ★交给纯字符串的 NeteaseUriCodec（可 JVM 单测），
+                //   不要用 uri.host/schemeSpecificPart —— 实测 `%2F` 会被当成 host，
+                //   而 Uri 在单测里是 stub 没法验证。
+                pub.miku.neuralstem.player.NeteaseUriCodec.decode(uri.toString())
+            }
+            "file" -> uri.path
+            else -> null
+        }
+    }
+
+    /**
+     * 把一个绝对路径包成歌单可存的 uri。
+     *
+     * 私有目录（能读到但不在 App 沙箱内）用 `netease://`，
+     * 其余用普通 `file://`。
+     */
+    fun toPlayableUri(path: String): Uri {
+        val f = File(path)
+        return if (f.exists() && f.canRead()) {
+            Uri.fromFile(f)
+        } else {
+            // ★编解码统一走 NeteaseUriCodec（纯字符串，可 JVM 单测）。
+            //   手拼 `Uri.parse("netease://$encoded")` 会让 %2F 被当成已编码 host，
+            //   toString 时二次编码成 %252F（实测踩到）。
+            Uri.parse(pub.miku.neuralstem.player.NeteaseUriCodec.encode(path))
+        }
+    }
+
+    /** 歌单里存“私有目录逻辑引用”的 scheme。 */
+    const val NET_SRC_SCHEME = "netease"
 }

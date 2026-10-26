@@ -903,6 +903,23 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         //   （换曲前先退多轨）。若在它内部插异步解码，会出现
         //   「解码完成时用户已切走」的竞态，直接污染状态机。
         //   放在前面 → doLoad 收到的一定是已经就绪的 uri，状态机完全无感。
+        //
+        // ★netease:// 逻辑引用：歌单里存的就是它（App 读不了私有目录）。
+        //   先解回真实路径，再判断是不是 AVS3。
+        if (Avs3Bridge.isNeteaseUri(uri)) {
+            val realPath = Avs3Bridge.resolvePath(uri)
+            if (realPath == null) {
+                Log.w(TAG, "netease:// 解析失败：$uri")
+            } else {
+                val realUri = Uri.fromFile(java.io.File(realPath))
+                if (Avs3Bridge.shouldIntercept(realUri)) {
+                    loadAvs3(realUri, displayName, startPositionMs)
+                    return
+                }
+                Log.i(TAG, "netease:// 非 AVS3：$realPath（原生播放需权限，暂不支持）")
+            }
+        }
+
         if (Avs3Bridge.shouldIntercept(uri)) {
             loadAvs3(uri, displayName, startPositionMs)
             return

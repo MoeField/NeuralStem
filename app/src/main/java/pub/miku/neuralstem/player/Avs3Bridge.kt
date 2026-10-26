@@ -40,6 +40,32 @@ object Avs3Bridge {
     }
 
     /**
+     * 把播放 uri 解析成**真实文件路径**（自动处理 `netease://` 逻辑引用）。
+     *
+     * ## 为何需要
+     * 网易云的歌在私有目录，App 拿不到可用的 `file://`，
+     * 歌单里存的是 `netease://<URL编码的绝对路径>`。
+     * 播放前必须解回真实路径，才能借 Shizuku 读。
+     *
+     * @return 真实路径；无法解析时返回 null
+     */
+    fun resolvePath(uri: Uri): String? {
+        if (!available) return uri.path
+        return runCatching {
+            val cls = Class.forName(CLS_COORDINATOR)
+            val inst = cls.getField("INSTANCE").get(null)
+            cls.getMethod("resolvePath", Uri::class.java)
+                .invoke(inst, uri) as? String
+        }.getOrElse {
+            // 反射失败 → 回退到普通路径解析
+            uri.path
+        }
+    }
+
+    /** 这个 uri 是不是「网易云私有目录的逻辑引用」。 */
+    fun isNeteaseUri(uri: Uri): Boolean = NeteaseUriCodec.isNetease(uri.toString())
+
+    /**
      * 是否需要把 uri 交给 AVS3 流程处理。
      *
      * 判断依据：文件是 `.m4a`，且内部 codec 是 `av3a`。

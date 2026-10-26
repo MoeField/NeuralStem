@@ -696,6 +696,73 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
+            // ★neteaseimport：扫网易云目录并写入歌单（a1 = 限制数量）。
+            //   不复制文件，只存 netease:// 逻辑引用。
+            "neteaseimport" -> {
+                if (!BuildConfig.WITH_NCM) {
+                    Log.w("TestCmd", "neteaseimport 不可用：未启用 NCM 模块")
+                } else {
+                    lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                        val sb = StringBuilder()
+                        fun step(s: String) {
+                            sb.append(s).append('\n')
+                            runCatching {
+                                File(filesDir, "ncmtest_result.txt").writeText(sb.toString())
+                            }
+                        }
+                        runCatching {
+                            val icls = Class.forName(
+                                "pub.miku.neuralstem.experimental.ncm.NeteasePlaylistImporter",
+                            )
+                            val inst = icls.getField("INSTANCE").get(null)
+                            val limit = a1?.toIntOrNull() ?: Int.MAX_VALUE
+                            step("1. 开始扫描（limit=$limit）…")
+                            val t0 = System.currentTimeMillis()
+
+                            @Suppress("UNCHECKED_CAST")
+                            val scanned = icls.getMethod(
+                                "scan",
+                                android.content.Context::class.java,
+                                Int::class.javaPrimitiveType,
+                                kotlin.jvm.functions.Function3::class.java,
+                            ).invoke(
+                                inst, application, limit,
+                                object : kotlin.jvm.functions.Function3<Int, Int, String, Unit> {
+                                    override fun invoke(d: Int, t: Int, n: String) {
+                                        if (d % 50 == 0) step("   扫描 $d/$t")
+                                    }
+                                },
+                            ) as List<Any>
+
+                            step("2. 扫描完成 ${scanned.size} 首，耗时 ${System.currentTimeMillis() - t0}ms")
+
+                            val sumCls = Class.forName(
+                                "pub.miku.neuralstem.experimental.ncm.NeteasePlaylistImporter",
+                            )
+                            val result = sumCls.getMethod("summarize", List::class.java)
+                                .invoke(inst, scanned)
+                            step("3. ${result.javaClass.getMethod("summary").invoke(result)}")
+
+                            val added = icls.getMethod(
+                                "importToPlaylist",
+                                android.content.Context::class.java,
+                                List::class.java,
+                            ).invoke(inst, application, scanned) as Int
+                            step("4. 写入歌单 $added 首（已去重）")
+
+                            // 验证：读回歌单看前 5 条
+                            val store = pub.miku.neuralstem.playlist.PlaylistStore(application)
+                            val lists = store.load()
+                            val def = lists.firstOrNull { it.id == store.defaultListId }
+                            step("5. 歌单现在共 ${def?.tracks?.size ?: 0} 首")
+                            def?.tracks?.takeLast(5)?.forEach { tr ->
+                                step("   ${tr.title}  ←  ${tr.uri.take(60)}")
+                            }
+                        }.onFailure { step("ERR: $it") }
+                        Log.i("TestCmd", "NETEASEIMPORT\n$sb")
+                    }
+                }
+            }
             // ★avs3load：走**完整播放路径**（loadAndPlay → 状态机 → 解码 → doLoad）。
             //   这是验证「点歌能播」的端到端命令，与 avs3play 的区别：
             //   avs3play 只验证解码；avs3load 验证整条播放链路（含状态机转移）。
@@ -719,7 +786,15 @@ class MainActivity : ComponentActivity() {
                         Log.w("TestCmd", "avs3load: 路径解码失败")
                     } else {
                         lifecycleScope.launch(kotlinx.coroutines.Dispatchers.Main) {
-                            val uri = Uri.fromFile(File(p))
+                            // ★如果已经是带 scheme 的 uri（如 netease://、file://），
+                            //   直接 parse；否则当成文件路径。
+                            //   之前一律 Uri.fromFile(File(p)) 会把 "netease://..." 当**文件名**，
+                            //   导致整条链路走错（实测踩到）。
+                            val uri = if (p.contains("://")) {
+                                Uri.parse(p)
+                            } else {
+                                Uri.fromFile(File(p))
+                            }
                             Log.i("TestCmd", "AVS3LOAD start: $uri")
                             playerVm.loadAndPlay(uri, File(p).name)
                             // 监控状态机 60 秒，把转移过程写文件
