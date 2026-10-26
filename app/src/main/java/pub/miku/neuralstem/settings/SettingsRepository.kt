@@ -286,6 +286,28 @@ class SettingsRepository(app: Application) {
     fun decodeCacheLimitBytes(): Long =
         decodeCacheGb.toLong() * 1024L * 1024L * 1024L
 
+    // ================= 预解码（2026-10-26）=================
+    //
+    // ## 为什么需要
+    // 自动切歌时如果下一首没缓存，会**静音 42 秒**再出声。
+    // 用户什么都没做却突然没声，是很差的体验。
+    // 所以播放当前曲时，空闲后台把后面几首也解了。
+    //
+    // ## 为何做成设置项（而不是写死）
+    // 预解码的代价是**磁盘**：一首 4 分钟的歌 ≈ 42MB。
+    // 预热 3 首 = 126MB，对存储小的用户可能不能接受。
+    // 默认 1（只解下一首）—— 能覆盖「顺序播放」这个最常见场景，
+    // 代价又最小。0 = 关闭预解码。
+
+    /** 预解码几首（0=关，1..5）。默认 1。 */
+    var preDecodeCount: Int
+        get() = prefs.getInt(KEY_PREDECODE_COUNT, PREDECODE_COUNT_DEFAULT)
+        set(value) {
+            val v = value.coerceIn(PREDECODE_COUNT_MIN, PREDECODE_COUNT_MAX)
+            prefs.edit().putInt(KEY_PREDECODE_COUNT, v).apply()
+            Log.i(TAG, "preDecodeCount=$v")
+        }
+
     companion object {
         private const val TAG = "SettingsRepo"
         private const val PREFS = "settings"
@@ -300,11 +322,22 @@ class SettingsRepository(app: Application) {
         private const val KEY_MODEL_RESOLVED = "model_source_resolved"
         private const val KEY_DOWNLOAD_PROXY = "model_download_proxy"
         private const val KEY_DECODE_CACHE_GB = "decode_cache_gb"
+        private const val KEY_PREDECODE_COUNT = "predecode_count"
 
         /** 解码缓存档位范围（GB）。 */
         const val DECODE_CACHE_GB_MIN = 1
         const val DECODE_CACHE_GB_MAX = 4
         const val DECODE_CACHE_GB_DEFAULT = 2
+
+        /**
+         * 预解码数量范围。
+         *
+         * 上限 5：再多也会被缓存上限（1GB ≈ 24 首）盖过，且解码很吃 CPU，
+         * 预热太多会让当前播放的解码/分离任务变慢。
+         */
+        const val PREDECODE_COUNT_MIN = 0
+        const val PREDECODE_COUNT_MAX = 5
+        const val PREDECODE_COUNT_DEFAULT = 1
 
         /**
          * ★默认 GitHub 代理前缀（实测可用）：`api.gitproxy.dev/github.com/<path>`
