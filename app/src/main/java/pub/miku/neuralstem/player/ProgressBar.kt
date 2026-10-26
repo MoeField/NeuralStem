@@ -163,7 +163,29 @@ fun ProgressBar(
                     size = Size(size.width * drawProgress, barH),
                     cornerRadius = CornerRadius(barH / 2f),
                 )
-                drawCircle(color = playedColor, radius = 10f, center = Offset(size.width * drawProgress, cy))
+                /*
+                 * ★2026-10-26 用户反馈：“手柄圆圈看着像可点击的滑块，
+                 * 但进度条其实**只响应拖动、不响应点击**”。
+                 *
+                 * 所以不用圆点（圆点 = 可抓取的手柄语义），改成：
+                 *   · **竖条**（宽 4dp、高比轨道略高的胶囊）—— 像“播放头”而不是“按钮”
+                 *   · 颜色与已播部分一致，拖动时略亮一点做操作反馈
+                 *   · 不做大的半径→ 视觉上不会让人去“点”它
+                 *
+                 * 若将来真的支持点击跳转，再换回圆点即可（圆点更符合“可点”语义）。
+                 */
+                val headW = 4f
+                val headH = barH + 10f
+                drawRoundRect(
+                    color = if (dragging) playedColor else playedColor.copy(alpha = 0.85f),
+                    topLeft = Offset(
+                        (size.width * drawProgress - headW / 2f)
+                            .coerceIn(0f, size.width - headW),
+                        cy - headH / 2f,
+                    ),
+                    size = Size(headW, headH),
+                    cornerRadius = CornerRadius(headW / 2f),
+                )
             }
         }
     }

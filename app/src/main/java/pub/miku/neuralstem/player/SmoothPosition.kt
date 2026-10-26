@@ -93,8 +93,22 @@ fun rememberSmoothPosition(
     val dragState = rememberUpdatedState(dragMs)
 
     LaunchedEffect(resetKey) {
-        // 切歌：清掉旧歌的平滑状态
-        pos.floatValue = 0f
+        /*
+         * ★★ 2026-10-26 修“松手后闪一下”（实测定位）：
+         *
+         * 原来这里第一行是 `pos.floatValue = 0f`。但 resetKey 传的是 durationMs，
+         * 而 seek 时 _progress 会被改写两次（seekTo 的 + 轮询的），
+         * durationMs 会短暂抖动 → **effect 重启 → pos 归零**。
+         *
+         * 实测抓到松手后 40~117ms 内有 **3 帧 pos=0**，
+         * 此时 draw 回退到用 raw（= 已 seek 到目标）→ 画出目标位置，
+         * 下一帧又回到 smooth → 这就是那一下闪。
+         *
+         * ⇒ 不在这里归零：
+         *   · 真正切歌靠下面的 `first = true` + `lastAnchorKey = MIN_VALUE` 重置，
+         *     效果一样且不会造出值为 0 的帧。
+         *   · 若切歌前恰好是旧歌的位置，下一帧 first=true 会立即重新对齐到新锚点。
+         */
         lastDisplay = 0f
         lastAnchorKey = Long.MIN_VALUE
         lastRaw = 0f
@@ -105,7 +119,11 @@ fun rememberSmoothPosition(
             withFrameNanos { nowNs ->
                 val a = anchorState.value
                 if (a == null) {
-                    pos.floatValue = 0f
+                    /*
+                     * 锚点为 null（会话尚未就绪 / 清空播放）。
+                     * ★不归零：保留上一次的值，避免“↔0↔”的闪烁。
+                     * 真正清空时上层会重置整块 UI（hasMedia=false），不靠这里。
+                     */
                     return@withFrameNanos
                 }
                 /*
