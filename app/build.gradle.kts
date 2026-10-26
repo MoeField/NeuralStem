@@ -72,12 +72,12 @@ android {
         targetSdk = 37
         // ★版本号（2026-10-20 修正）：之前停在 10 / 0.1.0-alpha，但已发到 v0.2.1。
         //   versionCode 必须**严格递增**，否则 F-Droid/Obtainium 看不到更新。
-        //   当前规则：semver 的 minor*10 + patch = 22（0.2.2 → 22）。
-        versionCode = 23
-        // ★versionName 可由 CI 覆盖（`-PversionName=0.2.3`，从 tag 名解出）。
+        //   当前规则：semver 的 minor*10 + patch = 24（0.2.4 → 24）。
+        versionCode = 24
+        // ★versionName 可由 CI 覆盖（`-PversionName=0.2.4`，从 tag 名解出）。
         //   为何需要：tag 与 build.gradle 里的版本号容易不同步；
         //   以 tag 为准能保证“Release 页显示的版本 = 代码里的版本”。
-        versionName = (project.findProperty("versionName") as String?) ?: "0.2.3"
+        versionName = (project.findProperty("versionName") as String?) ?: "0.2.4"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -156,6 +156,23 @@ android {
     }
     defaultConfig {
         buildConfigField("boolean", "WITH_NCM", withNcm.toString())
+
+        // ★把 with_ncm 传给 CMake：AVS3 桥 / 自编译解码器**只在 NCM 构建里编**。
+        //
+        // ## 为何必须有（2026-10-26 实测事故）
+        // 以前 CMakeLists 里 `add_library(neuralstem_avs3 ...)` 是无条件的，
+        // 结果公开版 release APK 里带着四个 AVS3 库：
+        //   libAVS3AudioDec.so / libVMFPlatForm.so  ← UWA 会员制授权，**不可再分发**
+        //   libavs3self.so / libneuralstem_avs3.so
+        //
+        // ## 为何写在 defaultConfig 里
+        // `arguments` 只存在于 `defaultConfig.externalNativeBuild.cmake`；
+        // 设在外层 `android.externalNativeBuild.cmake` 会 Unresolved reference。
+        externalNativeBuild {
+            cmake {
+                arguments.add("-DWITH_NCM=" + if (withNcm) "ON" else "OFF")
+            }
+        }
     }
 
     // ================= ★Shizuku（仅 with_ncm 时） =================
@@ -191,6 +208,8 @@ android {
             path = file("src/main/cpp/CMakeLists.txt")
             // SDK 里装的是 cmake 4.1.2(非 AGP 默认首选),显式指定让它被采用
             version = "4.1.2"
+            // note：WITH_NCM 的 arguments 必须设在 defaultConfig.externalNativeBuild.cmake
+            //   （见上方），设在这里会 Unresolved reference。
         }
     }
 
@@ -202,6 +221,23 @@ android {
             pickFirsts += "**/libsherpa-onnx-c-api.so"
             // M4/S2：onnxruntime-android 与 sherpa AAR 各带一份同名 so，取其一
             pickFirsts += "**/libonnxruntime.so"
+
+            // ★ 公开版必须排除 AVS3 解码器（2026-10-26 实测事故）
+            //
+            // `src/main/jniLibs/arm64-v8a/` 里放着两个 UWA 预编译库：
+            //   libAVS3AudioDec.so / libVMFPlatForm.so
+            // 它们是【世界超高清视频产业联盟代码共享政策】下的会员授权物，
+            // 非 MIT/Apache/GPL，**不能再分发**。
+            // 它们已被 .gitignore 排除（不进仓库），但只要目录里还在，
+            // AGP 就会无条件打进**所有**变体。
+            if (!withNcm) {
+                excludes += listOf(
+                    "**/libAVS3AudioDec.so",
+                    "**/libVMFPlatForm.so",
+                    "**/libavs3self.so",
+                    "**/libneuralstem_avs3.so",
+                )
+            }
         }
     }
 }

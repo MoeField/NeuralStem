@@ -57,11 +57,19 @@ endif()
 #   1. libavs3self.so      —— tools/fetch-avs3.sh + 本 CMake 编出的自编译版
 #   2. libAVS3AudioDec.so  —— 预编译版（AArch64 有代码生成 bug，仅作回退）
 # 都找不到 → nativeInit 返回失败码，App 其余功能不受影响。
+#
+# ★ WITH_NCM（2026-10-26）：整个 AVS3 链路**只在 NCM 构建里编**。
+#   之前这里无条件下 add_library，导致公开版 APK 里也带着
+#   libneuralstem_avs3.so / libavs3self.so / libAVS3AudioDec.so / libVMFPlatForm.so
+#   —— 而后两个是 UWA 会员制授权，**不可再分发**。
+#   该开关由 build.gradle.kts 通过 externalNativeBuild.arguments 传入。
 # ============================================================================
-if(ANDROID_ABI STREQUAL "arm64-v8a")
+if(WITH_NCM AND ANDROID_ABI STREQUAL "arm64-v8a")
     add_library(neuralstem_avs3 SHARED avs3_audio_bridge.c)
     target_link_libraries(neuralstem_avs3 log dl)
     target_compile_options(neuralstem_avs3 PRIVATE -O2)
+elseif(NOT WITH_NCM)
+    message(STATUS "WITH_NCM=OFF → 不编 AVS3 桥（公开版不含解码器）")
 else()
     message(STATUS "AVS3 桥仅支持 arm64-v8a，当前 ${ANDROID_ABI} 跳过")
 endif()
@@ -88,7 +96,7 @@ endif()
 # ============================================================================
 set(AVS3DEC_DIR ${CMAKE_SOURCE_DIR}/avs3dec)
 
-if(ANDROID_ABI STREQUAL "arm64-v8a" AND EXISTS ${AVS3DEC_DIR}/src/decoder.c)
+if(WITH_NCM AND ANDROID_ABI STREQUAL "arm64-v8a" AND EXISTS ${AVS3DEC_DIR}/src/decoder.c)
     file(GLOB AVS3DEC_SRCS
         ${AVS3DEC_DIR}/src/*.c
         ${AVS3DEC_DIR}/common/*.c)
@@ -124,6 +132,8 @@ if(ANDROID_ABI STREQUAL "arm64-v8a" AND EXISTS ${AVS3DEC_DIR}/src/decoder.c)
     target_compile_definitions(neuralstem_avs3 PRIVATE NEURALSTEM_AVS3_HEADERS=1)
 
     message(STATUS "AVS3 自编译解码器：${ANDROID_ABI}，${AVS3DEC_SRCS} 个源文件 → libavs3self.so")
+elseif(NOT WITH_NCM)
+    message(STATUS "WITH_NCM=OFF → 不编 AVS3 自编译解码器")
 else()
     # ★这里只是“静默跳过”，不算错误。
     #   clone 下来直接 assembleDebug 必须能成功，否则新用户第一步就撞墙。
