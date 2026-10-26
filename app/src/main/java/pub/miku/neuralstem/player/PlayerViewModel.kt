@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import org.json.JSONArray
 import org.json.JSONObject
@@ -155,6 +156,14 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
      * 场景：一小时演唱会从 55 分开始分离 —— 补前段要 55 分钟，不值得自动跑。
      */
     val pendingBackfillMs: Long = 0L,
+
+    /**
+     * ★AVS3 解码会话（2026-10-26）。
+     *
+     * 与状态机里的 `session.avs3Decode` **同步**（后者是单一真源，这里只是搬到 UI）。
+     * UI 据此显示「解码中 35%」而不白屏。
+     */
+    val avs3Decode: Avs3Decode = Avs3Decode.Idle,
     )
 
     /** Task 4.4:单条轨的 UI 状态(F4.2/F4.3) */
@@ -168,6 +177,15 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _state = MutableStateFlow(PlayerState())
     val state: StateFlow<PlayerState> = _state.asStateFlow()
+
+    /**
+     * ★AVS3 解码协程。切歌时取消旧的，保证不会同时跑两个解码。
+     *
+     * 为何需要单独持有：解码是异步的（最长几十秒），
+     * 而 `doLoad()` 是同步的。必须在发起新解码前把它取消，
+     * 否则多个解码并行会互相抢 CPU，让**当前**这首反而解得更慢。
+     */
+    private var decodeJob: Job? = null
 
     // ============================ ★3b：派生字段化（状态机收敛收尾）============================
     /**
@@ -877,6 +895,19 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
      * @param startPositionMs ★T-5：载入后起始位置（>0 则 seek）；用于“续播”。 */
     fun loadAndPlay(uri: Uri, displayName: String, startPositionMs: Long = 0L) {
         Log.i(TAG, "loadAndPlay: $displayName ($uri) start=$startPositionMs")
+
+        // ★AVS3（av3a）：先转换成「能播的 uri」再走原路径。
+        //
+        // 为何在这里而不是 doLoad 里：
+        //   doLoad 是**同步**的（立即 setMediaItem+prepare+play），且含 I1 不变量
+        //   （换曲前先退多轨）。若在它内部插异步解码，会出现
+        //   「解码完成时用户已切走」的竞态，直接污染状态机。
+        //   放在前面 → doLoad 收到的一定是已经就绪的 uri，状态机完全无感。
+        if (Avs3Bridge.shouldIntercept(uri)) {
+            loadAvs3(uri, displayName, startPositionMs)
+            return
+        }
+
         val p = mediaController
         if (p == null) {
             // 连接未就绪:暂存,连接后重放(见 pendingLoad 注释)
@@ -886,6 +917,91 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         doLoad(p, uri, displayName, startPositionMs = startPositionMs)
+    }
+
+    /**
+     * AVS3 专用路径：缓存命中则立即播；否则解码（带进度）后播。
+     *
+     * ## 状态机时序（关键，别乱序）
+     * ```
+     * requestAvs3Decode()  ← 先决策旧任务：返回 true = 让它收尾（不取消）
+     *                       （调用方据返回值决定要不要 cancel 旧 job）
+     * beginAvs3Decode()    ← 再建立新任务状态
+     * ... 解码中，onAvs3Progress ...
+     * onAvs3Done()         ← 完成
+     * doLoad()             ← 最后才交给播放器
+     * ```
+     * 若反过来（先 begin 再 request），request 会把刚建的新任务当成旧的。
+     */
+    private fun loadAvs3(uri: Uri, displayName: String, startPositionMs: Long) {
+        decodeJob?.cancel()
+        decodeJob = viewModelScope.launch {
+            val path = uri.path ?: return@launch
+            val app = getApplication<Application>()
+
+            // 1) 先决策旧任务（收尾 vs 立即取消）
+            //    ★顺序不能反：request 必须在 begin 之前，
+            //      否则它会把刚建的新任务当成“旧任务”去收尾。
+            val letOldFinish = session.requestAvs3Decode()
+            session.beginAvs3Decode(uri.toString(), displayName)
+            syncAvs3ToUi()
+            if (letOldFinish) {
+                // 旧任务已过 80%，让它在自己的协程里跑完（能落缓存）。
+                // 这里不等待它 —— 新任务照常开始（两个解码并行会抢 CPU，
+                // 但旧任务只剩几秒，影响可控）。
+                Log.i(TAG, "AVS3: 旧任务进入收尾，新任务继续")
+            }
+
+            // 2) 解码（阻塞调用，必须在 IO 线程）
+            val result = withContext(Dispatchers.IO) {
+                Avs3Bridge.prepare(
+                    app = app,
+                    srcUri = uri,
+                    srcPath = path,
+                    onProgress = { id, pct ->
+                        session.onAvs3Progress(id, pct)
+                        syncAvs3ToUi()
+                    },
+                    shouldCancel = { !isActive },
+                )
+            }
+
+            // 3) 解码期间用户可能已经切走了 —— 只有目标没变才继续播
+            if (!isActive) return@launch
+            if (!session.isDecodingFor(uri.toString())) {
+                Log.i(TAG, "AVS3 解码完成但目标已切走，丢弃 $displayName")
+                return@launch
+            }
+
+            when (result) {
+                is Avs3Bridge.Prepared.Ready -> {
+                    session.onAvs3Done(uri.toString())
+                    syncAvs3ToUi()
+                    // 4) 交给原路径（此时 uri 是缓存 WAV，ExoPlayer 直接能播）
+                    val p = mediaController
+                    if (p == null) {
+                        pendingLoad = { p2 ->
+                            doLoad(p2, result.uri, displayName, startPositionMs = startPositionMs)
+                        }
+                    } else {
+                        doLoad(p, result.uri, displayName, startPositionMs = startPositionMs)
+                    }
+                }
+
+                is Avs3Bridge.Prepared.Failed -> {
+                    session.onAvs3Failed(uri.toString(), result.message)
+                    syncAvs3ToUi()
+                    Log.w(TAG, "AVS3 不可播：$displayName（${result.message}）")
+                    // 降级：仍把原 uri 交给播放器 —— 它会失败，但用户至少看到"这首歌存在"
+                    // （静默什么都不做会更让人困惑）
+                }
+            }
+        }
+    }
+
+    /** 把状态机里的解码态搬到 UI state。 */
+    private fun syncAvs3ToUi() {
+        _state.value = _state.value.copy(avs3Decode = session.avs3Decode)
     }
 
     /**

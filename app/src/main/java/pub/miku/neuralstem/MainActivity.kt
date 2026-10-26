@@ -22,6 +22,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import pub.miku.neuralstem.devtools.TestCommandBus
+import pub.miku.neuralstem.player.Avs3Decode
 import pub.miku.neuralstem.player.PlayerViewModel
 import pub.miku.neuralstem.player.WaveformCache
 import pub.miku.neuralstem.settings.ModelCatalog
@@ -692,6 +693,72 @@ class MainActivity : ComponentActivity() {
                         }.onFailure { sb.append("ERR: ").append(it).append('\n') }
                         Log.i("TestCmd", "NCMSCAN\n$sb")
                         runCatching { File(filesDir, "ncmtest_result.txt").writeText(sb.toString()) }
+                    }
+                }
+            }
+            // ★avs3load：走**完整播放路径**（loadAndPlay → 状态机 → 解码 → doLoad）。
+            //   这是验证「点歌能播」的端到端命令，与 avs3play 的区别：
+            //   avs3play 只验证解码；avs3load 验证整条播放链路（含状态机转移）。
+            //   a0 = 文件路径（支持 b64: 前缀）
+            "avs3load" -> {
+                if (a0 == null) {
+                    Log.w("TestCmd", "avs3load 需要 a0=文件路径（或 b64:...）")
+                } else {
+                    val p = if (a0.startsWith("b64:")) {
+                        runCatching {
+                            String(
+                                android.util.Base64.decode(
+                                    a0.removePrefix("b64:"),
+                                    android.util.Base64.DEFAULT,
+                                ),
+                                Charsets.UTF_8,
+                            )
+                        }.getOrNull()
+                    } else a0
+                    if (p == null) {
+                        Log.w("TestCmd", "avs3load: 路径解码失败")
+                    } else {
+                        lifecycleScope.launch(kotlinx.coroutines.Dispatchers.Main) {
+                            val uri = Uri.fromFile(File(p))
+                            Log.i("TestCmd", "AVS3LOAD start: $uri")
+                            playerVm.loadAndPlay(uri, File(p).name)
+                            // 监控状态机 60 秒，把转移过程写文件
+                            val sb = StringBuilder()
+                            var lastDesc = ""
+                            val t0 = System.currentTimeMillis()
+                            while (System.currentTimeMillis() - t0 < 90_000) {
+                                val st = playerVm.state.value
+                                val d = st.avs3Decode
+                                val desc = when (d) {
+                                    is Avs3Decode.Idle -> "Idle"
+                                    is Avs3Decode.Running ->
+                                        "Running(${d.percent}%${if (d.finishing) " 收尾" else ""})"
+                                    is Avs3Decode.Failed -> "Failed(${d.message})"
+                                }
+                                if (desc != lastDesc) {
+                                    sb.append("${(System.currentTimeMillis() - t0) / 1000}s  $desc")
+                                        .append('\n')
+                                    lastDesc = desc
+                                    runCatching {
+                                        File(filesDir, "ncmtest_result.txt")
+                                            .writeText(sb.toString())
+                                    }
+                                }
+                                // 已经播起来且解码态归零 → 提前结束
+                                if (st.hasMedia && d is Avs3Decode.Idle && sb.isNotEmpty()) {
+                                    sb.append("\n✓ 已交给播放器：file=${st.fileName}")
+                                    sb.append("\n  uri=${st.currentUri}")
+                                    sb.append("\n  isPlaying=${st.isPlaying} dur=${st.durationMs}ms")
+                                    runCatching {
+                                        File(filesDir, "ncmtest_result.txt")
+                                            .writeText(sb.toString())
+                                    }
+                                    break
+                                }
+                                kotlinx.coroutines.delay(500)
+                            }
+                            Log.i("TestCmd", "AVS3LOAD done\n$sb")
+                        }
                     }
                 }
             }
