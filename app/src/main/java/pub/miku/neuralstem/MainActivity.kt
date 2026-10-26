@@ -756,7 +756,46 @@ class MainActivity : ComponentActivity() {
                                 step("❌ 找不到 m4a 文件")
                                 return@launch
                             }
-                            step("1. 源文件：${File(path).name}")
+                            val srcName = File(path).name
+                            step("1. 源文件：$srcName")
+
+                            // ---- 缓存命中检查 ----
+                            // 用 Shizuku 拿 size+mtime（App 无权限直读私有目录）
+                            val importerCls = runCatching {
+                                Class.forName("pub.miku.neuralstem.experimental.ncm.NcmImporter")
+                            }.getOrNull()
+                            val importerInst = importerCls?.getField("INSTANCE")?.get(null)
+                            val stat = importerCls?.let {
+                                runCatching {
+                                    it.getMethod("statFor", String::class.java)
+                                        .invoke(importerInst, path) as? LongArray
+                                }.getOrNull()
+                            }
+                            val cacheCls = Class.forName(
+                                "pub.miku.neuralstem.experimental.ncm.Avs3PcmCache",
+                            )
+                            val cacheInst = cacheCls.getField("INSTANCE").get(null)
+                            var cacheKey: String? = null
+                            if (stat != null && stat.size >= 2) {
+                                cacheKey = cacheCls.getMethod(
+                                    "keyFor", String::class.java,
+                                    Long::class.javaPrimitiveType, Long::class.javaPrimitiveType,
+                                ).invoke(cacheInst, path, stat[0], stat[1]) as String
+                                val hit = cacheCls.getMethod(
+                                    "get", android.content.Context::class.java, String::class.java,
+                                ).invoke(cacheInst, application, cacheKey) as? File
+                                if (hit != null) {
+                                    step("2. ✅ 缓存命中：${hit.name}（${hit.length() / 1_048_576.0}MB）—— 跳过解码")
+                                    step("   ⏱ 省下约 ${hit.length() / 1_048_576.0 / 46.0 * 42}秒 解码时间")
+                                    // 直接存 Store，模拟点播
+                                    step("3. uri = avs3pcm://$cacheKey（下次可直接播）")
+                                    step("\n—— 缓存直接用原 WAV 文件，无需重新解码 ——")
+                                    return@launch
+                                }
+                                step("2. 缓存未命中（key=${cacheKey}），开始解码")
+                            } else {
+                                step("2. 拿不到 size/mtime（Shizuku？），跳过缓存，直接解码")
+                            }
 
                             // 2) 通过 Shizuku 拉回来（私有目录不能直读）
                             val bytes = runCatching {
@@ -851,31 +890,52 @@ class MainActivity : ComponentActivity() {
                                 step("5. 解码完成：${ms}ms，源 ${srcCh}ch → 输出 ${ch}ch")
                                 step("   pcm=${pcm.size / 1_048_576.0}MB frames=$frames dur=${outDur}ms skipped=$skipped")
 
-                                // 6) 写 WAV 供 Mac 侧验证音质
-                                //   （不走 WavIo：那是 Float/frame 导向的流式接口，
-                                //     这里直接写 44 字节头 + 裸 PCM16 更直白。）
-                                val wav = File(filesDir, "avs3_stereo.wav")
-                                wav.outputStream().use { out ->
-                                    val hdr = java.nio.ByteBuffer.allocate(44)
-                                        .order(java.nio.ByteOrder.LITTLE_ENDIAN)
-                                    val byteRate = 44100 * ch * 2
-                                    hdr.put("RIFF".toByteArray(Charsets.US_ASCII))
-                                    hdr.putInt(36 + pcm.size)
-                                    hdr.put("WAVE".toByteArray(Charsets.US_ASCII))
-                                    hdr.put("fmt ".toByteArray(Charsets.US_ASCII))
-                                    hdr.putInt(16)
-                                    hdr.putShort(1)
-                                    hdr.putShort(ch.toShort())
-                                    hdr.putInt(44100)
-                                    hdr.putInt(byteRate)
-                                    hdr.putShort((ch * 2).toShort())
-                                    hdr.putShort(16)
-                                    hdr.put("data".toByteArray(Charsets.US_ASCII))
-                                    hdr.putInt(pcm.size)
-                                    out.write(hdr.array())
-                                    out.write(pcm)
+                                // 6) 拼 WAV（同时用于：磁盘缓存 + Mac 侧听感验证）
+                                //   走 Avs3WavWriter：头拼接只写一份，避免三处各写一套算错
+                                val wavBytes = runCatching {
+                                    val wcls = Class.forName(
+                                        "pub.miku.neuralstem.experimental.ncm.Avs3WavWriter",
+                                    )
+                                    val winst = wcls.getField("INSTANCE").get(null)
+                                    wcls.getMethod(
+                                        "toWavBytes", ByteArray::class.java,
+                                        Int::class.javaPrimitiveType,
+                                        Int::class.javaPrimitiveType,
+                                    ).invoke(winst, pcm, 44100, ch) as ByteArray
+                                }.getOrNull()
+                                if (wavBytes == null) {
+                                    step("❌ WAV 拼接失败")
+                                    return@launch
                                 }
-                                step("6. WAV → ${wav.name}（${wav.length() / 1_048_576.0}MB）")
+                                val wav = File(filesDir, "avs3_stereo.wav")
+                                wav.writeBytes(wavBytes)
+                                step("6. WAV → ${wav.name}（${wavBytes.size / 1_048_576.0}MB）")
+
+                                // 6b) 写入磁盘缓存
+                                if (cacheKey != null) {
+                                    val limitBytes = SettingsRepository(application)
+                                        .decodeCacheLimitBytes()
+                                    val cached = runCatching {
+                                        cacheCls.getMethod(
+                                            "put",
+                                            android.content.Context::class.java,
+                                            String::class.java, ByteArray::class.java,
+                                            Long::class.javaPrimitiveType,
+                                        ).invoke(cacheInst, application, cacheKey, wavBytes, limitBytes)
+                                            as? File
+                                    }.getOrNull()
+                                    if (cached != null) {
+                                        val used = cacheCls.getMethod(
+                                            "usedBytes", android.content.Context::class.java,
+                                        ).invoke(cacheInst, application) as Long
+                                        step(
+                                            "6b. 已写入缓存（总占用 ${used / 1_048_576.0}MB / " +
+                                                "上限 ${limitBytes / 1_073_741_824}GB）",
+                                        )
+                                    } else {
+                                        step("6b. ⚠ 缓存写入失败")
+                                    }
+                                }
 
                                 // 7) 存入 Store，拿 uri（下一步接播放器用）
                                 val scls = Class.forName(

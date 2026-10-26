@@ -360,6 +360,25 @@ object NcmImporter {
     }.getOrDefault(ByteArray(0))
 
     /**
+     * 取文件的「大小 + 修改时间」（秒），用于生成缓存键。
+     *
+     * 源文件在网易云私有目录，App 无权限直接 `File` 读，
+     * 所以只能借 Shizuku 跑 `stat`。
+     *
+     * 用 `stat -c '%s %Y'`：`%s`=字节数，`%Y`=修改时间（epoch 秒）。
+     *
+     * @return `[size, mtimeSec]`；失败返回 null（调用方跳过缓存）
+     */
+    fun statFor(path: String): LongArray? = runCatching {
+        val out = sh("stat -c '%s %Y' \"$path\" 2>/dev/null").trim()
+        val parts = out.split(' ')
+        if (parts.size < 2) return@runCatching null
+        val size = parts[0].toLongOrNull() ?: return@runCatching null
+        val mtime = parts[1].toLongOrNull() ?: return@runCatching null
+        longArrayOf(size, mtime)
+    }.getOrNull()
+
+    /**
      * 把指定的 NCM 复制到**本应用的外部私有目录**。
      *
      * @param files 源绝对路径列表
