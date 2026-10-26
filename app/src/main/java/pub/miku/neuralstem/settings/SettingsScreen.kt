@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -15,8 +16,10 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -73,7 +76,7 @@ import pub.miku.neuralstem.spike.TierRegistry
  */
 
 /** 设置页内部的页面。 */
-private enum class SettingsPage { ROOT, MODELS, POLICY, NCM }
+private enum class SettingsPage { ROOT, MODELS, POLICY, NCM, CACHE }
 
 @Composable
 fun SettingsScreen(
@@ -132,6 +135,11 @@ fun SettingsScreen(
                 }
             },
         )
+        // ★解码缓存页（仅 with_ncm 构建 —— 没有 AVS3 解码器就没有解码缓存）。
+        SettingsPage.CACHE -> DecodeCacheScreen(
+            modifier = modifier,
+            onBack = { page = SettingsPage.ROOT },
+        )
         SettingsPage.ROOT -> SettingsRoot(
             modifier = modifier,
             vm = vm,
@@ -140,6 +148,11 @@ fun SettingsScreen(
             onOpenPolicy = { page = SettingsPage.POLICY },
             onOpenNcm = if (pub.miku.neuralstem.BuildConfig.WITH_NCM) {
                 { page = SettingsPage.NCM }
+            } else {
+                null
+            },
+            onOpenCache = if (pub.miku.neuralstem.BuildConfig.WITH_NCM) {
+                { page = SettingsPage.CACHE }
             } else {
                 null
             },
@@ -156,6 +169,8 @@ private fun SettingsRoot(
     onOpenPolicy: () -> Unit,
     /** ★NCM 导入入口；null = 不显示（默认构建 / 未启用 NCM）。 */
     onOpenNcm: (() -> Unit)? = null,
+    /** ★解码缓存入口；null = 不显示（没 AVS3 解码器就没缓存）。 */
+    onOpenCache: (() -> Unit)? = null,
 ) {
     val ctx = LocalContext.current
 
@@ -285,6 +300,16 @@ private fun SettingsRoot(
                 title = "NCM 导入",
                 subtitle = "从网易云音乐导入加密的 .ncm 文件（需 Shizuku）",
                 onClick = onOpenNcm,
+            )
+        }
+
+        // ---- ▸ 解码缓存（仅 with_ncm 构建）----
+        if (onOpenCache != null) {
+            HorizontalDivider()
+            EntryRow(
+                title = "解码缓存",
+                subtitle = "AVS3 曲目的解码结果缓存，决定占用空间与预解码数量",
+                onClick = onOpenCache,
             )
         }
 
@@ -443,6 +468,181 @@ internal fun EdgeSeparationSetting() {
             stringResource(R.string.settings_edge_sep_hint),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/**
+ * ★解码缓存设置页（仅 `-Pwith_ncm=true` 构建）。
+ *
+ * ## 为何要单独一级页
+ * 两个参数（缓存上限 1–4GB、预解码数量 0–5）都直接影响**磁盘占用**，
+ * 需要一定的文字解释（一首 4 分钟歌 ≈ 42MB），塞在 ROOT 里会很难看。
+ *
+ * ## 为何不提供“精确数值”输入
+ * 用户真正关心的是「大概占多少空间」，不是一个字节数。
+ * 四档按钮（1/2/3/4 GB）一目了然，也避免输错。
+ *
+ * ## 调小档位不需要重置 App
+ * 下次写入缓存时会自动按 LRU 淘汰到新上限以下；
+ * 想立即释放可以点下面的「清除解码缓存」。
+ */
+@Composable
+private fun DecodeCacheScreen(modifier: Modifier = Modifier, onBack: () -> Unit) {
+    val ctx = LocalContext.current
+    val repo = remember { SettingsRepository(ctx.applicationContext as Application) }
+
+    var gb by remember { mutableIntStateOf(repo.decodeCacheGb) }
+    var pre by remember { mutableIntStateOf(repo.preDecodeCount) }
+    // 缓存实现只在 ncm 构建里，用反射读（main 源集不能直接引用 ncm 类）。
+    var usedMb by remember { mutableStateOf(0.0) }
+    var fileCount by remember { mutableIntStateOf(0) }
+    var showClearConfirm by remember { mutableStateOf(false) }
+
+    // 每次都重新统计（进页 + 清空后）
+    fun refreshUsage() {
+        runCatching {
+            val cls = Class.forName("pub.miku.neuralstem.experimental.ncm.Avs3PcmCache")
+            val inst = cls.getField("INSTANCE").get(null)
+            val used = cls.getMethod("usedBytes", android.content.Context::class.java)
+                .invoke(inst, ctx.applicationContext) as Long
+            val list = cls.getMethod("listCached", android.content.Context::class.java)
+                .invoke(inst, ctx.applicationContext) as List<*>
+            usedMb = used / 1_048_576.0
+            fileCount = list.size
+        }
+    }
+
+    LaunchedEffect(Unit) { refreshUsage() }
+
+    // ★沿用 ModelLibraryScreen 的二级页约定：**不套 Scaffold / TopAppBar**。
+    //   宿主 AppShell 已经算过一次 insets，再套一层会被当成“新窗口”重算，
+    //   内容区内推两次（横屏下实测会很惨）。二级页只负责「标题行 + 内容」。
+    Column(modifier = modifier.fillMaxSize()) {
+        // 顶部标题行（等价 TopAppBar，但不参与 insets 计算）
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            // 零图标依赖：用文本字形做返回
+            TextButton(onClick = onBack) { Text("‹ 返回") }
+            Text(
+                "解码缓存",
+                style = MaterialTheme.typography.titleLarge,
+                modifier = Modifier.padding(start = 8.dp),
+            )
+        }
+
+        Column(
+            Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Text(
+                "AVS3（av3a）音频需要先解码才能播放，一首 4 分钟的歌约需 30–40 秒。" +
+                    "解码结果会存成 WAV，下次打开即可秒开。",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+
+            HorizontalDivider()
+
+            // ---- 缓存上限 ----
+            Text("缓存占用上限", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "一首 4 分钟的歌约 42MB。调小后会按「最久未使用」自动淘汰旧文件，" +
+                    "不需要重装 App。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                for (v in SettingsRepository.DECODE_CACHE_GB_MIN..
+                    SettingsRepository.DECODE_CACHE_GB_MAX) {
+                    FilterChip(
+                        selected = gb == v,
+                        onClick = {
+                            gb = v
+                            repo.decodeCacheGb = v
+                        },
+                        label = { Text("${v} GB") },
+                    )
+                }
+            }
+
+            HorizontalDivider()
+
+            // ---- 预解码数量 ----
+            Text("预解码后续歌曲", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "播放时提前把后面几首解好，避免自动切歌时静音等待。" +
+                    "数量越大占用磁盘越多（每首约 42MB）。0 = 关闭。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            // ★用 FlowRow 自动换行：6 个档（关/1..5首）在一行排不下，
+            //   固定 Row 会把最后一个挤出屏幕（实测 720px 宽时 "5 首" 被切掉）。
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                for (v in SettingsRepository.PREDECODE_COUNT_MIN..
+                    SettingsRepository.PREDECODE_COUNT_MAX) {
+                    FilterChip(
+                        selected = pre == v,
+                        onClick = {
+                            pre = v
+                            repo.preDecodeCount = v
+                        },
+                        label = { Text(if (v == 0) "关" else "$v 首") },
+                    )
+                }
+            }
+
+            HorizontalDivider()
+
+            // ---- 当前占用 ----
+            Text("当前占用", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "${"%.1f".format(usedMb)} MB ・ $fileCount 个文件" +
+                    "（上限 ${gb} GB）",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { refreshUsage() }) { Text("刷新") }
+                OutlinedButton(
+                    onClick = { showClearConfirm = true },
+                    enabled = fileCount > 0,
+                ) { Text("清除解码缓存") }
+            }
+        }
+    }
+
+    if (showClearConfirm) {
+        AlertDialog(
+            onDismissRequest = { showClearConfirm = false },
+            title = { Text("清除解码缓存？") },
+            text = {
+                Text(
+                    "将删除全部 ${fileCount} 个缓存文件（${"%.1f".format(usedMb)} MB）。" +
+                        "下次播放 AVS3 曲目需要重新解码（每首约 30–40 秒）。",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    runCatching {
+                        val cls = Class.forName("pub.miku.neuralstem.experimental.ncm.Avs3PcmCache")
+                        val inst = cls.getField("INSTANCE").get(null)
+                        cls.getMethod("clear", android.content.Context::class.java)
+                            .invoke(inst, ctx.applicationContext)
+                    }
+                    showClearConfirm = false
+                    refreshUsage()
+                }) { Text("清除") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearConfirm = false }) { Text("取消") }
+            },
         )
     }
 }
