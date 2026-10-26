@@ -17,6 +17,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
@@ -122,9 +123,16 @@ fun DeckView(
 
     // ★ 平滑位置：锚点外推 + 重锚突变的逐帧“缓追”（见 SmoothPosition.kt）→ 不卡不跳。
     //   resetKey = 曲名+时长：切歌/重导入时重置（否则旧歌状态带入新歌 → 波形错乱）。
+    //
+    //   ★2026-10-26：**snapOnSeek = false**。
+    //   转盘只有“点外环 → seek”（没有拖动过程），
+    //   用户要的正是“转盘一圈圈平滑转到目标”的磁带倒带感。
+    //   若也直接对齐，转盘会硬跳一下，手感全没。
+    //   （进度条则相反：那里有拖动参照，平滑反而会先冲高→用 snapOnSeek=true）
     val smoothPos = rememberSmoothPosition(
         anchorFlow,
         resetKey = songName to progressState.value.durationMs,
+        snapOnSeek = false,
     )
 
     // ★ 每帧失效（驱动连续重绘）；实际位置由平滑值给出（见下方 draw）。
