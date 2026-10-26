@@ -757,12 +757,23 @@ class MainActivity : ComponentActivity() {
                             step("   " + n + " -> " + mark)
                         }
 
-                        // 验证 SafPathResolver 的 needsRealPath
-                        step("\n4. 需要真实路径的：")
+                        // ★2026-10-26：旧的「转真实路径」策略已废弃。
+                        //   本包 targetSdk=37（Android 14+ 强制分区存储），SAF 的 tree 授权
+                        //   只对 content:// 通道有效，转成 file:// 绝对路径后必然 EACCES。
+                        //   现在一律保留 content://，读取走 MediaSourceReader。
+                        step("\n4. uri 策略（一律 content://）：")
                         for (n in listOf("a.ncm", "b.m4a", "c.mp3")) {
-                            val ok = pub.miku.neuralstem.playlist.SafPathResolver.needsRealPath(n)
-                            val mark = if (ok) "需解析成 file://" else "content:// 即可"
-                            step("   " + n + " -> " + mark)
+                            step("   " + n + " -> 保留 content://（读走 MediaSourceReader）")
+                        }
+
+                        // 验证 SafPathResolver.toContentUri 的逆运算（仅用于旧数据迁移）
+                        step("\n5. 旧数据迁移（file:// -> content://）：")
+                        for (p in listOf(
+                            "/storage/emulated/0/Download/a.ncm",
+                            "/storage/1A2B-3C4D/Music/b.m4a",
+                        )) {
+                            val u = pub.miku.neuralstem.playlist.SafPathResolver.toContentUri(p)
+                            step("   " + p + "\n     -> " + (u?.toString() ?: "null"))
                         }
                     }.onFailure { step("ERR: " + it.javaClass.simpleName + ": " + it.message) }
                     Log.i("TestCmd", "IMPORTTEST\n" + sb)

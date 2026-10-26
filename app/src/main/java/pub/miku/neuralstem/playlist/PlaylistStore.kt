@@ -54,13 +54,62 @@ class PlaylistStore(app: Application) {
      */
     fun load(): List<Playlist> {
         val raw = readRaw()
-        val migrated = ensureDefault(raw)
+        val withDefault = ensureDefault(raw)
+        val migrated = migrateUnreadableFileUris(withDefault)
         // ★ 只要规范化**产生了任何变化**（新增默认歌单，或改动了字段）就落盘，
         //   否则会出现“内存已修正、文件仍是旧值”的不一致（下次又读到旧的）。
         if (migrated != raw) {
             save(migrated)
         }
         return migrated
+    }
+
+    /**
+     * ★将旧版存下的「读不了的 `file://` 绝对路径」改写成 `content://`。
+     *
+     * ## 为何需要（2026-10-26）
+     * 旧版 SAF 导入会把 `content://` 转成 `/storage/emulated/0/...` 存进歌单。
+     * 但本包 `targetSdk=37`（Android 14+ 强制分区存储）：
+     * SAF 的 `tree/...` 授权**只对 `content://` 通道有效**，转绝对路径后必然 `EACCES`
+     * → 用户看到的就是“歌在歌单里，但一点就跳过”。
+     *
+     * ⇒ 修复后读取走 [MediaSourceReader]（`ContentResolver`），但**旧数据不会自动变好**，
+     * 所以在这里做一次性迁移。
+     *
+     * ## 只迁移「真的读不了」的
+     * 能读的 `file://`（App 私有目录、缓存 WAV、用户的旧导入）**不动**：
+     * 它们能正常工作，改了反而多一次 ContentResolver 开销。
+     * 另外 `netease://` / `ncm://` / `content://` 一律不动。
+     */
+    private fun migrateUnreadableFileUris(list: List<Playlist>): List<Playlist> {
+        var any = false
+        val out = list.map { p ->
+            val fixedTracks = p.tracks.map { t ->
+                val nu = migrateUri(t.uri)
+                if (nu != null) {
+                    any = true
+                    t.copy(uri = nu)
+                } else t
+            }
+            // 进度记忆里的 uri 同步改（否则“继续播放”会指向失效条目）
+            val fixedLast = p.lastPlayedUri?.let { migrateUri(it) }
+            if (fixedLast != null) any = true
+            if (fixedTracks == p.tracks && fixedLast == null) p
+            else p.copy(tracks = fixedTracks, lastPlayedUri = fixedLast ?: p.lastPlayedUri)
+        }
+        if (any) Log.i(TAG, "migrate: 已把部分 file:// 条目改写为 content://")
+        return out
+    }
+
+    /** @return 改写后的 uri；不需要/不能改写时返回 null */
+    private fun migrateUri(uri: String): String? {
+        if (!uri.startsWith("file://")) return null
+        val path = runCatching { java.net.URI(uri).path }.getOrNull() ?: return null
+        val f = File(path)
+        // 能读就不动 —— 它本来就工作正常
+        if (f.exists() && f.canRead()) return null
+        val content = SafPathResolver.toContentUri(path) ?: return null
+        return content.toString()
     }
 
     private fun readRaw(): List<Playlist> {

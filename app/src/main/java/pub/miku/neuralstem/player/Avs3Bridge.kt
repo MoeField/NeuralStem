@@ -1,6 +1,7 @@
 package pub.miku.neuralstem.player
 
 import android.app.Application
+import android.content.Context
 import android.net.Uri
 import android.util.Log
 
@@ -85,7 +86,7 @@ object Avs3Bridge {
      */
     fun prepareNcm(
         app: Application,
-        srcPath: String,
+        srcUri: Uri,
         onProgress: ((Int) -> Unit)?,
         shouldCancel: () -> Boolean,
     ): Prepared {
@@ -119,11 +120,11 @@ object Avs3Bridge {
             val res = cls.getMethod(
                 "prepare",
                 Application::class.java,
-                String::class.java,
+                Uri::class.java,
                 progressCls,
                 kotlin.jvm.functions.Function0::class.java,
             ).invoke(
-                inst, app, srcPath, progressProxy,
+                inst, app, srcUri, progressProxy,
                 object : kotlin.jvm.functions.Function0<Boolean> {
                     override fun invoke(): Boolean = shouldCancel()
                 },
@@ -150,13 +151,16 @@ object Avs3Bridge {
      * 注意**不能只看扩展名** —— 实测 220 个 m4a 里 219 个是 av3a，
      * 但也有真 AAC 的 m4a，那些应该走原生路径（更快、无需解码）。
      */
-    fun shouldIntercept(uri: Uri): Boolean {
+    fun shouldIntercept(context: Context, uri: Uri): Boolean {
         if (!available) return false
+        // 先按名字快速筛（非 .m4a 直接 false，省一次 IO）
+        val name = uri.lastPathSegment ?: uri.toString()
+        if (!name.lowercase().endsWith(".m4a")) return false
         return runCatching {
             val cls = Class.forName(CLS_COORDINATOR)
             val inst = cls.getField("INSTANCE").get(null)
-            cls.getMethod("isAvs3Source", Uri::class.java)
-                .invoke(inst, uri) as? Boolean ?: false
+            cls.getMethod("isAvs3Source", Context::class.java, Uri::class.java)
+                .invoke(inst, context, uri) as? Boolean ?: false
         }.onFailure {
             Log.w(TAG, "isAvs3Source 反射失败", it)
         }.getOrDefault(false)
@@ -173,15 +177,14 @@ object Avs3Bridge {
      *
      * ⚠️ **阻塞调用**（解码要几十秒），必须在 `Dispatchers.IO` 里跑。
      *
-     * @param onProgress (标识, 0..100)。标识用的是**源路径**，
+     * @param onProgress (标识, 0..100)。标识用的是**源 uri 字符串**，
      *        与 ncm 侧 `Progress.onProgress(uri: String, ...)` 的约定一致
-     *        （那边用 path 当 key，因为缓存键由 path 算）。
+     *        （那边用 uri 当 key，因为缓存键由 uri 算）。
      * @param shouldCancel 每帧询问一次，返回 true 就中止
      */
     fun prepare(
         app: Application,
         srcUri: Uri,
-        srcPath: String,
         onProgress: ((String, Int) -> Unit)?,
         shouldCancel: () -> Boolean,
     ): Prepared {
@@ -217,11 +220,10 @@ object Avs3Bridge {
                 "prepare",
                 Application::class.java,
                 Uri::class.java,
-                String::class.java,
                 progressCls,
                 kotlin.jvm.functions.Function0::class.java,
             ).invoke(
-                inst, app, srcUri, srcPath, progressProxy,
+                inst, app, srcUri, progressProxy,
                 object : kotlin.jvm.functions.Function0<Boolean> {
                     override fun invoke(): Boolean = shouldCancel()
                 },

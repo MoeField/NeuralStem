@@ -60,16 +60,66 @@ object SafPathResolver {
     }
 
     /**
+     * [resolve] 的逆运算：把绝对路径还原成 SAF 的 `content://` document uri。
+     *
+     * ## 用途（只有一个）
+     * **迁移旧歌单数据**。2026-10-26 之前的版本会把 SAF 导入的文件存成
+     * `file:///storage/emulated/0/...`，而本包 `targetSdk=37` 下这类 uri
+     * **必然读不了**（`EACCES`）。迁移时用本函数把它们还原成 `content://`。
+     * 新的导入路径**不再调用**本函数（直接存 `content://`）。
+     *
+     * ## 支持的前缀
+     * - `/storage/emulated/0/X` → `primary:X`（内置存储）
+     * - `/storage/1A2B-3C4D/X` → `1A2B-3C4D:X`（外置 SD 卡）
+     *
+     * @return 还原后的 uri；不在上述前缀下返回 null
+     */
+    fun toContentUri(path: String): Uri? {
+        val docId = when {
+            path.startsWith("/storage/emulated/0/") ->
+                "primary:" + path.removePrefix("/storage/emulated/0/")
+
+            path.startsWith("/storage/") -> {
+                // /storage/<volume>/<rest> → <volume>:<rest>
+                val rest = path.removePrefix("/storage/")
+                val slash = rest.indexOf('/')
+                if (slash <= 0) return null
+                val volume = rest.substring(0, slash)
+                // emulated 已被上面处理；剩下的 "1A2B-3C4D" 类型才能这么转
+                if (volume == "emulated" || volume == "self") return null
+                "$volume:" + rest.substring(slash + 1)
+            }
+
+            else -> return null
+        }
+
+        // ★必须整体编码成**单个 path segment**：
+        //   document uri 的形式是 document/<URL编码的docId>，docId 里的 `/` 要编码成 %2F。
+        return runCatching {
+            Uri.Builder()
+                .scheme("content")
+                .authority(AUTHORITY_EXTERNAL_STORAGE)
+                .appendPath("document")
+                .appendPath(docId)
+                .build()
+        }.getOrNull()
+    }
+
+    /**
      * 该文件是否**需要真实路径才能播**（AVS3 / NCM）。
      *
-     * 对这两类，导入时就要尽量解析成可播 uri：
-     * - `.m4a` → 可能是 AVS3（占 99%），保守地都算上
-     * - `.ncm` → 必然需要
-     *
-     * 其余（mp3/flac/wav/ogg/aac）用 `content://` 直接播即可。
+     * @deprecated 2026-10-26：**这个判断本身就是 bug 的根源**。
+     * 本包 `targetSdk=37`（Android 14+ 强制分区存储）下，SAF 的 `tree/...` 授权
+     * 只对 `content://` 通道有效，转成 `file://` 绝对路径后**必然 `EACCES`**。
+     * 导入路径应**一律保留 `content://`**，读取走 [MediaSourceReader]。
+     * 保留本函数仅为兼容尚未清理的调用点。
      */
+    @Deprecated("SAF 导入应一律保留 content://；转绝对路径在 Android 14+ 必然 EACCES")
     fun needsRealPath(name: String): Boolean {
         val n = name.lowercase()
         return n.endsWith(".m4a") || n.endsWith(".ncm")
     }
+
+    private const val AUTHORITY_EXTERNAL_STORAGE =
+        "com.android.externalstorage.documents"
 }
