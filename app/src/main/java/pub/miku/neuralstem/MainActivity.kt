@@ -921,14 +921,26 @@ class MainActivity : ComponentActivity() {
         dec: Any,
         headerBytes: Int,
     ) {
-        val sampleRate = 48000
+        /*
+         * ★采样率必须是 44100（2026-10-26 实测）：
+         * `avs3SamplingRateTable` = {192000, 96000, 48000, 44100, 32000, ...}，
+         * 本文件的 samplingRateIdx=3 → **44100**。
+         * 之前硬编码 48000 → 导出时长被拉长 8.8%（音高偏低）。
+         */
+        val sampleRate = 44100
         val chGuess = guessChannels((pcmBytes / frames.size).toInt())
-        // 只取前 2 秒（避免文件过大），不足则全取
-        val maxBytes = sampleRate * chGuess * 2 * 2
-        val pcm = java.io.ByteArrayOutputStream()
-        var total = 0
+        // ★整首导出（之前只取 2 秒，不够判断是不是这首歌）。
+        //   一首 2分10秒 的 12ch/44100 约 **138MB**。
+        //   ⚠ 不能用 ByteArrayOutputStream 累加：它扩容要 copy + 翻倍，
+        //   130MB 峰值翻倍很容易 OOM。改为「先按已知帧数算好精确大小，
+        //   再一次性分配 + 用 System.arraycopy 填」。
+        val perFrame = (pcmBytes / frames.size).toInt()   // 每帧 PCM 字节
+        if (perFrame <= 0) return
+        val total = perFrame * frames.size
+        if (total <= 0) return
+        val buf = ByteArray(total)
+        var off = 0
         for (s in frames) {
-            if (total >= maxBytes) break
             // ★同样要跳帧头（见 decodeAndReport 里的说明）
             val payload = if (headerBytes > 0 && s.size > headerBytes) {
                 s.copyOfRange(headerBytes, s.size)
@@ -937,12 +949,14 @@ class MainActivity : ComponentActivity() {
             }
             val chunk = decodeAll.invoke(dec, payload) as ByteArray?
             if (chunk == null || chunk.isEmpty()) continue
-            pcm.write(chunk)
-            total += chunk.size
+            val n = minOf(chunk.size, total - off)
+            if (n <= 0) break
+            System.arraycopy(chunk, 0, buf, off, n)
+            off += n
         }
-        if (total == 0) return
+        if (off == 0) return
         File(filesDir, "avs3_probe.wav").outputStream().use { out ->
-            val dataLen = total
+            val dataLen = off
             val hdr = java.nio.ByteBuffer.allocate(44).order(java.nio.ByteOrder.LITTLE_ENDIAN)
             hdr.put("RIFF".toByteArray(Charsets.US_ASCII))
             hdr.putInt(36 + dataLen)
@@ -958,9 +972,9 @@ class MainActivity : ComponentActivity() {
             hdr.put("data".toByteArray(Charsets.US_ASCII))
             hdr.putInt(dataLen)
             out.write(hdr.array())
-            pcm.writeTo(out)
+            out.write(buf, 0, off)
         }
-        Log.i("TestCmd", "avs3_probe.wav: $total bytes, ${chGuess}ch@$sampleRate")
+        Log.i("TestCmd", "avs3_probe.wav: $off bytes, ${chGuess}ch@$sampleRate")
     }
 
     /**
