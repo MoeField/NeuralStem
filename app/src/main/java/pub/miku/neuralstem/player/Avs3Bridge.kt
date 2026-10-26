@@ -69,6 +69,29 @@ object Avs3Bridge {
     /** 这个 uri 是不是 NCM 播放源（`ncm://<key>`，解密后的字节）。 */
     fun isNcmUri(uri: Uri): Boolean = uri.scheme == "ncm"
 
+    /**
+     * ★`ncm://<key>` → 解密后的音频字节（flac/mp3/m4a 原始容器）；没有返回 null。
+     *
+     * ## 用途（2026-10-26）
+     * 波形提取需要拿 PCM。`ncm://` 是自定义 scheme，`MediaExtractor` 不认识
+     * （真机 16ms 就挂 `Failed to instantiate extractor`）。
+     * 这里把 `NcmPlaybackStore` 里已解好的字节取出来，包成 `MediaDataSource` 喂给它。
+     *
+     * ## 注意
+     * 字节是**原始容器**（flac/mp3/m4a），不是 PCM —— 交给 MediaExtractor 正好。
+     * 若 store 已被回收（LRU 2 条）返回 null，调用方应优雅降级。
+     */
+    fun ncmBytesOf(uri: Uri): ByteArray? {
+        val key = uri.host ?: return null
+        return runCatching {
+            val cls = Class.forName("pub.miku.neuralstem.experimental.ncm.NcmPlaybackStore")
+            val inst = cls.getField("INSTANCE").get(null)
+            cls.getMethod("get", String::class.java).invoke(inst, key) as? ByteArray
+        }.onFailure {
+            Log.w(TAG, "ncmBytesOf 反射失败 key=$key", it)
+        }.getOrNull()
+    }
+
     /** NCM 解密结果里记录的实际格式（`flac` / `mp3` / `m4a`）；没有返回 null。 */
     fun ncmFormatOf(uri: Uri): String? {
         val key = uri.host ?: return null

@@ -3,6 +3,7 @@ package pub.miku.neuralstem.player
 import android.content.Context
 import android.media.AudioFormat
 import android.media.MediaCodec
+import android.media.MediaDataSource
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.net.Uri
@@ -56,9 +57,54 @@ object Media3DecodeBridge {
         val extractor = MediaExtractor()
         try {
             extractor.setDataSource(context, uri, null)
+            return decodeStreamingFrom(extractor, uri.toString(), onChunk)
+        } finally {
+            extractor.release()
+        }
+    }
 
-            // 找音频轨
-            var trackIndex = -1
+    /**
+     * ★流式解码「**内存字节**」源（2026-10-26）。
+     *
+     * ## 为何需要
+     * `ncm://<key>` 是自定义 scheme，[MediaExtractor.setDataSource] **不认识** →
+     * 波形提取直接 `IOException: Failed to instantiate extractor`（真机实测 16ms 就挂）。
+     * 而 NCM 解密后的字节就存在 `NcmPlaybackStore` 里（flac/mp3/m4a 原始容器），
+     * 直接喂给 `MediaDataSource` 即可正常解码。
+     *
+     * 与 uri 版本共用同一个解码循环（[decodeStreamingFrom]），不复制粘贴。
+     *
+     * @param bytes 整段音频字节（如 NCM 解密产物）
+     * @return 是否跑完（false = 被 onChunk 取消）
+     */
+    fun decodeToPcmStreaming(
+        bytes: ByteArray,
+        onChunk: (FloatArray, Int, Int) -> Boolean,
+    ): Boolean {
+        val extractor = MediaExtractor()
+        try {
+            extractor.setDataSource(ByteArrayMediaSource(bytes))
+            return decodeStreamingFrom(extractor, "<bytes:${bytes.size}>", onChunk)
+        } finally {
+            extractor.release()
+        }
+    }
+
+    /**
+     * 解码循环（两个入口共用）。
+     *
+     * 调用方负责建/释放 `MediaExtractor`，本函数只负责选轨 + 解码 + 回调。
+     *
+     * @param label 仅用于日志/异常信息
+     * @return `outputDone`（**已真收到 EOS**）。靠 guard 熔断退出 = 未真解完。
+     */
+    private fun decodeStreamingFrom(
+        extractor: MediaExtractor,
+        label: String,
+        onChunk: (FloatArray, Int, Int) -> Boolean,
+    ): Boolean {
+        // 找音频轨
+        var trackIndex = -1
             var format: MediaFormat? = null
             for (i in 0 until extractor.trackCount) {
                 val f = extractor.getTrackFormat(i)
@@ -68,7 +114,7 @@ object Media3DecodeBridge {
                     break
                 }
             }
-            check(trackIndex >= 0) { "no audio track in $uri" }
+            check(trackIndex >= 0) { "no audio track in $label" }
             val mime = format!!.getString(MediaFormat.KEY_MIME)!!
             extractor.selectTrack(trackIndex)
 
@@ -141,9 +187,6 @@ object Media3DecodeBridge {
                 codec.stop()
                 codec.release()
             }
-        } finally {
-            extractor.release()
-        }
     }
 
     fun decodeToPcm(context: Context, uri: Uri): DecodedPcm {
@@ -248,6 +291,36 @@ object Media3DecodeBridge {
         } finally {
             extractor.release()
         }
+    }
+
+    /**
+     * ★把**内存字节**伪装成 [MediaDataSource]，交给 `MediaExtractor`。
+     *
+     * ## 为何需要
+     * `MediaExtractor` 只认「文件路径 / content uri / FileDescriptor / MediaDataSource」。
+     * NCM 解密后的音频在**内存**里（不在磁盘、也没有 uri），只能走 MediaDataSource。
+     *
+     * ## 为何不用写临时文件
+     * 原本可以写临时文件再解，但那要多一次 30MB 磁盘写 + 读（且要管清理）。
+     * MediaDataSource 是平台类（API 23+，与本项目 minSdk 一致），直接包一层更干净。
+     *
+     * ## 注意
+     * 本类是**只读**的：`readAt` 不支持越界（返回 -1 表示 EOF）。
+     */
+    private class ByteArrayMediaSource(
+        private val bytes: ByteArray,
+    ) : MediaDataSource() {
+        override fun readAt(position: Long, buffer: ByteArray, offset: Int, size: Int): Int {
+            if (position >= bytes.size) return -1
+            val remaining = bytes.size - position
+            val n = minOf(size.toLong(), remaining).toInt()
+            System.arraycopy(bytes, position.toInt(), buffer, offset, n)
+            return n
+        }
+
+        override fun getSize(): Long = bytes.size.toLong()
+
+        override fun close() { /* 无需释放（字节由调用方持有） */ }
     }
 
     private const val TAG = "Waveform"
