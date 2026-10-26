@@ -116,6 +116,47 @@ sealed interface QueueState {
 /** 队列中的一首曲（uri + 显示标题）。 */
 data class QueueTrack(val uri: String, val title: String)
 
+/**
+ * ★AVS3 解码会话（一次性任务，与 [SeparationTask] 平级）。
+ *
+ * ## 为什么需要它进状态机
+ * AVS3 解码是**异步且耗时**的（一首 4 分钟约 31 秒），
+ * 而 `doLoad()` 是同步的。如果让解码自己一个协程随便跑，
+ * 会出现「解完了才发现用户已经切走了」的竞态 —— 结果覆盖了错的曲目。
+ *
+ * 所以把它做成**单一真源**：
+ * - 当前正在为哪个 uri 解码、进度多少、是不是在收尾，全部只有这里说了算
+ * - 切歌时根据这个状态决定「立即取消」还是「让它收尾」
+ *
+ * ## 为何不做可续（不像分离那样用 manifest）
+ * 分离可以续，因为它按**帧区间**独立处理，写出去就永久有效。
+ * 但 AVS3 是**帧间预测**编码：解码器内部有 MDCT 重叠缓冲、
+ * 神经网络上下文状态，跳到第 N 帧续解会得到与连续解码**不一致**的结果
+ * （开头几百毫秒会出错）。⇒ 只能从头再解。
+ */
+sealed interface Avs3Decode {
+    /** 无解码任务。 */
+    data object Idle : Avs3Decode
+
+    /**
+     * 正在解码。
+     *
+     * @param uri 目标源 uri（用于判断「还是不是当前要播的那首」）
+     * @param percent 0..100
+     * @param finishing 是否已进入「收尾」阶段（用户切走了但进度 >80%，
+     *        让它跑完以保留缓存，代价是新歌多等几秒）
+     */
+    data class Running(
+        val uri: String,
+        val title: String,
+        val percent: Int,
+        val finishing: Boolean = false,
+    ) : Avs3Decode
+
+    /** 失败（解码器不可用 / 解码出错）。UI 展示后回到 [Idle]。 */
+    data class Failed(val uri: String, val message: String) : Avs3Decode
+}
+
 // ============================ 状态机 ============================
 
 /**
@@ -161,6 +202,10 @@ class SessionStateMachine(private val effects: Effects) {
         private set
 
     var separation: SeparationTask = SeparationTask.Idle
+        private set
+
+    /** ★AVS3 解码会话（与分离平级的一次性任务）。单一真源。 */
+    var avs3Decode: Avs3Decode = Avs3Decode.Idle
         private set
 
     /** ★R-a：播放队列（歌单=队列）。单一真源。 */
@@ -351,5 +396,93 @@ class SessionStateMachine(private val effects: Effects) {
         val d = separation as? SeparationTask.SeparationDone ?: return null
         separation = SeparationTask.Idle
         return d
+    }
+
+    // ==================== ★AVS3 解码会话 ====================
+
+    /**
+     * 请求开始解码某首曲。
+     *
+     * @return 上一个任务是否需要它**自行收尾**（true = 不要取消，让它跑完）。
+     *         调用方据返回值决定：true → 不取消旧协程；false → 立即取消。
+     *
+     * ## 为何返回值而不是直接取消
+     * 协程的取消只有持有 Job 的调用方能做，
+     * 状态机只提供**决策**、不持有协程 —— 保持纯逻辑，可 JVM 单测。
+     */
+    fun requestAvs3Decode(): Boolean {
+        val prev = avs3Decode
+        val letFinish = prev is Avs3Decode.Running &&
+            !prev.finishing &&
+            prev.percent >= AVS3_FINISH_THRESHOLD
+
+        // 旧任务进入「收尾」：只更新它自己，不阻挠新目标
+        avs3Decode = if (letFinish && prev is Avs3Decode.Running) {
+            prev.copy(finishing = true)
+        } else {
+            Avs3Decode.Idle
+        }
+        return letFinish
+    }
+
+    /**
+     * 真正开始执行解码（旧任务已处理完）。
+     *
+     * 与 [requestAvs3Decode] 分开：先决策旧任务，再启动新任务。
+     * 避免「已发起但还没开始」的假 Running 状态。
+     */
+    fun beginAvs3Decode(uri: String, title: String) {
+        avs3Decode = Avs3Decode.Running(uri, title, percent = 0)
+    }
+
+    /** 解码进度（只接受当前目标的进度，忽略已过期回调）。 */
+    fun onAvs3Progress(uri: String, percent: Int) {
+        val cur = avs3Decode as? Avs3Decode.Running ?: return
+        // ★防竞态的关键一行：目标已换 → 丢弃陈旧回调
+        if (cur.uri != uri) return
+        avs3Decode = cur.copy(percent = percent.coerceIn(0, 100))
+    }
+
+    /** 解码完成（写缓存后调用）。与目标不匹配的回调丢弃。 */
+    fun onAvs3Done(uri: String) {
+        val cur = avs3Decode as? Avs3Decode.Running ?: return
+        if (cur.uri != uri) return
+        avs3Decode = Avs3Decode.Idle
+    }
+
+    /** 解码失败。 */
+    fun onAvs3Failed(uri: String, message: String) {
+        val cur = avs3Decode
+        if (cur is Avs3Decode.Running && cur.uri != uri) return
+        avs3Decode = Avs3Decode.Failed(uri, message)
+    }
+
+    /** 清除失败态（UI 展示过后调）。 */
+    fun clearAvs3Fail() {
+        if (avs3Decode is Avs3Decode.Failed) avs3Decode = Avs3Decode.Idle
+    }
+
+    /** 取消当前解码（用户主动取消 / 退出播放）。 */
+    fun cancelAvs3Decode() {
+        avs3Decode = Avs3Decode.Idle
+    }
+
+    /** 当前是否正在为 [uri] 解码（用于避免重复发起）。 */
+    fun isDecodingFor(uri: String): Boolean =
+        (avs3Decode as? Avs3Decode.Running)?.uri == uri
+
+    companion object {
+        /**
+         * 解码进度的**收尾阈值**：超过它就不再「切歌即取消」，而是让它跑完。
+         *
+         * ## 为何是 80%
+         * 解码总共约 31 秒，80% = 还剩大约 6 秒。
+         * 到这个程度还强行杀掉，等于把已烧的 25 秒 CPU 全丢掉；
+         * 让它在后台跑完写进缓存，下次打开就是秒开。
+         * 代价：新歌最多晚 6 秒开始解码（而不是立刻）。
+         *
+         * 反过来，如果才解了 20% 就切走，硬跑完还要再等 25 秒 —— 那才是真浪费。
+         */
+        const val AVS3_FINISH_THRESHOLD = 80
     }
 }

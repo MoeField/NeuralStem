@@ -266,4 +266,141 @@ class SessionStateMachineTest {
         sm.clearQueue()
         assertTrue(sm.queue is QueueState.Empty)
     }
+
+    // ==================== ★AVS3 解码会话 ====================
+
+    /*
+     * 这一组测的是「切歌时旧解码怎么办」的决策逻辑。
+     * 决策错了会有两种后果，都很坑：
+     *  - 太早放弃 → 已烧的 CPU 白费，下次还得再等 31 秒
+     *  - 该放弃时不放弃 → 新歌白等一个注定要被丢弃的任务
+     */
+
+    @Test
+    fun `AVS3 初始为 Idle`() {
+        val (_, sm) = newSm()
+        assertTrue(sm.avs3Decode is Avs3Decode.Idle)
+    }
+
+    @Test
+    fun `AVS3 进度低于阈值时切歌 → 立即取消（不要求收尾）`() {
+        val (_, sm) = newSm()
+        sm.beginAvs3Decode("a", "A")
+        sm.onAvs3Progress("a", 50)
+
+        // 50% < 80% → 让它直接死，不要收尾
+        assertFalse(sm.requestAvs3Decode())
+        assertTrue(sm.avs3Decode is Avs3Decode.Idle)
+    }
+
+    @Test
+    fun `AVS3 进度达到阈值时切歌 → 要求旧任务收尾`() {
+        val (_, sm) = newSm()
+        sm.beginAvs3Decode("a", "A")
+        sm.onAvs3Progress("a", 85)
+
+        // 85% >= 80% → 让它跑完，能落缓存
+        assertTrue(sm.requestAvs3Decode())
+        val st = sm.avs3Decode
+        assertTrue(st is Avs3Decode.Running)
+        assertEquals(true, (st as Avs3Decode.Running).finishing)
+    }
+
+    @Test
+    fun `AVS3 刚好等于阈值也算收尾（边界）`() {
+        val (_, sm) = newSm()
+        sm.beginAvs3Decode("a", "A")
+        sm.onAvs3Progress("a", SessionStateMachine.AVS3_FINISH_THRESHOLD)
+        assertTrue(sm.requestAvs3Decode())
+    }
+
+    @Test
+    fun `AVS3 已在收尾时再切歌 → 不再重复要求收尾`() {
+        val (_, sm) = newSm()
+        sm.beginAvs3Decode("a", "A")
+        sm.onAvs3Progress("a", 90)
+        assertTrue(sm.requestAvs3Decode())      // 第一次：要求收尾
+
+        // 用户又切了一首。旧任务已在 finishing，不能再“收尾”一次。
+        assertFalse(sm.requestAvs3Decode())
+        assertTrue(sm.avs3Decode is Avs3Decode.Idle)
+    }
+
+    @Test
+    fun `AVS3 无任务时切歌 → 无需收尾`() {
+        val (_, sm) = newSm()
+        assertFalse(sm.requestAvs3Decode())
+    }
+
+    @Test
+    fun `AVS3 陈旧进度回调被丢弃（目标已换）`() {
+        val (_, sm) = newSm()
+        sm.beginAvs3Decode("a", "A")
+        // 目标已切到 b
+        sm.beginAvs3Decode("b", "B")
+        // a 的迟到回调不应污染 b 的进度
+        sm.onAvs3Progress("a", 99)
+        val st = sm.avs3Decode as Avs3Decode.Running
+        assertEquals("b", st.uri)
+        assertEquals(0, st.percent)
+    }
+
+    @Test
+    fun `AVS3 陈旧完成回调不会把新任务置为 Idle`() {
+        val (_, sm) = newSm()
+        sm.beginAvs3Decode("a", "A")
+        sm.beginAvs3Decode("b", "B")
+        sm.onAvs3Done("a")   // a 解完了（但它已经不是当前目标）
+        assertTrue(sm.avs3Decode is Avs3Decode.Running)
+        assertEquals("b", (sm.avs3Decode as Avs3Decode.Running).uri)
+    }
+
+    @Test
+    fun `AVS3 完成后回到 Idle`() {
+        val (_, sm) = newSm()
+        sm.beginAvs3Decode("a", "A")
+        sm.onAvs3Progress("a", 100)
+        sm.onAvs3Done("a")
+        assertTrue(sm.avs3Decode is Avs3Decode.Idle)
+    }
+
+    @Test
+    fun `AVS3 进度被钳在 0 到 100`() {
+        val (_, sm) = newSm()
+        sm.beginAvs3Decode("a", "A")
+        sm.onAvs3Progress("a", 500)
+        assertEquals(100, (sm.avs3Decode as Avs3Decode.Running).percent)
+        sm.onAvs3Progress("a", -20)
+        assertEquals(0, (sm.avs3Decode as Avs3Decode.Running).percent)
+    }
+
+    @Test
+    fun `AVS3 失败后可清除`() {
+        val (_, sm) = newSm()
+        sm.beginAvs3Decode("a", "A")
+        sm.onAvs3Failed("a", "解码器不可用")
+        assertTrue(sm.avs3Decode is Avs3Decode.Failed)
+        sm.clearAvs3Fail()
+        assertTrue(sm.avs3Decode is Avs3Decode.Idle)
+    }
+
+    @Test
+    fun `AVS3 isDecodingFor 只对当前目标为真`() {
+        val (_, sm) = newSm()
+        sm.beginAvs3Decode("a", "A")
+        assertTrue(sm.isDecodingFor("a"))
+        assertFalse(sm.isDecodingFor("b"))
+    }
+
+    @Test
+    fun `AVS3 解码不影响其他状态（多轨与队列独立）`() {
+        val (_, sm) = newSm()
+        sm.enterMultiTrack("p", listOf("p", "f"), listOf(1, 2))
+        sm.beginAvs3Decode("a", "A")
+        sm.onAvs3Progress("a", 50)
+        // 解码是独立任务，不该把多轨踢回单轨
+        assertTrue(sm.isMultiTrack)
+        sm.cancelAvs3Decode()
+        assertTrue(sm.isMultiTrack)
+    }
 }
