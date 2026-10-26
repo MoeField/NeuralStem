@@ -44,6 +44,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.flow.StateFlow
@@ -117,6 +118,10 @@ fun PlayerScreen(
                 state.fileName.ifEmpty { stringResource(R.string.player_no_media) },
                 style = MaterialTheme.typography.titleMedium,
                 maxLines = 1,
+                // ★2026-10-26：必须显式给 overflow。
+                //   只写 maxLines 时，超出部分会被**硬切**（没有省略号），
+                //   而网易云的文件名实测**最长 165 字**，切完根本看不出是哪首。
+                overflow = TextOverflow.Ellipsis,
                 textAlign = TextAlign.Center,
             )
         }
@@ -406,6 +411,8 @@ private fun ControlsArea(
                 it,
                 style = MaterialTheme.typography.titleMedium,
                 maxLines = 1,
+                // 同上方：必须显式 overflow，否则长文件名被硬切无省略号
+                overflow = TextOverflow.Ellipsis,
                 textAlign = TextAlign.Center,
             )
         }
