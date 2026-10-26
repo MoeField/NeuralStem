@@ -70,6 +70,9 @@ fun NcmImportScreen(
     var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     var importedCount by remember { mutableStateOf(0) }
+    // ★「全部加入歌单」的独立状态（与上面字节导入的 busy 分开，两者可分别进行）
+    var scanBusy by remember { mutableStateOf(false) }
+    var scanMsg by remember { mutableStateOf("") }
 
     /** 刷新：查状态 → 找目录 → 列文件。 */
     suspend fun refresh() = withContext(Dispatchers.IO) {
@@ -209,6 +212,69 @@ fun NcmImportScreen(
                                 enabled = !busy,
                                 onClick = { scope.launch { refresh() } },
                             ) { Text("刷新") }
+                        }
+
+                        /*
+                         * ★「全部加入歌单」（2026-10-26）
+                         *
+                         * 与上面的「导入前 10 首」是**两件不同的事**：
+                         * - 「导入」= 用 Shizuku 把**字节**拉进 App 目录（落盘，占空间）
+                         * - 「加入歌单」= 只在歌单里存**逻辑引用**（netease://，不占空间）
+                         *
+                         * 后者才是 1000 首规模下的正确做法：
+                         * 一首 20~30MB，1000 首复制进来要 25GB，不可接受。
+                         *
+                         * 扫描时逐个探 codec，标题带状态后缀（[需解码] / [加密]），
+                         * 让用户一眼看出哪些能直接播。
+                         */
+                        HorizontalDivider(Modifier.padding(vertical = 4.dp))
+
+                        Text(
+                            "加入歌单（不复制文件，只存引用）",
+                            style = MaterialTheme.typography.titleSmall,
+                        )
+                        Text(
+                            "扫描全部 ${entries.size} 个文件并写入默认歌单。" +
+                                "不会占用额外空间 —— 播放时才借 Shizuku 读取。",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontSize = 9.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+
+                        if (scanBusy || scanMsg.isNotEmpty()) {
+                            Text(
+                                scanMsg,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontSize = 9.sp,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                        }
+
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(
+                                enabled = !busy && !scanBusy && entries.isNotEmpty(),
+                                onClick = {
+                                    scope.launch {
+                                        scanBusy = true
+                                        scanMsg = "扫描中…"
+                                        val scanned = withContext(Dispatchers.IO) {
+                                            NeteasePlaylistImporter.scan(
+                                                ctx,
+                                                onProgress = { done, total, name ->
+                                                    scanMsg = "扫描 $done/$total：${name.take(28)}"
+                                                },
+                                            )
+                                        }
+                                        scanMsg = "扫描完成，写入歌单…"
+                                        val added = withContext(Dispatchers.IO) {
+                                            NeteasePlaylistImporter.importToPlaylist(ctx, scanned)
+                                        }
+                                        val stat = NeteasePlaylistImporter.summarize(scanned)
+                                        scanMsg = "已加入歌单 $added 首（${stat.summary()}）"
+                                        scanBusy = false
+                                    }
+                                },
+                            ) { Text(if (scanBusy) "处理中…" else "全部加入歌单") }
                         }
 
                         if (importedCount > 0) {
