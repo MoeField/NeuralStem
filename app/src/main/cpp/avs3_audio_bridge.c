@@ -115,79 +115,76 @@ static int             g_ready        = 0;
 
 /*
  * ============================================================================
- * ★ 自编译版（2026-10-26）：直接静态链接 avs3dec/ 源码
+ * ★为什么采用「纯 dlopen」而不是静态链接（2026-10-26 修正）
  * ============================================================================
- * 厂商预编译的 libAVS3AudioDec.so 在 AArch64 上有一处代码生成 bug（详见
- * doc/.memory.md §8.5.3），第一次 decode 必崩。反正源码就在仓库里，用我们的
- * NDK 工具链重编一遍，同样的逻辑就会生成正确的寻址指令。
+ * 早前一版把 avs3dec 静态链进本 .so（NEURALSTEM_AVS3_BUILTIN）。
+ * 但 UWA 代码共享政策第三条对「二次代码」的定义是：
+ *     “……与之链接（包括动态链接或静态链接）而形成的作品”
+ * ⇒ 静态链接后，**整个 libneuralstem_avs3.so 都变成二次代码**，
+ *   不能再以 MIT 发布。
  *
- * 这里把符号直接指到静态库里的实现，**不再经过 dlopen**。
- * 好处：不依赖 jniLibs 里的那份坏 .so，也不会出现「两份同名符号」的冲突。
+ * 政策又留了一个口子：
+ *     “仅与共享代码进行进程间通信或系统调用的作品是独立作品，不属于二次代码”
+ * 而 dlopen 是最接近“独立作品”的形态（运行时才加载、无编译期依赖、
+ * 不含对方任何符号与目标代码）。因此本文件**只保留 dlopen 路径**，
+ * 自身不含任何 UWA 代码，可以干净地归入 MIT。
  *
- * 为什么用 `#if` 而不是在 CMake 里做宏：桥在 x86_64 上也要能编过（abiFilters
- * 里有 x86_64），而 avs3dec 只在 arm64-v8a 编译，用 CMake 传进来更干净。
+ * ## 加载顺序（都失败就返回错误码，不影响 App 其他功能）
+ *   1. libAVS3AudioDec.so  —— 预编译版（简单，但在 AArch64 有代码生成 bug）
+ *   2. libavs3self.so      —— 用户自行编译版（tools/fetch-avs3.sh 产出，
+ *                             改过名以避免与上面同名冲突）
  */
-#if defined(NEURALSTEM_AVS3_BUILTIN) && NEURALSTEM_AVS3_BUILTIN
-/* 官方头文件（avs3dec/include/avs3_decoder_interface.h）已经声明了这 5 个函数，
- * 直接使用就能拿到正确的原型，不需要再手写 typedef。
- *
- * 注意：官方签名用的是 `AVS3DecoderHandle`（= `struct avs3_main_decoder_structure *`）
- * 而不是 `void *`。直接赋值给 `fn_*` 会报 -Wincompatible-function-pointer-types，
- * 所以这里统一显式转换一次（类型本身兼容：都是指针，只是带不带具体结构体标签）。 */
-#include "avs3_decoder_interface.h"
 
-static void bind_builtin(void) {
-    p_create       = (fn_create)       avs3_create_decoder;
-    p_destroy      = (fn_destroy)      avs3_destroy_decoder;
-    p_parse_header = (fn_parse_header) parse_header;
-    p_decode       = (fn_decode)       avs3_decode;
-    p_decode_float = (fn_decode_float) avs3_decode_float;
-}
-#endif
+/** 依次尝试这几个库名，找到第一个能解析全部符号的就用它。 */
+static const char *const kLibCandidates[] = {
+    "libavs3self.so",        /* 自编译版优先：没有 AArch64 寻址 bug */
+    "libAVS3AudioDec.so",    /* 预编译版回退（已知 decode 会 SIGSEGV） */
+};
 
 /**
  * 加载解码库并解析符号。返回 0 成功，负数为错误码。
  *
- * 优先用**自编译实现**（NEURALSTEM_AVS3_BUILTIN）；
- * 未启用时才回退到 dlopen jniLibs 里的预编译 .so。
- * 回退路径保留是为了：① 能在 x86_64 上编过；② 需要对比两份实现时方便。
+ * 用 dlopen 而非直接链接：① 缺库时给错误码而不是进程启动崩溃；
+ * ② 保证本文件自身不含对方目标代码，可归 MIT（见上方注释）。
  */
 static int ensure_loaded(void) {
     if (g_ready) return 0;
 
-#if defined(NEURALSTEM_AVS3_BUILTIN) && NEURALSTEM_AVS3_BUILTIN
-    bind_builtin();
-    if (!p_create || !p_destroy || !p_parse_header || !p_decode) {
-        LOGE("自编译 AVS3 符号缺失（静态链接异常）");
-        return -2;
-    }
-    g_ready = 1;
-    LOGI("AVS3 loaded (BUILTIN，自编译版；float API %s)",
-         p_decode_float ? "yes" : "no");
-    return 0;
-#else
-    void *h = dlopen("libAVS3AudioDec.so", RTLD_NOW | RTLD_LOCAL);
-    if (!h) {
-        LOGE("dlopen(libAVS3AudioDec.so) failed: %s", dlerror());
-        return -1;
-    }
-    p_create       = (fn_create)       dlsym(h, "avs3_create_decoder");
-    p_destroy      = (fn_destroy)      dlsym(h, "avs3_destroy_decoder");
-    p_parse_header = (fn_parse_header) dlsym(h, "parse_header");
-    p_decode       = (fn_decode)       dlsym(h, "avs3_decode");
-    p_decode_float = (fn_decode_float) dlsym(h, "avs3_decode_float");
+    const size_t n = sizeof(kLibCandidates) / sizeof(kLibCandidates[0]);
+    for (size_t i = 0; i < n; i++) {
+        const char *name = kLibCandidates[i];
+        void *h = dlopen(name, RTLD_NOW | RTLD_LOCAL);
+        if (!h) {
+            LOGI("dlopen(%s) 失败: %s", name, dlerror());
+            continue;
+        }
 
-    if (!p_create || !p_destroy || !p_parse_header || !p_decode) {
-        LOGE("dlsym failed: create=%p destroy=%p parse_header=%p decode=%p",
-             (void *) p_create, (void *) p_destroy,
-             (void *) p_parse_header, (void *) p_decode);
-        return -2;
+        p_create       = (fn_create)       dlsym(h, "avs3_create_decoder");
+        p_destroy      = (fn_destroy)      dlsym(h, "avs3_destroy_decoder");
+        p_parse_header = (fn_parse_header) dlsym(h, "parse_header");
+        p_decode       = (fn_decode)       dlsym(h, "avs3_decode");
+        p_decode_float = (fn_decode_float) dlsym(h, "avs3_decode_float");
+
+        if (!p_create || !p_destroy || !p_parse_header || !p_decode) {
+            LOGW("%s 缺少必要符号（create=%p destroy=%p parse_header=%p decode=%p）",
+                 name, (void *) p_create, (void *) p_destroy,
+                 (void *) p_parse_header, (void *) p_decode);
+            dlclose(h);
+            p_create = NULL; p_destroy = NULL;
+            p_parse_header = NULL; p_decode = NULL; p_decode_float = NULL;
+            continue;
+        }
+
+        g_ready = 1;
+        LOGI("AVS3 已加载：%s（float API %s）", name, p_decode_float ? "yes" : "no");
+        return 0;
     }
-    g_ready = 1;
-    LOGI("AVS3 loaded (dlopen 预编译版，已弃用；float API %s)",
-         p_decode_float ? "yes" : "no");
-    return 0;
-#endif
+
+    /* 两个候选都没有 —— 这是**正常情况**（未自行编译 AVS3）。
+     * 用 LOGI 而不是 LOGE：用户没装解码器不是错误，App 其余功能照常用。 */
+    LOGI("未找到 AVS3 解码库（跑 tools/fetch-avs3.sh 可启用）；"
+         "AVS3(av3a) 曲目将不可播，其他格式不受影响");
+    return -1;
 }
 
 /* ==================== JNI 导出 ==================== */

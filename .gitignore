@@ -40,3 +40,35 @@ keystore.properties
 *.jks
 *.keystore
 !debug.keystore
+
+# ---- ★AVS3-P3 (Audio Vivid) 解码器：不入库（2026-10-26）----
+#
+# ## 为何”（项目本身是 MIT，但这份代码不是我们的）
+#
+# AVS3-P3 解码器的参考实现（来自 github.com/Dreamello/av3a）文件头写着：
+#     Licensed under the Code Sharing Policy of the UHD World Association
+#     http://www.theuwa.com/UWA_Code_Sharing_Policy.pdf.
+#
+# 该政策（已逐条核对原文）的限制：
+#   第二条  仅适用于联盟会员，由联盟向提出申请的会员进行许可
+#   第六条  除“有条件转发”外，不能以任何形式转发；
+#           而“有条件转发”只允许会员把编译后的目标代码交给自己的下游客户
+#   第七条  许可不可转让、不可分许可
+#   第八条  不包含专利权许可（AVS3-P3 实施仍有专利问题）
+#
+# ⇒ 我们不是会员也不是“下游客户” ⇒ **源码和目标代码都不能再分发**。
+#   另外政策对“二次代码”的定义包含“与之链接（含静态链接）而形成的作品”，
+#   所以也不能把它静态链进自己的 .so 再发布。
+#
+# ## 那本地怎么用
+#   跑 tools/fetch-avs3.sh 从上游拉源码/库到本地（仅自己用）。
+#   这些文件会落在这几个路径，被本文件的规则挡住，不会进 git。
+#
+# ## 不包含 AVS3 时会发生什么
+#   CMakeLists.txt 检测到源码不存在就跳过 avs3dec 目标，
+#   桥回落 dlopen；两者都不可用时 nativeInit 返回失败码，
+#   App 其余功能（导入、FLAC/MP3 播放、分离等）完全不受影响。
+app/src/main/cpp/avs3dec/
+app/src/main/jniLibs/arm64-v8a/libAVS3AudioDec.so
+app/src/main/jniLibs/arm64-v8a/libVMFPlatForm.so
+

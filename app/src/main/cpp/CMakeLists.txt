@@ -52,47 +52,43 @@ endif()
 # ============================================================================
 # ★AVS3-P3 (av3a) 音频解码 JNI 桥（仅 arm64-v8a）
 #
-# 依赖两个**预编译** .so（放在 app/src/main/jniLibs/arm64-v8a/）：
-#   libAVS3AudioDec.so  324KB  核心解码器
-#   libVMFPlatForm.so   185KB  平台层
-# 来源：github.com/Dreamello/av3a
-#
-# 两者不参与链接——本桥用 dlopen 运行时加载，
-# 好处：缺库时返回错误码而不是进程启动崩溃。
+# 本桥**只做 dlopen**，不含任何 AVS3 解码器代码（所以可归 MIT）。
+# 运行时依次找：
+#   1. libavs3self.so      —— tools/fetch-avs3.sh + 本 CMake 编出的自编译版
+#   2. libAVS3AudioDec.so  —— 预编译版（AArch64 有代码生成 bug，仅作回退）
+# 都找不到 → nativeInit 返回失败码，App 其余功能不受影响。
 # ============================================================================
 if(ANDROID_ABI STREQUAL "arm64-v8a")
     add_library(neuralstem_avs3 SHARED avs3_audio_bridge.c)
     target_link_libraries(neuralstem_avs3 log dl)
     target_compile_options(neuralstem_avs3 PRIVATE -O2)
-    # ★NEURALSTEM_AVS3_BUILTIN 在文件末尾定义（必须先定义 avs3dec 目标）
 else()
     message(STATUS "AVS3 桥仅支持 arm64-v8a，当前 ${ANDROID_ABI} 跳过")
 endif()
 
 # ============================================================================
-# ★AVS3-P3 解码器「自编译版」（2026-10-26）
+# ★AVS3-P3 解码器（可选，需自行拉取源码）
 #
-# ## 为什么要自己编
-# 厂商预编译的 libAVS3AudioDec.so 在 AArch64 上有代码生成 bug：
-# Avs3InitDecoder 内 0x3144 处 ldrsH x21,[x25,#0x1202] 必崩（详见
-# doc/.memory.md §8.5.3）。我们没有它的源码工程配置，但它其实是这个仓库
-# Dreamello/av3a 的 av3adecoder/ 编出来的 —— 源码就在 avs3dec/ 下。
-# 用自己的工具链重编一遍，同样的逻辑就会生成正确的寻址指令。
+# ## 为何不在仓库里
+# AVS3-P3 解码器的参考实现（来自 github.com/Dreamello/av3a）并不采用
+# MIT/Apache/GPL 等常见开源许可，而是《世界超高清视频产业联盟代码共享政策》：
+#     第二条  仅适用于联盟会员，由联盟向提出申请的会员进行许可
+#     第六条  除“有条件转发”外不能以任何形式转发；而有条件转发只允许
+#             会员将编译后的目标代码交给自己的下游客户
+#     第八条  不包含专利权许可
+# ⇒ 我们既不是会员也不是下游客户，**源码和目标代码都不能再分发**。
 #
-# ## 源码布局（从 Dreamello/av3a 原样拷入）
-#   avs3dec/src/     avs3Decoder/src/*.c        13 个（解码器主体 + decoder.c 导出层）
-#   avs3dec/include/ avs3Decoder/include/*.h    4 个（对外接口）
-#   avs3dec/common/  libavs3_common/*.c|*.h     23 + 11 个（DSP/神经网络/ROM 表）
+# ## 那本地怎么用
+#   跑 tools/fetch-avs3.sh 拉到 avs3dec/，CMake 自动发现并编成
+#   独立的 libavs3self.so（不是静态链进桥 —— 那样整个桥都会变成二次代码）。
+#   avs3dec/ 已在 .gitignore 里，不会进版本控制。
 #
-# ## model.h 是 407KB 的头文件，里面是 unsigned char g_model[] 内嵌模型数组，
-#    不是外部 model.bin。所以不需要额外打包模型文件。
-#
-# ## 不依赖 libVMFPlatForm.so：objdump -p 实测预编译库的 NEEDED 只有
-#    libc++_shared / libm / libdl / libc。VMF 只是 AudioFilter 用的。
+# ## 没有源码时
+#   整段跳过，不报错。clone 下来直接 assembleDebug 必须能成功。
 # ============================================================================
-if(ANDROID_ABI STREQUAL "arm64-v8a")
-    set(AVS3DEC_DIR ${CMAKE_SOURCE_DIR}/avs3dec)
+set(AVS3DEC_DIR ${CMAKE_SOURCE_DIR}/avs3dec)
 
+if(ANDROID_ABI STREQUAL "arm64-v8a" AND EXISTS ${AVS3DEC_DIR}/src/decoder.c)
     file(GLOB AVS3DEC_SRCS
         ${AVS3DEC_DIR}/src/*.c
         ${AVS3DEC_DIR}/common/*.c)
@@ -100,33 +96,34 @@ if(ANDROID_ABI STREQUAL "arm64-v8a")
     # ★不要排除 avs3_write_wav.c（2026-10-26 实测）：
     #   avs3_dec_lib.c 的 Avs3DecoderLibOpenWavFile() 直接调用了它里面的
     #   WriteWavHeader()，排掉会导致 ld.lld 报 undefined symbol: WriteWavHeader。
-    #   它确实引用 stdio 的 fopen/fwrite，但那些在 Android 上都有，不会造成问题。
 
-    add_library(avs3dec STATIC ${AVS3DEC_SRCS})
+    # 编成**独立的共享库**（而不是静态库 + 链进桥）：
+    #   桥通过 dlopen 加载，两者在编译期无依赖，边界干净。
+    add_library(avs3self SHARED ${AVS3DEC_SRCS})
 
-    target_include_directories(avs3dec PUBLIC
+    target_include_directories(avs3self PUBLIC
         ${AVS3DEC_DIR}/include
         ${AVS3DEC_DIR}/common)
 
-    # 官方源码是 C99 风格（大量声明在语句中间、for(int i=...)),
-    # 用 gnu99 最稳；显式关掉会让老式写法直接报错。
-    target_compile_options(avs3dec PRIVATE
+    # 官方源码是 C99 风格（大量声明在语句中间、for(int i=...)），用 gnu99 最稳。
+    target_compile_options(avs3self PRIVATE
         -O2
         -std=gnu99
         -Wno-everything)
 
-    target_link_libraries(avs3dec PUBLIC m)
+    target_link_libraries(avs3self m)
 
-    message(STATUS "AVS3 自编译解码器：${ANDROID_ABI}，${AVS3DEC_SRCS} 个源文件")
+    # 输出名改成 libavs3self.so，与预编译的 libAVS3AudioDec.so 共存不冲突。
+    set_target_properties(avs3self PROPERTIES OUTPUT_NAME "avs3self")
 
-    # ★关键：必须把静态库**真正链接**进桥，否则 CMake 只会「定义」目标而
-    #   不会编译它（只有被依赖的目标才参与构建）。
-    #   这一步同时把 NEURALSTEM_AVS3_BUILTIN 打开，让桥走自编译符号而不是 dlopen。
-    target_compile_definitions(neuralstem_avs3 PRIVATE NEURALSTEM_AVS3_BUILTIN=1)
-    target_include_directories(neuralstem_avs3 PRIVATE
-        ${AVS3DEC_DIR}/include
-        ${AVS3DEC_DIR}/common)
-    target_link_libraries(neuralstem_avs3 avs3dec)
+    message(STATUS "AVS3 自编译解码器：${ANDROID_ABI}，${AVS3DEC_SRCS} 个源文件 → libavs3self.so")
 else()
-    message(STATUS "AVS3 自编译解码器仅支持 arm64-v8a，当前 ${ANDROID_ABI} 跳过（桥回落 dlopen）")
+    # ★这里只是“静默跳过”，不算错误。
+    #   clone 下来直接 assembleDebug 必须能成功，否则新用户第一步就撞墙。
+    message(STATUS "AVS3 解码器源码不存在（跑 tools/fetch-avs3.sh 可启用）")
+    message(STATUS "  → NCM 解密/导入仍可用；AVS3(av3a) 编码的曲目将无法播放")
 endif()
+
+# ============================================================================
+
+
