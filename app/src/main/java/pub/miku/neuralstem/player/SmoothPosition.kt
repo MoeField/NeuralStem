@@ -5,6 +5,7 @@ import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.LaunchedEffect
 import android.os.SystemClock
@@ -39,6 +40,37 @@ private const val CAPTURE_COOLDOWN_NS = 300_000_000L   // 300ms
  */
 private const val SEEK_JUMP_MS = 1_000f
 
+/**
+ * ★平滑位置（锚点外推 + 缓追）。
+ *
+ * ## 它同时驱动两个东西
+ * 1. 进度条的绿色填充
+ * 2. **转盘（DeckView）的旋转** —— 这是用户特别要的“磁带倒带”手感：
+ *    拖动时一圈一圈跟着转，松手后平滑滑到位，而不是硬跳。
+ *
+ * ## 为何需要 [dragMs] 参数（2026-10-26 修正）
+ * 拖动期间**播放没有停**，若不管：
+ * - `lastDisplay` 会继续向前跑（实测拖动 1.5s 期间跑了 ~1.3s）
+ * - 松手后 seek 生效，`delta = lastDisplay - raw` 就会把“多跑的那段”算进去
+ * - 结果：先冲过头再退回来（“填充→变灰→再填”）
+ *
+ * ⇒ 拖动中把显示值**锁定在手指位置**（并且同步 `lastDisplay`）。
+ *   这样松手瞬间 `lastDisplay` 就在手指位置，后面的补偿从那里开始，
+ *   **既保留平滑过渡，又不会冲高**。
+ *
+ * @param dragMs 拖动中的手指位置（ms）；null = 不在拖动
+ * @param snapOnSeek seek 跳变时是否**直接对齐**（不做平滑）。
+ *
+ * ## ★为何这个开关要分调用方（2026-10-26）
+ * 两个使用者的诉求相反：
+ * - **进度条**（ProgressBar）：拖动时已有手指位置作参照，
+ *   seek 后再平滑反而会“先冲高再回落” → 应该**直接对齐**。
+ * - **转盘**（DeckView）：它只是“点一下外环 → seek”，
+ *   **没有任何拖动过程**。用户要的正是“转盘一圈圈平滑转到目标”
+ *   （磁带倒带手感）→ 必须**保留平滑**。
+ *
+ * 之前没区分，一刀切“跳变直接对齐” → 转盘变硬跳，平滑感消失。
+ */
 @Composable
 fun rememberSmoothPosition(
     anchorFlow: StateFlow<PlayerViewModel.UiClock?>,
@@ -46,6 +78,10 @@ fun rememberSmoothPosition(
      *  否则旧歌的 delta/lastDisplay 会带入新歌 → 波形/进度显示错乱（“拖一下进度条就好”）。 */
     resetKey: Any? = Unit,
     smoothingPerFrame: Float = 0.85f,
+    /** ★拖动中的手指位置（ms）。非 null 时本函数直接输出它，不做外推。 */
+    dragMs: Float? = null,
+    /** ★seek 跳变是否直接对齐（true = 进度条；false = 转盘，保留平滑）。 */
+    snapOnSeek: Boolean = true,
 ): State<Float> {
     val anchorState = anchorFlow.collectAsState()
     val pos = remember { mutableFloatStateOf(0f) }
@@ -53,6 +89,8 @@ fun rememberSmoothPosition(
     var lastAnchorKey = remember { Long.MIN_VALUE }
     /** 上一帧锚点的“含外推”位置；用来识别 seek 这种**位置突变**。 */
     var lastRaw = remember { 0f }
+    // ★ 拖动值用 State 读，避免每帧变化导致 LaunchedEffect 重启
+    val dragState = rememberUpdatedState(dragMs)
 
     LaunchedEffect(resetKey) {
         // 切歌：清掉旧歌的平滑状态
@@ -68,6 +106,24 @@ fun rememberSmoothPosition(
                 val a = anchorState.value
                 if (a == null) {
                     pos.floatValue = 0f
+                    return@withFrameNanos
+                }
+                /*
+                 * ★拖动中：直接输出手指位置，**并同步 lastDisplay**。
+                 *
+                 * 这一步是修“松手后冲高”的关键：
+                 * 若不在这里同步，lastDisplay 会在拖动期间跑到前面去，
+                 * 松手后 delta 就会把那段“虚跑”算进去。
+                 */
+                val drag = dragState.value
+                if (drag != null) {
+                    val d = drag.toFloat()
+                    delta = 0f
+                    first = false          // 拖动后不需要再“首次对齐”
+                    lastDisplay = d
+                    lastRaw = d
+                    lastAnchorKey = Long.MIN_VALUE   // 强制下一帧重算 key
+                    pos.floatValue = d
                     return@withFrameNanos
                 }
                 val raw = a.extrapolate(SystemClock.elapsedRealtime()).toFloat()
@@ -98,7 +154,7 @@ fun rememberSmoothPosition(
                      * 阈值 1000ms：远大于正常播放每帧推进（≤100ms），
                      * 又小于任何有意义的 seek 距离。
                      */
-                    if (jump > SEEK_JUMP_MS) {
+                    if (snapOnSeek && jump > SEEK_JUMP_MS) {
                         delta = 0f
                         lastDisplay = raw
                         lastRaw = raw

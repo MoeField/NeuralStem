@@ -62,9 +62,19 @@ fun ProgressBar(
 
     // ★ 平滑位置：锚点外推 + 缓追（见 SmoothPosition.kt）→ 时间数字不卡不跳。
     //   resetKey = 时长：切歌时重置（避免旧歌状态带入）。
+    //
+    // ★2026-10-26：拖动时把**手指位置**传进去，让 smoothPos 锁定在那里。
+    //   否则播放不停 → smoothPos 会在拖动期间继续向前跑，
+    //   松手后补偿会“多跑一段再退回来”（实测：先冲高 6 秒再回落）。
+    //   锁定后：松手瞬间 lastDisplay 就在手指位置，既能平滑过渡又不冲高。
     val smoothPos = rememberSmoothPosition(
         anchorFlow,
         resetKey = progressState.value.durationMs,
+        dragMs = if (dragging && progressState.value.durationMs > 0) {
+            dragProgress * progressState.value.durationMs
+        } else {
+            null
+        },
     )
 
     // ★ 每帧失效（驱动连续重绘）；**仅在播放/拖动时**才逐帧触发。
