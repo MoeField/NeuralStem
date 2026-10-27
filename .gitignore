@@ -71,4 +71,9 @@ keystore.properties
 app/src/main/cpp/avs3dec/
 app/src/main/jniLibs/arm64-v8a/libAVS3AudioDec.so
 app/src/main/jniLibs/arm64-v8a/libVMFPlatForm.so
+# 自编译产物（tools/fetch-avs3.sh + CMake 从 avs3dec/ 编出）
+app/src/main/jniLibs/arm64-v8a/libavs3self.so
+# CMake 构建中间产物（万一被误放进源码树）
+app/src/main/cpp/**/libavs3self.so
+app/src/main/cpp/**/libneuralstem_avs3.so
 
