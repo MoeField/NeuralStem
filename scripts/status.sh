@@ -131,3 +131,11 @@ if [ -x "$ADB" ]; then
 else
     echo "  （adb 不在 $ADB）"
 fi
+echo
+
+# ---------- 下一步 ----------
+echo "[建议]"
+echo "  真机健康检查（需先启动 App）:"
+echo "    adb shell am start-service -n pub.miku.neuralstem/.devtools.TestCommandService --es cmd selftest"
+echo "    adb shell run-as pub.miku.neuralstem cat files/selftest_result.txt"
+echo "  检查项：歌单 uri 卫生(EACCES) / 波形缓存自洽 / AVS3 缓存 / 模型 / 合规"
