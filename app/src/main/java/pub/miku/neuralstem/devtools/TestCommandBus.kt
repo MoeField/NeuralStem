@@ -80,9 +80,15 @@ object TestCommandBus {
           dlmodel a0=all|<packId,...> 下载模型（all=全部；或逗号分隔的 pack id）
           dlstatus                    打印下载进度（指 dlmodel 的屏上日志）
           ncmtest a0=<path>           验证 NCM 解码（仅 -Pwith_ncm=true 构建可用）
+          selftest                    ★一键回归（不依赖人工点选）。检查：
+                                      歌单 uri 卫生（EACCES）、波形缓存自洽、
+                                      AVS3 缓存、模型、公开版合规。
+                                      结果写 files/selftest_result.txt
+                                      取回：adb shell run-as pub.miku.neuralstem \
+                                              cat files/selftest_result.txt
         例:
           adb shell am start-service -n pub.miku.neuralstem/.devtools.TestCommandService --es cmd seek --es a0 62000
-          adb shell am start-service -n pub.miku.neuralstem/.devtools.TestCommandService --es cmd help
+          adb shell am start-service -n pub.miku.neuralstem/.devtools.TestCommandService --es cmd selftest
     """.trimIndent()
 
     @Deprecated("已改用 service（am start-service）；保留以便兼容引用")
