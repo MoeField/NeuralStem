@@ -696,6 +696,160 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
+            // ★★selftest：一键回归（不依赖人工点选，写 pass/fail 文件）。
+            //
+            // ## 为何需要（2026-10-27）
+            // 历史上真正崩的地方**全在 Media3 / SAF / 分块边界上**，JVM 单测盖不到：
+            //   • SAF 导入后 EACCES（content:// 被转成 file:// 绝对路径）
+            //   • 分离闪退 std::length_error（312 帧尾块 → sherpa 切出 0 频谱帧）
+            //   • 公开版启动闪退（Shizuku Provider 无类）
+            // 这三类都只能真机发现。本命令把其中**可编程判定**的部分固定成序列，
+            // 下次改动后一行命令就能确认没复发。
+            //
+            // ## 不测什么
+            // 需要真实交互/监听的（听声音、点选 SAF 选择器、看 UI）不在这里 ——
+            // 那类仍然只能人工验，但会输出提示提醒去验。
+            //
+            // 结果同时写到 files/selftest_result.txt（方便 adb 拉取 + CI/脚本判定）。
+            "selftest" -> {
+                lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                    val sb = StringBuilder()
+                    var pass = 0
+                    var fail = 0
+                    var skip = 0
+
+                    fun line(s: String) {
+                        sb.append(s).append('\n')
+                        runCatching { File(filesDir, "selftest_result.txt").writeText(sb.toString()) }
+                    }
+
+                    fun check(name: String, ok: Boolean, detail: String = "") {
+                        if (ok) pass++ else fail++
+                        line((if (ok) "[PASS] " else "[FAIL] ") + name +
+                            (if (detail.isNotEmpty()) "  —  $detail" else ""))
+                    }
+
+                    fun skipped(name: String, why: String) {
+                        skip++
+                        line("[SKIP] $name  —  $why")
+                    }
+
+                    line("SELFTEST  ${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date())}")
+                    line("build     v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})  WITH_NCM=${BuildConfig.WITH_NCM}  DEBUG=${BuildConfig.DEBUG}")
+                    line("")
+
+                    // ---------- 1) 歌单 uri 卫生（EACCES 回归）----------
+                    //
+                    // Android 14+ 分区存储下，SAF 的 tree 授权只对 content:// 通道有效；
+                    // 把 SAF 文件转成 file:///storage/... 后必然 EACCES（“能看到但放不了”）。
+                    // 所以歌单里出现 file:///storage/ 就是回归信号。
+                    val plFile = File(filesDir, "playlists.json")
+                    if (!plFile.exists()) {
+                        skipped("歌单 uri 卫生", "playlists.json 不存在（还没导入过）")
+                    } else {
+                        runCatching {
+                            val arr = org.json.JSONArray(plFile.readText())
+                            var total = 0
+                            var bad = 0
+                            val examples = ArrayList<String>()
+                            for (i in 0 until arr.length()) {
+                                val tracks = arr.getJSONObject(i).optJSONArray("tracks") ?: continue
+                                for (j in 0 until tracks.length()) {
+                                    total++
+                                    val u = tracks.getJSONObject(j).optString("uri")
+                                    if (u.startsWith("file:///storage/")) {
+                                        bad++
+                                        if (examples.size < 2) examples += u.take(70)
+                                    }
+                                }
+                            }
+                            check(
+                                "歌单 uri 无 file:///storage/（EACCES 回归）",
+                                bad == 0,
+                                if (bad == 0) "$total 首均为 content:///netease:///ncm:///私有 file://"
+                                else "$total 首里 $bad 个会 EACCES，例：${examples.joinToString(" | ")}",
+                            )
+                        }.onFailure { check("歌单可解析", false, it.message ?: "") }
+                    }
+
+                    // ---------- 2) 波形缓存自洽 ----------
+                    //
+                    // 格式：magic4 + ver4 + sr4 + frames8 + n4 + min[n]4 + max[n]4 = 24 + n*8。
+                    // 半截/损坏的文件会让 UI 画出“只显示一小段”的波形（真实 bug）。
+                    runCatching {
+                        val d = File(filesDir, "waveform-cache")
+                        val files = d.listFiles()?.filter { it.name.endsWith(".bin") } ?: emptyList()
+                        if (files.isEmpty()) {
+                            skipped("波形缓存自洽", "无缓存文件")
+                        } else {
+                            var bad = 0
+                            for (f in files) {
+                                val ok = runCatching {
+                                    java.io.DataInputStream(f.inputStream().buffered()).use { ins ->
+                                        ins.readInt()  // magic
+                                        ins.readInt()  // version
+                                        ins.readInt()  // sampleRate
+                                        ins.readLong() // totalFrames
+                                        val n = ins.readInt()
+                                        n in 1..10_000_000 && f.length() == 24L + n.toLong() * 8L
+                                    }
+                                }.getOrDefault(false)
+                                if (!ok) bad++
+                            }
+                            check("波形缓存自洽（24+n*8）", bad == 0, "${files.size} 个，损坏 $bad")
+                        }
+                    }.onFailure { check("波形缓存可检查", false, it.message ?: "") }
+
+                    // ---------- 3) AVS3 解码缓存 ----------
+                    runCatching {
+                        val d = File(filesDir, "avs3-pcm-cache")
+                        if (!d.exists()) {
+                            skipped("AVS3 缓存", "目录不存在（没播过 AVS3 曲目）")
+                        } else {
+                            val files = d.listFiles() ?: emptyArray()
+                            val empty = files.count { it.length() <= 44L }  // 只有 WAV 头
+                            check("AVS3 缓存无空文件（<=44B）", empty == 0, "${files.size} 个，空 $empty")
+                        }
+                    }.onFailure { check("AVS3 缓存可检查", false, it.message ?: "") }
+
+                    // ---------- 4) 模型 ----------
+                    runCatching {
+                        var n = 0
+                        for (sub in listOf("sherpa", "uvr", "spleeter4", "demucs")) {
+                            n += File(filesDir, sub).listFiles()?.count { it.name.endsWith(".onnx") } ?: 0
+                        }
+                        check("至少一个分离模型已安装", n > 0, "$n 个 .onnx")
+                    }.onFailure { check("模型可检查", false, it.message ?: "") }
+
+                    // ---------- 5) 合规（AVS3 是否漏进非 NCM 构建）----------
+                    if (BuildConfig.WITH_NCM) {
+                        skipped("公开版不含 AVS3", "当前是 WITH_NCM 构建（含解码器，不可分发）")
+                    } else {
+                        // 非 NCM 构建根本不该带解码器；带了说明 CMake/packaging 门控失效。
+                        val leaked = listOf(
+                            "libAVS3AudioDec.so", "libVMFPlatForm.so",
+                            "libavs3self.so", "libneuralstem_avs3.so",
+                        ).count { name ->
+                            runCatching {
+                                java.io.File(applicationInfo.nativeLibraryDir, name).exists()
+                            }.getOrDefault(false)
+                        }
+                        check("公开版不含 AVS3 解码器（UWA 合规）", leaked == 0, "泄漏 $leaked 个")
+                    }
+
+                    // ---------- 6) 需要人工验的提醒 ----------
+                    line("")
+                    line("以下需人工验（无法编程判定）：")
+                    line("  • 点播一首 NCM 能否出声：dumpsys media.audio_flinger | grep 'Tracks of which'")
+                    line("  • 拖到曲尾跑完分离：应 complete=true 且不闪退（尾块<1s 历史 bug）")
+                    line("  • 公开版启动不闪退")
+
+                    line("")
+                    val verdict = if (fail == 0) "PASS" else "FAIL"
+                    line("RESULT: $verdict  ($pass passed / $fail failed / $skip skipped)")
+                    Log.i("TestCmd", "SELFTEST\n$sb")
+                }
+            }
             // ★importtest：验证导入逻辑（不依赖 SAF 人工点选）。
             //   a0 = 目录路径。会调用真实的 scanAudio/isAudio/SafPathResolver 逻辑。
             "importtest" -> {
