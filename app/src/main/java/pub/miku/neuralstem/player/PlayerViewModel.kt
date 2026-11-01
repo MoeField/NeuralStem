@@ -411,6 +411,17 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                 override fun onExtrasChanged(controller: MediaController, extras: Bundle) {
                     applyTracksSnapshot(extras.getString(MultiTrackSession.KEY_TRACKS_JSON))
                     applyEqSnapshot(extras.getString(MultiTrackSession.KEY_EQ_JSON))
+                    // ★2026-11-01：多轨真实位置来自 StemMixer（单 AudioTrack），
+                    //   主轨 ExoPlayer 只是静音门面，它的 currentPosition 不可用。
+                    if (extras.containsKey(MultiTrackSession.KEY_MIX_POS_MS)) {
+                        val pos = extras.getLong(MultiTrackSession.KEY_MIX_POS_MS, 0L)
+                        val dur = extras.getLong(MultiTrackSession.KEY_MIX_DUR_MS, 0L)
+                        val playing = extras.getBoolean(MultiTrackSession.KEY_MIX_PLAYING, false)
+                        _progress.value = Progress(pos, dur)
+                        if (playing != _state.value.isPlaying) {
+                            _state.value = _state.value.copy(isPlaying = playing)
+                        }
+                    }
                 }
             })
             .buildAsync()

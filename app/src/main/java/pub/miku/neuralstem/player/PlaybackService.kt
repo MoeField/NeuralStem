@@ -90,20 +90,21 @@ class PlaybackService : MediaSessionService() {
             }
 
             override fun onIsPlayingChanged(isPlaying: Boolean) {
-                // 跟随轨跟着主轨播/停（避免“主轨停、跟随仍在”）
+                // ★★ 2026-11-01 坑：**不能**用主轨的 isPlaying 去驱动 mixer。
+                //   主轨（singlePlayer）现在被静音当“门面”，它自己会因为
+                //   AudioTrack 暂停/缓冲而反复 isPlaying=false，
+                //   直接映射会让 mixer 刚启动就被 pause（真机实测 `pause @2048frame`）。
+                //   **方向反过来：mixer 才是真实的播放状态源。**
                 if (inMultiTrack) {
-                    multiTrack?.trackList?.drop(1)?.forEach {
-                        if (isPlaying) it.player.play() else it.player.pause()
-                    }
+                    Log.d(TAG, "onIsPlayingChanged($isPlaying)：多轨下忽略（真源是 StemMixer）")
                 }
             }
 
             override fun onPlaybackParametersChanged(playbackParameters: PlaybackParameters) {
-                // 变速变调同步到跟随轨（F4.4）—— 否则时间轴漂移
+                // ★2026-11-01：多轨不再需要镜像参数 —— 混音器固定 1.0×（见 StemMixer）。
+                //   主轨即使因 UI 误操作改了速率，也不影响混音（它本身是静音的，只当门面）。
                 if (inMultiTrack) {
-                    val followers = multiTrack?.trackList?.drop(1).orEmpty()
-                    Log.i(TAG, "MIRROR params → ${followers.size} follower(s): $playbackParameters")
-                    followers.forEach { it.player.playbackParameters = playbackParameters }
+                    Log.i(TAG, "多轨下忽略 playbackParameters 变更：$playbackParameters")
                 }
             }
 
@@ -113,11 +114,10 @@ class PlaybackService : MediaSessionService() {
                 reason: Int,
             ) {
                 Log.i(TAG, "onPositionDiscontinuity: reason=$reason → ${newPosition.positionMs}ms (inMt=$inMultiTrack)")
-                // seek 同步到跟随轨（seekTo 经 session 只到主轨）
+                // ★2026-11-01：多轨下 seek 只需告知混音器（它只有一个 framePos，
+                //   所有 stem 自然同步）；不再需要逐个 seek 跟随轨。
                 if (inMultiTrack && reason == Player.DISCONTINUITY_REASON_SEEK) {
-                    val followers = multiTrack?.trackList?.drop(1).orEmpty()
-                    Log.i(TAG, "MIRROR seek → ${followers.size} follower(s): ${newPosition.positionMs}ms")
-                    followers.forEach { it.player.seekTo(newPosition.positionMs) }
+                    multiTrack?.seekTo(newPosition.positionMs)
                 }
             }
         })
@@ -158,6 +158,30 @@ class PlaybackService : MediaSessionService() {
 
     private val snapshotRunnable = Runnable { pushTracksSnapshot() }
 
+    /**
+     * ★多轨进度推送（2026-11-01）。
+     *
+     * ## 为何需要单独一条
+     * 重构后真实播放的是 [StemMixer]（自己的 AudioTrack），
+     * 而 MediaSession 看的 `singlePlayer` 只是一个静音门面 —— 它的 `currentPosition`
+     * 与混音器无关。若 UI 继续读主轨位置，进度条会停在 0 或乱跳。
+     * 所以周期性把混音器位置写进 session extras，由 VM 覆盖显示。
+     */
+    private val progressRunnable = object : Runnable {
+        override fun run() {
+            val c = multiTrack
+            if (inMultiTrack && c != null) {
+                val session = mediaSession
+                val b = Bundle(session?.sessionExtras ?: Bundle())
+                b.putLong(MultiTrackSession.KEY_MIX_POS_MS, c.currentPositionMs())
+                b.putLong(MultiTrackSession.KEY_MIX_DUR_MS, c.durationMs())
+                b.putBoolean(MultiTrackSession.KEY_MIX_PLAYING, c.isPlaying())
+                session?.setSessionExtras(b)
+            }
+            handler.postDelayed(this, 200L)
+        }
+    }
+
     private fun pushTracksSnapshot() {
         val session = mediaSession ?: return
         val extras = Bundle()
@@ -194,29 +218,24 @@ class PlaybackService : MediaSessionService() {
         }
     }
 
-    /** 多轨 EQ：每条轨各挂一份（等各自 READY 后再挂，同坑 43）。 */
+    /**
+     * 多轨 EQ：**只挂一份**在混音输出上。
+     *
+     * ## 2026-11-01 重构后的语义变化
+     * 旧实现每条 stem 各挂一份 EQ（因为各有 AudioTrack）。
+     * 现在只有一个 AudioTrack，EQ 作用于**最终混音** —— 这才是正确语义
+     * （分别均衡再相加 ≠ 对混音结果均衡）。
+     */
     private fun attachMultiTrackEq(c: MultiTrackController) {
-        c.trackList.forEach { t ->
-            val tryAttach = {
-                val s = t.player.audioSessionId
-                if (s != 0) {
-                    eqController.attach(t.id, s)
-                    Log.i(TAG, "multi-track EQ attached ${t.id} session=$s")
-                }
-            }
-            if (t.player.playbackState == Player.STATE_READY) {
-                tryAttach()
-            } else {
-                t.player.addListener(object : Player.Listener {
-                    override fun onPlaybackStateChanged(playbackState: Int) {
-                        if (playbackState == Player.STATE_READY) {
-                            t.player.removeListener(this)
-                            tryAttach()
-                            requestSnapshotPush()
-                        }
-                    }
-                })
-            }
+        val s = c.audioSessionId()
+        if (s != 0) {
+            eqController.detachAll()      // 清掉单轨那份，避免两个 session 同时生效
+            eqController.attach("mix", s)
+            Log.i(TAG, "multi-track EQ attached to mixer session=$s")
+            requestSnapshotPush()
+        } else {
+            Log.w(TAG, "multi-track EQ: mixer session 尚未就绪，稍后重试")
+            handler.postDelayed({ attachMultiTrackEq(c) }, 200)
         }
     }
 
@@ -266,13 +285,17 @@ class PlaybackService : MediaSessionService() {
         multiTrack?.trackList?.forEachIndexed { i, t ->
             Log.i(
                 TAG,
-                "POS_TRACK[$i] id=${t.id} pos=${t.player.currentPosition} " +
-                    "state=${t.player.playbackState} playing=${t.player.isPlaying} " +
-                    "pp=${t.player.playbackParameters}",
+                "POS_TRACK[$i] id=${t.id} label=${t.label} uri=${t.uri}",
             )
         }
-        // ★校正统计（判断 seek 是否真的有效，不只是“我发了 seek”）
-        multiTrack?.let { Log.i(TAG, it.driftStatsLine()) }
+        // ★2026-11-01：只有一个 framePos，所有 stem 必然同帧 —— 报混音器位置即可
+        multiTrack?.let {
+            Log.i(
+                TAG,
+                "POS_MIX pos=${it.currentPositionMs()} dur=${it.durationMs()} " +
+                    "playing=${it.isPlaying()} tracks=${it.trackList.size}",
+            )
+        }
         return ok()
     }
 
@@ -312,22 +335,24 @@ class PlaybackService : MediaSessionService() {
         val items = parseItems(json) ?: return err("items 解析失败")
         if (items.isEmpty()) return err("items 为空")
 
-        val primary = singlePlayer ?: return err("singlePlayer 未就绪")
         val c = ensureMultiTrack()
-        // v2：主轨复用 singlePlayer（session 看的那个）—— 通知/前台服务天然工作
-        c.load(items, args.getString(MultiTrackSession.KEY_TITLE), externalPrimary = primary)
+        // ★2026-11-01 重构：多轨不再有“主轨 ExoPlayer”。
+        //   数据全部进 StemMixer（单 AudioTrack），singlePlayer 只当**门面**：
+        //   通知/前台服务/MediaController 都看它，但我们把它静音，只让它跑时钟。
+        //   （为何不换成 SimpleBasePlayer：v1 用 ForwardingPlayer 实测**不出通知**，
+        //    所以保留“session 认真实 ExoPlayer”这条已验证的路径。）
+        singlePlayer?.volume = 0f
+        c.load(items, args.getString(MultiTrackSession.KEY_TITLE))
         inMultiTrack = true
-        // ★对齐起播（2026-11-01）：不能直接 c.play()。
-        //   未 READY 时 play() 只是置 playWhenReady，每轨在自己就绪那一刻开声
-        //   → 不同文件准备耗时不同 → **人声/伴奏错位**（真机实测）。
         c.playWhenAllReady(args.getLong(MultiTrackSession.KEY_START_MS, 0L))
-        // M3-P3：多轨 EQ（每轨各挂一份，等各自 READY）
         attachMultiTrackEq(c)
+        handler.removeCallbacks(progressRunnable)
+        handler.post(progressRunnable)      // ★开始推送 mix 进度（真实位置来自 StemMixer）
         pushTracksSnapshot()
         Log.i(
             TAG,
-            "loadMultiTrack(v2): ${items.size} track(s) ids=${items.map { it.first }} " +
-                "uris=${items.map { it.third }}, singlePlayer 为主轨",
+            "loadMultiTrack(mix): ${items.size} track(s) ids=${items.map { it.first }} " +
+                "（singlePlayer 静音当门面，实际声音来自 StemMixer）",
         )
         return ok("loaded")
     }
@@ -353,20 +378,20 @@ class PlaybackService : MediaSessionService() {
                 id = id,
                 label = label,
                 uri = Uri.parse("${StemPcmDataSource.SCHEME}://$host"),
-                dataSourceFactory = StemStreamFactory(DefaultDataSource.Factory(this@PlaybackService)),
             )
         }
         if (items.isEmpty()) return err("items 为空")
 
-        val primary = singlePlayer ?: return err("singlePlayer 未就绪")
+        singlePlayer?.volume = 0f
         val c = ensureMultiTrack()
-        c.loadStream(items, args.getString(MultiTrackSession.KEY_TITLE), externalPrimary = primary)
+        c.loadStream(items, args.getString(MultiTrackSession.KEY_TITLE))
         inMultiTrack = true
-        // ★对齐起播（同 handleLoadMultiTrack）：等所有轨 READY 再同帧 seek + play。
         c.playWhenAllReady(args.getLong(MultiTrackSession.KEY_START_MS, 0L))
         attachMultiTrackEq(c)
+        handler.removeCallbacks(progressRunnable)
+        handler.post(progressRunnable)      // ★开始推送 mix 进度
         pushTracksSnapshot()
-        Log.i(TAG, "loadStream: ${items.size} streaming track(s), singlePlayer 为主轨")
+        Log.i(TAG, "loadStream: ${items.size} streaming track(s) → StemMixer")
         return ok("loaded-stream")
     }
 
@@ -392,7 +417,8 @@ class PlaybackService : MediaSessionService() {
     private fun handleToggleSolo(args: Bundle): SessionResult {
         val c = multiTrack ?: return err("非多轨")
         val id = args.getString(MultiTrackSession.KEY_TRACK_ID) ?: return err("trackId 缺失")
-        c.soloTrackId = if (c.soloTrackId == id) null else id
+        // ★走控制器的 toggleSolo：它会重算 effectiveVolume（混音增益实时生效）
+        c.toggleSolo(id)
         pushTracksSnapshot()
         return ok()
     }
@@ -404,10 +430,13 @@ class PlaybackService : MediaSessionService() {
                 "followers=${multiTrack?.trackList.orEmpty().joinToString { "${it.id}:${it.uri}" }}",
         )
         inMultiTrack = false
-        // singlePlayer 是主轨，不能被 multiTrack.close() release ——
-        // 由 Track.ownsPlayer=false 保护。先停跟随轨，再清。
+        handler.removeCallbacks(progressRunnable)   // ★停止 mix 进度推送
+        // 混音器释放（它不再持有任何 ExoPlayer；singlePlayer 不受影响）
         multiTrack?.close()
         multiTrack = null
+        // ★恢复主轨音量：多轨期间它是 0（静音当门面），退出后必须还原，
+        //   否则回原曲会“没有声音”（重构后新增的隐藏坑）。
+        singlePlayer?.volume = 1f
         // M3-P3/T2：退出多轨后旧的跟随轨会话作废，回到单轨重新挂 EQ。
         // 注意：**不能**用 `playbackState == STATE_READY` 做门槛 ——
         // 主轨刚从多轨下停下，可能不是 READY，会导致 EQ **漏挂**（T2 实测踩到）。

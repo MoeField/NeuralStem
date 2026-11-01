@@ -87,6 +87,16 @@ object MultiTrackSession {
      */
     const val KEY_START_MS = "startMs"
 
+    // ==================== ★多轨进度（2026-11-01 单 AudioTrack 重构）====================
+    //
+    // ## 为何需要单独的 key
+    // 多轨时真实播放的是 StemMixer（自己的 AudioTrack），
+    // 而 session 看的 `singlePlayer` 只是静音门面，位置无关。
+    // Service 每 200ms 把 mixer 位置写进 extras，VM 优先用它。
+    const val KEY_MIX_POS_MS = "nst.mixPosMs"
+    const val KEY_MIX_DUR_MS = "nst.mixDurMs"
+    const val KEY_MIX_PLAYING = "nst.mixPlaying"
+
     /** Service → UI 的多轨状态快照（JSON）。无该键 = 非多轨模式。 */
     const val KEY_TRACKS_JSON = "nst.tracksJson"
 
