@@ -315,7 +315,10 @@ class PlaybackService : MediaSessionService() {
         // v2：主轨复用 singlePlayer（session 看的那个）—— 通知/前台服务天然工作
         c.load(items, args.getString(MultiTrackSession.KEY_TITLE), externalPrimary = primary)
         inMultiTrack = true
-        c.play()                 // 主轨 + 跟随轨一起播
+        // ★对齐起播（2026-11-01）：不能直接 c.play()。
+        //   未 READY 时 play() 只是置 playWhenReady，每轨在自己就绪那一刻开声
+        //   → 不同文件准备耗时不同 → **人声/伴奏错位**（真机实测）。
+        c.playWhenAllReady(args.getLong(MultiTrackSession.KEY_START_MS, 0L))
         // M3-P3：多轨 EQ（每轨各挂一份，等各自 READY）
         attachMultiTrackEq(c)
         pushTracksSnapshot()
@@ -357,7 +360,8 @@ class PlaybackService : MediaSessionService() {
         val c = ensureMultiTrack()
         c.loadStream(items, args.getString(MultiTrackSession.KEY_TITLE), externalPrimary = primary)
         inMultiTrack = true
-        c.play()
+        // ★对齐起播（同 handleLoadMultiTrack）：等所有轨 READY 再同帧 seek + play。
+        c.playWhenAllReady(args.getLong(MultiTrackSession.KEY_START_MS, 0L))
         attachMultiTrackEq(c)
         pushTracksSnapshot()
         Log.i(TAG, "loadStream: ${items.size} streaming track(s), singlePlayer 为主轨")

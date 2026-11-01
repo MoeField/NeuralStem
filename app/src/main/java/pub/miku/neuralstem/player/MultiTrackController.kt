@@ -82,6 +82,14 @@ class MultiTrackController(context: Context) : Closeable {
     private val appContext = context.applicationContext
     private val tracks = LinkedHashMap<String, Track>()
 
+    /** ★对齐起播用：所有轨共用的起播位置（ms）。 */
+    private var startAnchorMs: Long = 0L
+
+    /** ★对齐起播超时傅底（防止某轨永远不 READY 时完全不起播）。 */
+    private var pendingStartTimeout: Runnable? = null
+
+    private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
     /** F4.3 独奏:非 null 时只有该轨发声 */
     var soloTrackId: String? = null
         set(value) {
@@ -279,7 +287,80 @@ class MultiTrackController(context: Context) : Closeable {
     fun isPlaying(): Boolean = tracks.values.any { it.player.isPlaying }
 
     fun isReady(): Boolean = tracks.isNotEmpty() && tracks.values.all {
-        it.player.playbackState == Player.STATE_READY
+        // STATE_ENDED 也算“已完成准备”（极短文件可能直接跳 ENDED，不接住会永远等）
+        it.player.playbackState == Player.STATE_READY ||
+            it.player.playbackState == Player.STATE_ENDED
+    }
+
+    // ==================== ★对齐起播（2026-11-01 修“音轨错位”）====================
+
+    /**
+     * 等**所有轨都 READY** 后，同帧 seek + 同帧 play。
+     *
+     * ## 为什么不能 load() 后直接 play()（真机实测缺陷）
+     * `play()` 对未 READY 的 ExoPlayer 只是把 `playWhenReady` 置 true，
+     * 每个实例会在**自己准备好**的那一刻开始出声。
+     * 不同 stem 文件（不同码率/时长/解码器）准备完成的时刻不同
+     * → **人声/伴奏起播时刻不同 → 可听见的错位**。
+     *
+     * 实测：4 轨（Demucs）尤为明显——4 个 55MB WAV 解码先后差上百毫秒。
+     *
+     * ## 为何还要 seekTo(anchor)
+     * 边分离边播 / 续播 会带着一个非 0 起点。旧实现把这个 seek 交给了
+     * `PlayerViewModel` 的 READY 回调，但它只能 seek **主轨**（mediaController
+     * 就是 singlePlayer），跟随轨留在 0 → 两边差了几秒。
+     * 现在统一由控制器对**所有轨**下同一位置。
+     *
+     * @param anchorMs 所有轨对齐到此位置（0 = 从头）
+     */
+    fun playWhenAllReady(anchorMs: Long = 0L) {
+        if (tracks.isEmpty()) return
+        startAnchorMs = anchorMs
+        cancelPendingStart()
+        if (isReady()) {
+            alignAndPlay()
+            return
+        }
+        val all = tracks.values.map { it.player }
+        all.forEach { it.addListener(alignmentListener) }
+        val t = Runnable {
+            Log.w(
+                TAG,
+                "playWhenAllReady: 等待超时（${ALIGN_TIMEOUT_MS}ms）→ 强制起播，可能仍错位",
+            )
+            alignAndPlay()
+        }
+        pendingStartTimeout = t
+        mainHandler.postDelayed(t, ALIGN_TIMEOUT_MS)
+        Log.i(TAG, "playWhenAllReady: 等待 ${all.size} 轨就绪（anchor=${anchorMs}ms）")
+    }
+
+    private val alignmentListener = object : Player.Listener {
+        override fun onPlaybackStateChanged(playbackState: Int) {
+            if (isReady()) alignAndPlay()
+        }
+
+        override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+            // 某轨出错就不要死等（否则永远不起播）。降级：把能放的放起来。
+            Log.w(TAG, "playWhenAllReady: 某轨出错 ${error.errorCodeName} → 放弃等待")
+            alignAndPlay()
+        }
+    }
+
+    private fun cancelPendingStart() {
+        pendingStartTimeout?.let { mainHandler.removeCallbacks(it) }
+        pendingStartTimeout = null
+        tracks.values.forEach { it.player.removeListener(alignmentListener) }
+    }
+
+    /** 同帧：先全部 seek，再全部 play。 */
+    private fun alignAndPlay() {
+        cancelPendingStart()
+        val all = tracks.values.map { it.player }
+        if (all.isEmpty()) return
+        all.forEach { it.seekTo(startAnchorMs) }
+        all.forEach { it.play() }
+        Log.i(TAG, "aligned start: ${all.size} track(s) @ ${startAnchorMs}ms")
     }
 
     // ---------------- F4.2/F4.3 音量 ----------------
@@ -342,5 +423,13 @@ class MultiTrackController(context: Context) : Closeable {
 
     private companion object {
         const val TAG = "MultiTrack"
+
+        /**
+         * 等待所有轨 READY 的**上限**。
+         *
+         * 本地 WAV 通常几十毫秒就 READY；这个上限只用于“某轨卡死/出错”时
+         * 不让用户完全听不到声音。超过就降级起播（可能仍有错位，但至少有声）。
+         */
+        const val ALIGN_TIMEOUT_MS = 3_000L
     }
 }
