@@ -72,7 +72,17 @@ fun SeparationScreen(
     trackCount: Int = 0,
     separationOn: Boolean = false,
     currentUri: String? = null,
-    onToggleSeparation: (Boolean) -> Unit = {},
+    /**
+     * 分离开关切换。
+     *
+     * ★2026-11-01：签名从 `(Boolean) -> Unit` 改为返回 `Boolean`（是否已处理）。
+     * 原来只回传 boolean 而不接收结果 → “无分离结果”时**无法告知用户**
+     * （回调里 `playerVm.toggleSeparation(on)` 的返回值被直接丢弃）。
+     * 现在与播放器页行为对齐：返回 false 就弹提示条。
+     *
+     * @return true = 已处理；false = 尚无分离结果
+     */
+    onToggleSeparation: (Boolean) -> Boolean = { false },
     onPlayStems: (SpikeViewModel.State.Done) -> Unit = {},
     onPlayStems4: (List<File>) -> Unit = {},
     // ★⑭b：发起分离时通知宿主“本次针对哪首曲”（uri），供完成时校验。
@@ -119,6 +129,17 @@ fun SeparationScreen(
      * null = 不提供跳转（仅显示文案）。由宿主 AppShell 注入。
      */
     onOpenModelLibrary: (() -> Unit)? = null,
+    /**
+     * ★2026-11-01：**自动消失的提示条**（由宿主用 Snackbar 实现）。
+     *
+     * ## 为何分离页也需要它
+     * 分离页也有一个分离开关，而它的回调以前是直接
+     * `onToggleSeparation(it)` —— **返回 false（无分离结果）时没有任何反馈**，
+     * 用户点下去就是“没反应”，和修复前的播放器页是一模一样的问题。
+     * 现在两个页面的开关行为对齐：都会给提示条。
+     */
+    onHint: (message: String, actionLabel: String?, onAction: (() -> Unit)?) -> Unit =
+        { _, _, _ -> },
 ) {
     val ctx = LocalContext.current
     val app = ctx.applicationContext as Application
@@ -451,6 +472,12 @@ fun SeparationScreen(
         }
 
         // ---- 分离开关（与播放页同一状态）----
+        //
+        // ★2026-11-01：以前这里是直接 `onToggleSeparation(it)` —— 回调是
+        //   `{ on -> playerVm.toggleSeparation(on) }`，**丢弃了返回值**。
+        //   于是“无分离结果”时点下去**没有任何反馈**，看着就是开关坏了。
+        //   现在与播放器页一致：失败给提示条。
+        val noSepHint = stringResource(R.string.sep_none_hint)
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -466,7 +493,13 @@ fun SeparationScreen(
             }
             Switch(
                 checked = separationOn,
-                onCheckedChange = { onToggleSeparation(it) },
+                onCheckedChange = { on ->
+                    // ★2026-11-01：接住返回值 —— 无分离结果时给提示条。
+                    //   分离页本身就在“该做什么”的地方（下方就是档位按钮），
+                    //   所以提示条不带动作按钮，纯告知。
+                    val ok = onToggleSeparation(on)
+                    if (on && !ok) onHint(noSepHint, null, null)
+                },
                 enabled = hasSong,
             )
         }

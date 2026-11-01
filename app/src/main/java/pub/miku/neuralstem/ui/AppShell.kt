@@ -341,7 +341,22 @@ fun AppShell(
                 fileName = playerState.fileName,
                 separationOn = playerState.separationOn,
                 currentUri = playerState.currentUri,
+                // ★2026-11-01：**必须返回 Boolean**（是否已处理）。
+                //   以前这里是 `{ on -> playerVm.toggleSeparation(on) }`，
+                //   签名是 Unit → 返回值被丢弃 → 无分离结果时用户看不到任何反馈。
                 onToggleSeparation = { on -> playerVm.toggleSeparation(on) },
+                // 分离页也支持提示条（与播放器页同一实现）
+                onHint = { message, actionLabel, action ->
+                    scope.launch {
+                        val r = snackbarHostState.showSnackbar(
+                            message = message,
+                            actionLabel = actionLabel,
+                            withDismissAction = false,
+                            duration = SnackbarDuration.Short,
+                        )
+                        if (r == SnackbarResult.ActionPerformed) action?.invoke()
+                    }
+                },
                 // ★⑭b：发起分离时记录“目标曲”，完成时校验。
                 onSeparationStarted = { playerVm.markSeparationTarget(it) },
                 // ★G-3：当前播放位置（点击时才读）；供“从当前位置起分离”。
