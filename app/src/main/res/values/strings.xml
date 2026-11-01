@@ -16,8 +16,10 @@
     <string name="player_play">播放</string>
     <string name="player_pause">暂停</string>
     <string name="player_reset">重置</string>
-    <string name="player_sep_on">分离开关：多轨</string>
-    <string name="player_sep_off">分离开关：原曲</string>
+    <!-- ★2026-11-01：从「分离开关：多轨」缩为「分离 · 多轨」。保留“分离”两字
+         （只留“多轨”看不出它控制什么），改用 `·` 分隔以省宽度。 -->
+    <string name="player_sep_on">分离 · 多轨</string>
+    <string name="player_sep_off">分离 · 原曲</string>
     <string name="player_go_separate">去「分离」页处理 →</string>
 
     <!-- 分离页 -->
