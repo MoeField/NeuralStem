@@ -439,18 +439,62 @@ class MultiTrackController(context: Context) : Closeable {
         driftRunnable = null
     }
 
+    // ==================== ★校正统计（2026-11-01 用户要求：必须能量化）====================
+
+    /**
+     * 校正统计。
+     *
+     * ## 为何必须统计“seek 后到底有没有变小”（不是只记“我发了 seek”）
+     * 之前只记了“本期纠正 N 轨”，实际发生的是：校正 105 次、轨间差仍 890ms。
+     * 因为 **seekTo 会重新触发 buffer**，跟随轨又要等 ~800ms 才出声。
+     * 所以必须记录 seek **前**的差值，并在一段延迟后回采**后**的差值，
+     * 才能判断 seek “有效”还是“反而更差”。
+     */
+    internal data class DriftStats(
+        var ticks: Int = 0,
+        var corrections: Int = 0,
+        var sumAbsDelta: Long = 0L,
+        var maxAbsDelta: Long = 0L,
+        var lastDeltasMs: Map<String, Long> = emptyMap(),
+        /** seek 前 → 300ms 后的差值回采（正值 = 仍未追上） */
+        var lastSeekBeforeMs: Long = 0L,
+        var lastSeekAfterMs: Long = 0L,
+        var seekIneffective: Int = 0,
+    )
+
+    internal val driftStats = DriftStats()
+
+    /** 格式化当前统计（`mtpos` / 退出时输出）。 */
+    internal fun driftStatsLine(): String {
+        val s = driftStats
+        val avg = if (s.ticks > 0) s.sumAbsDelta / s.ticks else 0L
+        return "driftStats: ticks=${s.ticks} corrections=${s.corrections} " +
+            "avgAbs=${avg}ms maxAbs=${s.maxAbsDelta}ms " +
+            "seekBefore=${s.lastSeekBeforeMs}ms seekAfter=${s.lastSeekAfterMs}ms " +
+            "ineffective=${s.seekIneffective}"
+    }
+
     /** 执行一次校正（可包内直调，便于单测/诊断）。 */
     internal fun correctDriftOnce() {
         val list = tracks.values.toList()
-        Log.d(TAG, "driftTick: tracks=${list.size} playing=${list.map { it.player.isPlaying }}")
         if (list.size < 2) return
         // 任何一轨没在放就别动（暂停/缓冲中 seek 会制造新问题）
         if (list.any { !it.player.isPlaying }) return
         val anchor = list.first()
         val anchorPos = anchor.player.currentPosition
         if (anchorPos <= 0L) return
-        val deltas = list.drop(1).map { "${it.id}=${anchorPos - it.player.currentPosition}" }
-        Log.d(TAG, "driftTick: anchor=$anchorPos deltas=$deltas")
+
+        // ---- 统计：先记“看到的差值” ----
+        val s = driftStats
+        s.ticks++
+        s.lastDeltasMs = list.drop(1).associate { it.id to (anchorPos - it.player.currentPosition) }
+        for (d in s.lastDeltasMs.values) {
+            val a = kotlin.math.abs(d)
+            s.sumAbsDelta += a
+            if (a > s.maxAbsDelta) s.maxAbsDelta = a
+        }
+        Log.d(TAG, "driftTick: anchor=$anchorPos deltas=${s.lastDeltasMs}")
+
         var corrected = 0
         for (t in list.drop(1)) {
             val pos = t.player.currentPosition
@@ -458,13 +502,26 @@ class MultiTrackController(context: Context) : Closeable {
             if (kotlin.math.abs(delta) > DRIFT_THRESHOLD_MS) {
                 t.player.seekTo(anchorPos)
                 corrected++
-                Log.w(
-                    TAG,
-                    "drift: ${t.id} 落后 ${delta}ms（pos=$pos anchor=$anchorPos）→ 拉回",
-                )
+                s.corrections++
+                s.lastSeekBeforeMs = delta
+                // ★关键：seek 后回采 —— 判断它到底有没有用
+                val player = t.player
+                val id = t.id
+                mainHandler.postDelayed({
+                    val after = anchorPos - player.currentPosition
+                    s.lastSeekAfterMs = after
+                    val improved = kotlin.math.abs(after) < kotlin.math.abs(delta)
+                    if (!improved) s.seekIneffective++
+                    Log.w(
+                        TAG,
+                        "drift: $id seek 前=${delta}ms 后=${after}ms " +
+                            (if (improved) "→ 有效" else "→ ⚠️无效（seek 重新触发了 buffer）"),
+                    )
+                }, 300L)
+                Log.w(TAG, "drift: ${t.id} 落后 ${delta}ms（pos=$pos anchor=$anchorPos）→ 拉回")
             }
         }
-        if (corrected > 0) Log.w(TAG, "drift: 本轮纠正 $corrected 轨")
+        if (corrected > 0) Log.w(TAG, "drift: 本轮纠正 $corrected 轨 | ${driftStatsLine()}")
     }
 
     // ---------------- F4.2/F4.3 音量 ----------------

@@ -271,6 +271,8 @@ class PlaybackService : MediaSessionService() {
                     "pp=${t.player.playbackParameters}",
             )
         }
+        // ★校正统计（判断 seek 是否真的有效，不只是“我发了 seek”）
+        multiTrack?.let { Log.i(TAG, it.driftStatsLine()) }
         return ok()
     }
 
