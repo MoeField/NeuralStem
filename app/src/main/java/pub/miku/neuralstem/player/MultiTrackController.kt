@@ -88,6 +88,9 @@ class MultiTrackController(context: Context) : Closeable {
     /** ★对齐起播超时傅底（防止某轨永远不 READY 时完全不起播）。 */
     private var pendingStartTimeout: Runnable? = null
 
+    /** ★漂移校正周期任务（播放中持续把落后的跟随轨拉回）。 */
+    private var driftRunnable: Runnable? = null
+
     private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
 
     /** F4.3 独奏:非 null 时只有该轨发声 */
@@ -247,9 +250,12 @@ class MultiTrackController(context: Context) : Closeable {
     /** 播放:所有实例同一帧内 play() */
     fun play() {
         tracks.values.forEach { it.player.play() }
+        startDriftCorrection()
     }
 
     fun pause() {
+        // 暂停时停校正：暂停中 seek 会制造新错位，且恢复时另有对齐逻辑。
+        stopDriftCorrection()
         tracks.values.forEach { it.player.pause() }
     }
 
@@ -353,14 +359,112 @@ class MultiTrackController(context: Context) : Closeable {
         tracks.values.forEach { it.player.removeListener(alignmentListener) }
     }
 
-    /** 同帧：先全部 seek，再全部 play。 */
+    /**
+     * 同帧：先全部 seek，再全部 play。
+     *
+     * ## ★为何要先“静音预热”（2026-11-01 真机定位到的真因）
+     * 实测（四轨从对齐位置 100000 同时 play）：
+     * ```
+     * +1s: vocals=101028  drums=100217   ← drums 只走了 217ms
+     * +2s: vocals=103031  drums=102239   ← 差 792ms
+     * +4s: vocals=107036  drums=106229   ← 差 807ms（不增长）
+     * ```
+     * 主轨（session 的 singlePlayer）在载入多轨前**已在播单轨**，AudioTrack 是热的；
+     * 跟随轨是新建 ExoPlayer，首次 play 要 ~800ms 才真正出声。
+     * 差值**恒定不增长** → 是起播延迟，不是速率差异。
+     *
+     * 更坑的是：直接对跟随轨 `seekTo(anchor)` **无效** —— seek 本身会重新
+     * 触发 buffer，又一个 800ms 延迟，于是“校正”变成每 2 秒跳一次音却永远追不上
+     * （真机实测校正 105 次，差值仍 890ms）。
+     *
+     * 所以在**静音**状态下先 play 一小段，让每个 AudioTrack 真正建立/启动，
+     * 再 seek 到统一位置、恢复音量、一起 play。
+     */
     private fun alignAndPlay() {
         cancelPendingStart()
         val all = tracks.values.map { it.player }
         if (all.isEmpty()) return
-        all.forEach { it.seekTo(startAnchorMs) }
+
+        // 预热期间静音：不让用户听到乱响的一小段
+        all.forEach { it.volume = 0f }
         all.forEach { it.play() }
-        Log.i(TAG, "aligned start: ${all.size} track(s) @ ${startAnchorMs}ms")
+        mainHandler.postDelayed({
+            // 预热完成：统一位置 → 恢复音量 → 一起起播
+            all.forEach { it.seekTo(startAnchorMs) }
+            applySoloMute()          // 走音量唯一出口
+            all.forEach { it.play() }
+            startDriftCorrection()
+            Log.i(TAG, "aligned start(warm=${DRIFT_WARMUP_MS}ms): ${all.size} track(s) @ ${startAnchorMs}ms")
+        }, DRIFT_WARMUP_MS)
+    }
+
+    // ==================== ★漂移校正（2026-11-01 修“播放中错位”）====================
+
+    /**
+     * 周期检查各轨位置，落后太多的拉回主轨。
+     *
+     * ## 为何必须要有（真机实测）
+     * 即使起播完全对齐，**播放过程中仍会间歇性错位**：连续采样得到的轨间差是
+     * `10ms → 1022ms → 18ms → 9ms → 1010ms` 这种交替形态（非单调、无 seek 事件）。
+     * 这是 **AudioTrack underrun**：某个实例一时拿不到数据，AudioTrack 停等，
+     * 恢复后它的位置就永久落后了一截。
+     *
+     * 4 个独立 ExoPlayer 各自渲染，在低端机上几乎必然遇到，
+     * 靠“起播时对齐”无法避免 —— 只能在运行中持续拉起。
+     *
+     * ## 阈值为何是 150ms
+     * - 人耳对“人声/伴奏”这种高度相关信号的错位很敏感，~50ms 就能听出。
+     * - 但 re-seek 本身会造成一个微小的跳音，阈值太小会**频繁跳**（更差）。
+     * - 150ms 是“能听出”与“去抖”之间的折中。
+     *
+     * ## 为何只拉跟随轨
+     * 主轨是 session 的那个 player（通知/进度条都看它）。去动主轨会让
+     * UI 进度往回跳。只把落后的跟随轨 seek 到主轨位置，用户无感。
+     */
+    private fun startDriftCorrection() {
+        stopDriftCorrection()
+        val r = object : Runnable {
+            override fun run() {
+                correctDriftOnce()
+                mainHandler.postDelayed(this, DRIFT_CHECK_INTERVAL_MS)
+            }
+        }
+        driftRunnable = r
+        mainHandler.postDelayed(r, DRIFT_CHECK_INTERVAL_MS)
+        Log.i(TAG, "driftCorrection: 已启动（每 ${DRIFT_CHECK_INTERVAL_MS}ms，阈值 ${DRIFT_THRESHOLD_MS}ms）")
+    }
+
+    private fun stopDriftCorrection() {
+        driftRunnable?.let { mainHandler.removeCallbacks(it) }
+        driftRunnable = null
+    }
+
+    /** 执行一次校正（可包内直调，便于单测/诊断）。 */
+    internal fun correctDriftOnce() {
+        val list = tracks.values.toList()
+        Log.d(TAG, "driftTick: tracks=${list.size} playing=${list.map { it.player.isPlaying }}")
+        if (list.size < 2) return
+        // 任何一轨没在放就别动（暂停/缓冲中 seek 会制造新问题）
+        if (list.any { !it.player.isPlaying }) return
+        val anchor = list.first()
+        val anchorPos = anchor.player.currentPosition
+        if (anchorPos <= 0L) return
+        val deltas = list.drop(1).map { "${it.id}=${anchorPos - it.player.currentPosition}" }
+        Log.d(TAG, "driftTick: anchor=$anchorPos deltas=$deltas")
+        var corrected = 0
+        for (t in list.drop(1)) {
+            val pos = t.player.currentPosition
+            val delta = anchorPos - pos
+            if (kotlin.math.abs(delta) > DRIFT_THRESHOLD_MS) {
+                t.player.seekTo(anchorPos)
+                corrected++
+                Log.w(
+                    TAG,
+                    "drift: ${t.id} 落后 ${delta}ms（pos=$pos anchor=$anchorPos）→ 拉回",
+                )
+            }
+        }
+        if (corrected > 0) Log.w(TAG, "drift: 本轮纠正 $corrected 轨")
     }
 
     // ---------------- F4.2/F4.3 音量 ----------------
@@ -413,6 +517,8 @@ class MultiTrackController(context: Context) : Closeable {
     }
 
     private fun releaseAll() {
+        stopDriftCorrection()
+        cancelPendingStart()
         // 只 release 自己建的 player；主轨若是外部传入（singlePlayer），不能动。
         tracks.values.forEach { if (it.ownsPlayer) it.player.release() }
         tracks.clear()
@@ -431,5 +537,24 @@ class MultiTrackController(context: Context) : Closeable {
          * 不让用户完全听不到声音。超过就降级起播（可能仍有错位，但至少有声）。
          */
         const val ALIGN_TIMEOUT_MS = 3_000L
+
+        /** 漂移校正检查周期。2s 兼顾“及时拉起”与“不要过度打扰”。 */
+        const val DRIFT_CHECK_INTERVAL_MS = 2_000L
+
+        /**
+         * 起播前的静音预热时长。
+         *
+         * 实测跟随轨首次 play 要 ~800ms 才真正出声（AudioTrack 建立），
+         * 所以预热必须 ≥ 这个量级。1000ms 留余量。
+         */
+        const val DRIFT_WARMUP_MS = 1_000L
+
+        /**
+         * 触发校正的轨间差阈值（ms）。
+         *
+         * 人耳对强相关信号（人声/伴奏）的错位 ~50ms 就能听出；
+         * 但 re-seek 本身会造成微小跳音，阈值太小反而更差。150ms 是折中。
+         */
+        const val DRIFT_THRESHOLD_MS = 150L
     }
 }
