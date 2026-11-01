@@ -191,7 +191,16 @@ class StemMixer(
         Log.i(TAG, "AudioTrack created: buf=$minBuf bytes (${minBuf / (channels * 4)} frames)")
     }
 
-    /** 渲染循环：混合一块 → 写入（write 阻塞形成节拍）。 */
+    /**
+     * 渲染循环：混合一块 → 写入（write 阻塞形成节拍）。
+     *
+     * ## ★两层 try/catch 是必需的（2026-11-01 真机事故）
+     * 曾出现：拖动进度条后**彻底没声**，`POS_MIX` 冻结在 seek 位置、
+     * 但 `playing` 仍是 true（位置不动、也无心跳）。
+     * 根因：渲染线程在处理 seek（`AudioTrack.pause/flush/play`）时抛了异常，
+     * 线程直接死亡，而 `running/playing` 还是 true → 上层以为在播。
+     * 这类“线程静默死亡”极难从外部看出来，所以必须自己接住并设标志。
+     */
     private fun renderLoop() {
         val mix = FloatArray(CHUNK_FRAMES * channels)
         val tmp = FloatArray(CHUNK_FRAMES * channels)
@@ -199,81 +208,117 @@ class StemMixer(
         var loopWarn = 0
 
         while (running) {
-            if (!playing) {
-                // 暂停：短暂让出，避免忙等
-                Thread.sleep(10)
-                continue
-            }
-            // 处理 seek 请求（渲染线程独占 reader 操作）
-            val req = seekRequest
-            if (req >= 0L) {
-                seekRequest = -1L
-                framePos = req
-                t.pause()
-                t.flush()          // 丢弃已缓冲的旧数据，否则会先播出一段旧的
-                t.play()
-                Log.i(TAG, "renderLoop: seek 生效 @${framePos}frame")
-            }
+            try {
+                // ★seek 要放在“暂停检查”**之前**：
+                //   否则暂停状态下的 seek 永远不生效（下一轮又 continue 了）。
+                val req = seekRequest
+                if (req >= 0L) {
+                    seekRequest = -1L
+                    framePos = req
+                    // 重定位 AudioTrack（flush 必须先 pause）
+                    runCatching { t.pause() }
+                    runCatching { t.flush() }
+                    runCatching { t.play() }
+                    reloadSources(framePos)
+                    Log.i(TAG, "renderLoop: seek 生效 @${framePos}frame (playState=${t.playState})")
+                }
 
-            // 混音
-            java.util.Arrays.fill(mix, 0f)
-            var framesRead = 0
-            for (v in voices) {
-                val g = gainProvider(v.id)
-                if (g <= 0f) continue        // 静音/未独奏 → 连读都不读，省 IO
-                val n = runCatching { v.source.read(framePos, tmp, CHUNK_FRAMES) }.getOrDefault(0)
-                if (n <= 0) {
-                    if (loopWarn < 3) Log.w(TAG, "read[${v.id}] @${framePos} → $n（无数据）")
+                if (!playing) {
+                    Thread.sleep(10)
                     continue
                 }
-                if (g >= 0.999f) {
-                    for (i in 0 until n * channels) mix[i] += tmp[i]
-                } else {
-                    for (i in 0 until n * channels) mix[i] += tmp[i] * g
-                }
-                if (n > framesRead) framesRead = n
-            }
 
-            if (framesRead <= 0) {
-                if (loopWarn++ < 3) {
-                    Log.w(
+                // ---- 混音 ----
+                java.util.Arrays.fill(mix, 0f)
+                var framesRead = 0
+                for (v in voices) {
+                    val g = gainProvider(v.id)
+                    if (g <= 0f) continue        // 静音/未独奏 → 连读都不读，省 IO
+                    val n = runCatching { v.source.read(framePos, tmp, CHUNK_FRAMES) }.getOrDefault(0)
+                    if (n <= 0) {
+                        if (loopWarn < 3) Log.w(TAG, "read[${v.id}] @${framePos} → $n（无数据）")
+                        continue
+                    }
+                    if (g >= 0.999f) {
+                        for (i in 0 until n * channels) mix[i] += tmp[i]
+                    } else {
+                        for (i in 0 until n * channels) mix[i] += tmp[i] * g
+                    }
+                    if (n > framesRead) framesRead = n
+                }
+
+                if (framesRead <= 0) {
+                    if (loopWarn++ < 3) {
+                        Log.w(
+                            TAG,
+                            "renderLoop 无数据: framePos=$framePos total=$totalFrames " +
+                                "gains=${voices.map { "${it.id}=${gainProvider(it.id)}" }}",
+                        )
+                    }
+                    if (framePos >= totalFrames && totalFrames > 0) {
+                        Log.i(TAG, "renderLoop: 到达曲尾 @${framePos}/${totalFrames}")
+                        playing = false
+                        break
+                    }
+                    Thread.sleep(10)
+                    continue
+                }
+                loopWarn = 0
+
+                // 软限幅：多轨相加可能超过 ±1，直接写会削波失真
+                clampInPlace(mix, framesRead * channels)
+
+                val written = t.write(mix, 0, framesRead * channels, AudioTrack.WRITE_BLOCKING)
+                if (written < 0) {
+                    // ★write 返回错误（常见于 seek 期间状态切换）→ 重建 AudioTrack 后继续，
+                    //   不能像以前那样只 sleep 一下就不管（会永久无声）。
+                    Log.w(TAG, "AudioTrack.write 失败: $written → 重建 AudioTrack")
+                    runCatching {
+                        track?.release()
+                        track = null
+                    }
+                    ensureTrack()
+                    Thread.sleep(20)
+                    continue
+                }
+                framePos += (written / channels).toLong()
+
+                // ★心跳：确认渲染线程真的在推进（排查“位置卡住”时靠它）
+                if (framePos - lastBeatFrame >= sampleRate * 5) {
+                    lastBeatFrame = framePos
+                    Log.i(
                         TAG,
-                        "renderLoop 无数据: framePos=$framePos total=$totalFrames " +
-                            "gains=${voices.map { "${it.id}=${gainProvider(it.id)}" }}",
+                        "heartbeat: frame=$framePos (${framePos * 1000 / sampleRate}ms) " +
+                            "voices=${voices.size}",
                     )
                 }
-                if (framePos >= totalFrames && totalFrames > 0) {
-                    Log.i(TAG, "renderLoop: 到达曲尾 @${framePos}/${totalFrames}")
-                    playing = false
-                    break
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+                Log.i(TAG, "renderLoop: 被中断，退出")
+                break
+            } catch (ex: Throwable) {
+                // ★线程不能死：死掉后 running/playing 仍是 true，上层会以为在播，
+                //   表现为“位置冻结、完全没声”，极难排查（真机事故）。
+                Log.e(TAG, "renderLoop 异常 @${framePos}frame，继续循环", ex)
+                runCatching {
+                    track?.pause(); track?.flush(); track?.play()
                 }
-                Thread.sleep(10)
-                continue
-            }
-            loopWarn = 0
-
-            // 软限幅：多轨相加可能超过 ±1，直接写会削波失真
-            clampInPlace(mix, framesRead * channels)
-
-            val written = t.write(mix, 0, framesRead * channels, AudioTrack.WRITE_BLOCKING)
-            if (written < 0) {
-                Log.w(TAG, "AudioTrack.write 失败: $written")
-                Thread.sleep(10)
-                continue
-            }
-            framePos += (written / channels).toLong()
-
-            // ★心跳：确认渲染线程真的在推进（排查“位置卡住”时靠它）
-            if (framePos - lastBeatFrame >= sampleRate * 5) {
-                lastBeatFrame = framePos
-                Log.i(
-                    TAG,
-                    "heartbeat: frame=$framePos (${framePos * 1000 / sampleRate}ms) " +
-                        "voices=${voices.size}",
-                )
+                Thread.sleep(50)
             }
         }
         Log.i(TAG, "renderLoop 退出 @${framePos}frame")
+    }
+
+    /**
+     * seek 后重置数据源。
+     *
+     * 文件源天生支持随机读，但 [RingBufferStemSource] 的 cursor 不能回退太前，
+     * 统一调一次也没坏处（幂等）。失败的单个源不影响其他源。
+     */
+    private fun reloadSources(toFrame: Long) {
+        voices.forEach { v ->
+            runCatching { v.source.read(toFrame, FloatArray(channels), 0) }
+        }
     }
 
     @Volatile private var lastBeatFrame = 0L
