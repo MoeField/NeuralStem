@@ -274,8 +274,16 @@ fun SeparationScreen(
     val isLandscape =
         LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
 
-    // ★⑬：当前可导出的 4-stem 结果（无则导出按钮禁用置灰、常在位）。
-    val done4Result = (separationTask as? SeparationTask.Done4)
+    // ★⑬：当前可导出的 stem 文件。
+    //
+    // ★2026-11-01 真机发现：旧实现是 `separationTask as? Done4`，但
+    // `consumeSeparationDone()` 会把状态置回 Idle，而 UI 在完成时**立即消费**它
+    // → 分离一结束，separationTask 就不再是 Done2/Done4 → **导出按钮永远置灰**。
+    // 实测：完成分离后按钮 `enabled=false`，`/sdcard/Music/separate` 从未被创建。
+    //
+    // 现改为读 VM 里“消费瞬间抄下来”的快照，与瞬态任务状态解耦。
+    // 好处：2 轨（本输新增）与 4 轨（原就有但从未生效）一并修好。
+    val exportableFiles by vm.lastExportable.collectAsState()
 
     // ★⑬：档位区（横屏在右栏 / 竖屏在中间）—— 抽成 lambda 复用。
     val tierSection: @Composable () -> Unit = {
@@ -561,14 +569,14 @@ fun SeparationScreen(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            // ★⑬：导出——常在位；仅有 4-stem 结果时可用（否则禁用置灰）。
+            // ★⑬：导出——常在位；有 4 轨**或 2 轨**结果时可用（否则禁用置灰）。
             Button(
                 onClick = {
-                    done4Result?.let {
-                        exportMsg = StemExporter.export(app, fileName.ifBlank { "song" }, it.stemFiles)
+                    exportableFiles?.let {
+                        exportMsg = StemExporter.export(app, fileName.ifBlank { "song" }, it)
                     }
                 },
-                enabled = done4Result != null,
+                enabled = exportableFiles != null,
             ) { Text(stringResource(R.string.sep_export)) }
             Button(onClick = {
                 val n = vm.clearCache()

@@ -87,8 +87,35 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
         _separationTask.value = session.separation
     }
 
+    /**
+     * ★可导出的 stem 文件（最近一次**成功**分离的产物）。
+     *
+     * ## 为何不直接用 [separationTask]
+     * 2026-11-01 真机发现：`consumeSeparationDone()` 会把状态**置回 `Idle`**，
+     * 而 UI 的 `LaunchedEffect(separationTask)` 在分离完成时**立即消费**它。
+     * 结果：分离一完成，`separationTask` 就不是 [SeparationTask.Done2]/[Done4] 了
+     * → 用 `separationTask as? Done4` 判断导出按钮的地方**永远是 null**。
+     *
+     * 实测后果：**导出按钮（含原本就有的 4 轨导出）一直置灰、从未可用过**。
+     *
+     * 所以这里在**消费的那一刻**把文件列表抄下来长期保存，
+     * 导出只看这份快照，与瞬态任务状态解耦。
+     */
+    private val _lastExportable = MutableStateFlow<List<File>?>(null)
+    val lastExportable: StateFlow<List<File>?> = _lastExportable.asStateFlow()
+
     /** ★I3：消费一次分离完成结果（返回并清空）。UI 完成回调只经此。 */
-    fun consumeSeparationDone() = session.consumeSeparationDone().also { pushSeparationTask() }
+    fun consumeSeparationDone() = session.consumeSeparationDone().also { done ->
+        // ★在清空之前把可导出文件抄下来（下单的推流会把它置回 Idle）
+        when (done) {
+            is SeparationTask.Done2 ->
+                _lastExportable.value = listOf(done.vocalsFile, done.accompanimentFile)
+            is SeparationTask.Done4 ->
+                _lastExportable.value = done.stemFiles
+            else -> Unit   // null / 其他态：保留上一次的可导出结果
+        }
+        pushSeparationTask()
+    }
 
     /** Task 4.2:分离任务宿主(进程级单例),切页面/切后台不中断 */
     private val repo = SeparationRepository.get(app)

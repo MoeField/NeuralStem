@@ -32,10 +32,15 @@ object StemExporter {
 
     /** stem 顺序 → 英文文件名（与 [pub.miku.neuralstem.spike.Spleeter4Dsp.STEM_KINDS] 对应）。 */
     private val STEM_NAMES = mapOf(
+        // 4 轨（Spleeter4 / Demucs）
         "vocals" to "vocals.wav",
         "drums" to "drums.wav",
         "bass" to "bass.wav",
         "other" to "other.wav",
+        // 2 轨（Spleeter 2-stem / UVR）：产物就叫 vocals.wav + accompaniment.wav。
+        // 注：不写这行也会走 [englishName] 兜底得到同名，但那是**巧合**，
+        //     依赖兜底逻辑的实现细节；显式写出来才不会被未来的清洗规则变更静静破坏。
+        "accompaniment" to "accompaniment.wav",
     )
 
     /**
@@ -56,7 +61,7 @@ object StemExporter {
         val errors = ArrayList<String>()
 
         stemFiles.forEach { f ->
-            val outName = STEM_NAMES[f.name.lowercase()] ?: englishName(f.name)
+            val outName = outNameFor(f.name)
             if (copyTo(context, f, dirRel, outName)) ok++ else errors += f.name
         }
         original?.let { o ->
@@ -117,10 +122,30 @@ object StemExporter {
         return true
     }
 
+    /**
+     * 推导导出文件名。
+     *
+     * ## ★ 2026-11-01 修了一个死代码 bug
+     * 旧实现是 `STEM_NAMES[f.name.lowercase()]` —— 但 `STEM_NAMES` 的**键是不带
+     * 扩展名的 stem 名**（`"vocals"`），而 `f.name` 是 `"vocals.wav"`。
+     * 两者永远不可能相等 ⇒ **整张表从未命中过**，所有文件都走了 [englishName] 兜底。
+     *
+     * 它一直“看起来是对的”，因为兜底凑巧把 `vocals.wav` 原样返回了。
+     * 但兜底保留了原始大小写：`VOCALS.WAV` → `VOCALS.WAV`，与预期的
+     * 小写规范名不一致。
+     *
+     * 现改为：**按 stem 名（去扩展名）查表**，查不到再兜底。
+     * （回归测试：[pub.miku.neuralstem.export.StemExportNamingTest]）
+     */
+    internal fun outNameFor(fileName: String): String {
+        val stem = fileName.substringBeforeLast('.').lowercase()
+        return STEM_NAMES[stem] ?: englishName(fileName)
+    }
+
     /** 非已知 stem 的文件名 → 英文清洗（保底）。 */
     private fun englishName(name: String): String {
         val base = name.substringBeforeLast('.')
-        val ext = name.substringAfterLast('.', "wav")
+        val ext = name.substringAfterLast('.', "wav").lowercase()
         val safe = base.replace(Regex("[^A-Za-z0-9_\\-]"), "_").ifBlank { "stem" }
         return "$safe.$ext"
     }
