@@ -348,11 +348,17 @@ fun AppShell(
                         val t = playerVm.state.value.fileName
                         scope.launch { snackbarHostState.showSnackbar("分离完成（$t），但你已切歌，未切换多轨") }
                     } else {
-                        // M4/S3：4-stem → 四轨播放（顺序 = vocals/drums/bass/other）
-                        val labels = listOf("人声", "鼓", "贝斯", "其他")
+                        // ★2026-11-01 修「音轨错位」：**不能**用索引去贴 STEM_KINDS。
+                        //   两个引擎的 STEM_KINDS 顺序不同：
+                        //     Spleeter4Dsp: [vocals, drums, bass, other]
+                        //     Demucs:       [drums, bass, other, vocals]
+                        //   旧代码统一用 Spleeter4Dsp 的顺序贴标签 → 用 Demucs 时
+                        //   id/label 与实际文件全错位（实测 id=vocals 指向 drums.wav）。
+                        //   改为**按文件实际名**推导，与产出方顺序解耦。
                         playerVm.loadMultiTrack(
-                            files.mapIndexed { i, f ->
-                                Triple(Spleeter4Dsp.STEM_KINDS[i], labels.getOrElse(i) { "轨$i" }, f)
+                            files.map { f ->
+                                val kind = f.nameWithoutExtension.lowercase()
+                                Triple(kind, stemLabel(kind), f)
                             },
                         )
                         playerVm.markStemsAvailable()
@@ -537,6 +543,22 @@ private val RAIL_WIDTH = 88.dp
 private val RAIL_BOTTOM_PAD = 6.dp
 
 /** 导航图标：用**文本字形**代替 material-icons（项目既定：零新增图标依赖）。 */
+/**
+ * stem 文件名 → 显示标签。
+ *
+ * ★为何按文件名而不是索引：两个分离引擎的 STEM_KINDS 顺序不同
+ * （Spleeter4 是 vocals 在前，Demucs 是 drums 在前），
+ * 用索引贴标签会把 id/label 全部弄错位。
+ */
+private fun stemLabel(kind: String): String = when (kind) {
+    "vocals" -> "人声"
+    "accompaniment" -> "伴奏"
+    "drums" -> "鼓"
+    "bass" -> "贝斯"
+    "other" -> "其他"
+    else -> kind
+}
+
 private fun glyphFor(dest: AppDestination): String = when (dest) {
     AppDestination.PLAYLIST -> "\u2630"   // ☰
     AppDestination.PLAYER -> "\u25B6"     // ▶
