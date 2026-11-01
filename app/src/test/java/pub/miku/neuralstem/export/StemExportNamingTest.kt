@@ -59,4 +59,45 @@ class StemExportNamingTest {
     fun `无扩展名的输入也能得到 wav 扩展名`() {
         assertEquals("stem.wav", StemExporter.outNameFor(""))
     }
+
+    // ==================== 目录名（2 轨/4 轨共用）====================
+
+    /**
+     * ★ 2026-11-01 真机发现的丑目录名。
+     *
+     * 旧实现把所有非 ASCII 变下划线，实测：
+     * `colate ななひら - Good Night.mp3` → `colate______-_Good_Night_mp3`
+     * （日文全变下划线，且 `.mp3` 也进了目录名）
+     */
+    @Test
+    fun `中文日文目录名保留原字符`() {
+        val n = StemExporter.safeDirName("colate ななひら - Good Night.mp3")
+        assertEquals("colate ななひら - Good Night", n)
+    }
+
+    @Test
+    fun `目录名不带扩展名`() {
+        assertEquals("katyusha", StemExporter.safeDirName("katyusha.mp3"))
+        assertEquals("Timber", StemExporter.safeDirName("Timber.m4a"))
+    }
+
+    @Test
+    fun `非法字符被替换`() {
+        // / \ : * ? " < > | 与控制字符
+        val n = StemExporter.safeDirName("a/b\\c:d*e?f\"g<h>i|j")
+        assertEquals(false, n.any { it in "/\\:*?\"<>|" })
+        assertTrue("应保留主体字符，实际 $n", n.startsWith("a"))
+    }
+
+    @Test
+    fun `全非法或空名回退为 song`() {
+        assertEquals("song", StemExporter.safeDirName(""))
+        assertEquals("song", StemExporter.safeDirName("   "))
+    }
+
+    @Test
+    fun `过长名称被截断`() {
+        val n = StemExporter.safeDirName("あ".repeat(200) + ".wav")
+        assertTrue("应 <=80 字符，实际 ${n.length}", n.length <= 80)
+    }
 }
