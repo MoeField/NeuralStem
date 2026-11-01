@@ -88,6 +88,9 @@
     <string name="sep_none_title">尚无分离结果</string>
     <string name="sep_none_body">请先在「分离」页选择档位并分离。</string>
     <string name="sep_none_go">去分离页</string>
+    <!-- ★2026-11-01：点开关但无分离结果时改为**自动消失的提示条**（不再弹窗）。
+         文案要短：snackbar 只有 4 秒，长的看不完。 -->
+    <string name="sep_none_hint">尚无分离结果，请先分离</string>
     <!-- G-4 分离前台服务通知 -->
     <string name="sep_notif_title">音轨分离</string>
     <string name="sep_notif_channel">分离任务</string>

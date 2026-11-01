@@ -67,16 +67,32 @@ fun PlayerScreen(
     importEnabled: Boolean = true,
     // ★R2：导入成功后通知宿主（→ 追加进当前选中歌单）。
     onImported: (Uri, String) -> Unit = { _, _ -> },
+    /**
+     * ★2026-11-01：**自动消失的提示条**（由宿主用 Snackbar 实现）。
+     *
+     * ## 为何不再用 AlertDialog
+     * 旧实现点开关但无分离结果时弹一个营销式对话框（要手动关）。
+     * 但这是个“告知”而不是“决策”—— 用户不需要做选择，弹窗只会多一步点击。
+     * 改用提示条（4 秒自动消失），并保留一个「去分离页」快捷动作。
+     *
+     * @param message 提示文案
+     * @param actionLabel 动作按钮文案（null = 不显示按钮）
+     * @param onAction 动作回调
+     */
+    onHint: (message: String, actionLabel: String?, onAction: (() -> Unit)?) -> Unit =
+        { _, _, _ -> },
 ) {
     val state by vm.state.collectAsState()
     // ★F5.4：触感反馈（分离完成在分离页；这里用于 1.0× 吸附）。
     val haptic = LocalHapticFeedback.current
-    // ★⑮-1：无分离结果时点开关 → 弹**简提示**（不再选档位）；确定后跳「分离」页。
-    var showNoSepDialog by remember { mutableStateOf(false) }
-    // ★⑭a/⑮-1：分离开关切换——开且无结果 → 弹提示；否则直接切。
+    // ★⑭a/⑮-1：分离开关切换——开且无结果 → **提示条**（自动消失）；否则直接切。
+    //
+    // ★2026-11-01：从 AlertDialog 改为提示条。理由见 [onHint] 注释。
+    val noSepHint = stringResource(R.string.sep_none_hint)
+    val noSepAction = stringResource(R.string.sep_none_go)
     val onSeparationToggle: (Boolean) -> Unit = { on ->
         val ok = vm.toggleSeparation(on)
-        if (on && !ok) showNoSepDialog = true
+        if (on && !ok) onHint(noSepHint, noSepAction) { onOpenSpike() }
     }
     // ★ 进度流传引用即可（子组件内部 collect）。
     val progressFlow = vm.progressFlow
@@ -210,23 +226,10 @@ fun PlayerScreen(
         // ★方案1：「分轨混音」已移到**混音页**（转盘/速度条因此恢复大尺寸）。
     }
 
-    // ★⑮-1：无分离结果时的**简提示**——确定即跳「分离」页（档位在那里选）。
-    if (showNoSepDialog) {
-        AlertDialog(
-            onDismissRequest = { showNoSepDialog = false },
-            title = { Text(stringResource(R.string.sep_none_title)) },
-            text = { Text(stringResource(R.string.sep_none_body)) },
-            confirmButton = {
-                TextButton(onClick = {
-                    showNoSepDialog = false
-                    onOpenSpike()   // 跳「分离」页（选档位/跑分离在那里）
-                }) { Text(stringResource(R.string.sep_none_go)) }
-            },
-            dismissButton = {
-                TextButton(onClick = { showNoSepDialog = false }) { Text(stringResource(R.string.sep_cancel)) }
-            },
-        )
-    }
+    // ★2026-11-01：这里原本是一个 AlertDialog（“尚无分离结果 / 去分离页 / 取消”）。
+    //   已改为由宿主用 Snackbar 呈现（见参数 [onHint]）：
+    //   这是个“告知”而不是“决策”，不该强制用户点一下才能继续。
+    //   「去分离页」仍保留 —— 作为提示条上的一个动作（Snackbar 的 actionLabel）。
 }
 
 /**

@@ -86,6 +86,7 @@
     <string name="sep_none_title">No separation result yet</string>
     <string name="sep_none_body">Choose a tier and separate on the “Separate” page first.</string>
     <string name="sep_none_go">Go to Separate</string>
+    <string name="sep_none_hint">No separation result — separate first</string>
     <!-- G-4 separation foreground service notification -->
     <string name="sep_notif_title">Track separation</string>
     <string name="sep_notif_channel">Separation task</string>

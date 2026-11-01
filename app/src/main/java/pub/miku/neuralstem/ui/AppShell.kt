@@ -25,8 +25,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -316,6 +318,20 @@ fun AppShell(
                         selectedListId,
                         PlaylistStore.TrackRef(uri.toString(), title),
                     )
+                },
+                // ★2026-11-01：自动消失的提示条（替代原来的 AlertDialog）。
+                //   用 AppShell 现有的 snackbarHost（Scaffold 里已渲染），
+                //   时长 Short ≈ 4 秒，点「去分离页」可提前关掉并跳转。
+                onHint = { message, actionLabel, action ->
+                    scope.launch {
+                        val r = snackbarHostState.showSnackbar(
+                            message = message,
+                            actionLabel = actionLabel,
+                            withDismissAction = false,
+                            duration = SnackbarDuration.Short,
+                        )
+                        if (r == SnackbarResult.ActionPerformed) action?.invoke()
+                    }
                 },
             )
 
