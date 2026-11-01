@@ -55,7 +55,7 @@ object StemExporter {
         stemFiles: List<File>,
         original: File? = null,
     ): String {
-        val safeSong = songName.replace(Regex("[^A-Za-z0-9_\\-]"), "_").ifBlank { "song" }
+        val safeSong = safeDirName(songName)
         val dirRel = "${Environment.DIRECTORY_MUSIC}/separate/$safeSong"
         var ok = 0
         val errors = ArrayList<String>()
@@ -140,6 +140,35 @@ object StemExporter {
     internal fun outNameFor(fileName: String): String {
         val stem = fileName.substringBeforeLast('.').lowercase()
         return STEM_NAMES[stem] ?: englishName(fileName)
+    }
+
+    /**
+     * 把歌曲名变成**安全的目录名**。
+     *
+     * ## ★ 2026-11-01 真机修正
+     * 旧实现是 `replace(Regex("[^A-Za-z0-9_-]"), "_")` —— 把所有非 ASCII 都变下划线。
+     * 实测效果：`colate ななひら - Good Night.mp3` → `colate______-_Good_Night_mp3`
+     * （中文/日文全变下划线，且**扩展名也进了目录名**）。
+     *
+     * ## 为何当时写错了
+     * 那段逻辑原本用于 **stem 文件名**（确实需要纯 ASCII，见 [englishName]），
+     * 被直接复用到**歌曲目录名**上。但两者要求不同：
+     * - stem 文件名：规范化的英文（算法/测试依赖它们）
+     * - 歌曲目录名：只是给人看的，**中文日文在 FAT/exFAT 上完全合法**
+     *
+     * ## 现在的做法
+     * 只剔除**真正非法**的字符（`/ \ : * ? " < > |` 与控制字符），
+     * 保留 Unicode 与空格；另外去掉扩展名（目录名不该带 `.mp3`）。
+     */
+    internal fun safeDirName(songName: String): String {
+        val base = songName.substringBeforeLast('.', songName)
+        val cleaned = base
+            .replace(Regex("[/\\\\:*?\"<>|\\x00-\\x1F]"), "_")
+            .trim()
+            .trimEnd('.')          // Windows/FAT 不允许目录名以点结尾
+            .ifBlank { "song" }
+        // 避免过长（FAT 单段上限 255；留余量给后续可能的子文件）
+        return if (cleaned.length <= 80) cleaned else cleaned.take(80).trimEnd()
     }
 
     /** 非已知 stem 的文件名 → 英文清洗（保底）。 */
