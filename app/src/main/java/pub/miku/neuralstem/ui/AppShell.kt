@@ -175,15 +175,38 @@ fun AppShell(
         // 而当前曲可能来自 content:// → 统一只比“文件名”。
         val sessionSource = edgeSession.sourceUri?.substringAfterLast('/')
         val currentSource = playerState.currentUri?.substringAfterLast('/')
-        val belongsToCurrent = sessionSource == null ||
+        // ★★ 2026-11-01 修“分离跑完却不切多轨、开关点不动”
+        //
+        // ## 旧逻辑为何错
+        // 它拿 `session.sourceUri` 与 `currentUri` 的**文件名**比较。
+        // 但 `content://` 的曲会被 CurrentTrackBridge 拷成
+        // `cacheDir/separate_input.mp3`，而 `session.sourceUri` 记的**就是这个临时文件名**
+        // → 与真实歌名永远不相等 → 必然判为“已切歌”→ **不切轨**。
+        // 真机实测：`edge gate=Finished 但会话属于 separate_input.mp3（当前 Good Night.mp3）→ 不切轨`。
+        //
+        // 后果链：不切轨 → loadMultiTrack 未调 → lastStems 为空 →
+        //         用户点分离开关时 toggleSeparation(true) 返回 false →
+        //         弹出“无分离结果”—— 看起来就是“开关点不动”。
+        //
+        // ## 正确判据
+        // 项目里已有 [PlayerViewModel.separationMatchesCurrent]：它在**点击分离时**
+        // 记下**原始 uri**（markSeparationTarget），比的是 uri 而不是临时文件名。
+        // 旧的文件名比较仅作兜底（两者都非空且相等时也算属于本曲）。
+        val belongsToCurrent = playerVm.separationMatchesCurrent() ||
+            sessionSource == null ||
             currentSource == null ||
             sessionSource == currentSource
 
         if (ready && !edgeSwitched && !belongsToCurrent) {
             // 静默跳过（用户正在听新歌，不弹 snackbar 打扰）；只在日志里记一笔。
+            // ★2026-11-01：把判据也打出来 —— 上次这条日志没说清“为何不切”，
+            //   导致排查绕了一大圈（实际是临时文件名 vs 真实歌名）。
             Log.i(
                 "AppShell",
-                "edge gate=$gate 但会话属于 $sessionSource（当前 $currentSource）→ 不切轨",
+                "edge gate=$gate 但会话不属于当前曲 → 不切轨 " +
+                    "(session=$sessionSource current=$currentSource " +
+                    "targetUri=${playerVm.separationTargetUriOrNull()} " +
+                    "currentUri=${playerState.currentUri})",
             )
             return@LaunchedEffect
         }
