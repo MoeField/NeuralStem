@@ -1599,6 +1599,27 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun loadMultiTrack(stems: List<Triple<String, String, File>>, startPositionMs: Long = 0L) {
         if (stems.isEmpty()) return
+        // ★★ 2026-11-01：**统一在这里校验文件存在**（所有入口的汇合点：
+        //   toggleSeparation / AppShell 的 edge 完成 / 4 轨完成）。
+        //
+        // ## 为何必须在入口处筛
+        // 缓存可能被三种方式清掉：①「清理缓存」按钮；②`Avs3PcmCache.evict` 的 LRU；
+        // ③系统清理。**没有一种会通知到这里**，而旧实现直接 `lastStems = stems`，
+        // 于是“缓存清了但 lastStems 还在”→ 开关看着能开、实际发不出声。
+        // 判据统一放在 [StemAvailability]（可 JVM 单测）。
+        val alive = StemAvailability.alive(stems)
+        if (alive.size != stems.size) {
+            Log.w(
+                TAG,
+                "loadMultiTrack: ${stems.size - alive.size}/${stems.size} 个 stem 文件不存在 → 丢弃",
+            )
+        }
+        if (alive.isEmpty()) {
+            lastStems = null
+            _state.value = _state.value.copy(stemsAvailable = false)
+            Log.w(TAG, "loadMultiTrack: 无可用 stem，放弃进入多轨")
+            return
+        }
         // ★G-3fix：优先带位置的多轨载入（edge 完成后切文件播放入口）；
         //   seek 在 READY 时消费（prepare 后立即 seek 会被丢弃）。
         if (startPositionMs > 0L) {
@@ -1606,7 +1627,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             pendingSeekMs = startPositionMs
         }
         // ★R-b：记住本次 stems（供分离开关“关→再开”恢复）；并标记可用。
-        lastStems = stems
+        lastStems = alive
         _state.value = _state.value.copy(stemsAvailable = true)
         // ★P2 修复：多轨时转盘外环应显示**原曲波形**（外环=装饰化进度条）。
         //   Service 会给主轨(=session player) setMediaItem → onMediaItemTransition 触发，
@@ -1762,13 +1783,37 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                 Log.i(TAG, "toggleSeparation(true): 无分离结果 → 需先分离")
                 return false
             }
+            // ★★ 2026-11-01：必须校验文件**还在磁盘上**。
+            //
+            // ## 为何不能只信 lastStems 非空（用户实报）
+            // `lastStems` 是**内存里的 File 引用**，而 `SeparationRepository.clearCache()`
+            // 只删磁盘目录、**不通知 VM** → 清完缓存后 lastStems 仍非空：
+            //   开关放行 → loadMultiTrack → 文件不存在 → 无声音，
+            //   但 UI 已经显示「分离 · 多轨」—— 看着就是“清了缓存开关还能开”。
+            //
+            // 也不能靠“清缓存时通知”：缓存还可能被 LRU 淘汰（Avs3PcmCache.evict）、
+            // 或被系统清理。**在使用处校验才是唯一可靠的点。**
+            // ★★ 2026-11-01：必须校验文件**还在磁盘上**（用户实报：清了缓存开关还能开）。
+            //   判据统一放在 [StemAvailability]，可 JVM 单测。
+            val alive = StemAvailability.alive(stems)
+            if (alive.size != stems.size) {
+                Log.w(
+                    TAG,
+                    "toggleSeparation(true): ${stems.size - alive.size}/${stems.size} 个 stem 已不存在" +
+                        "（缓存被清理？）→ 作废分离结果",
+                )
+                lastStems = null
+                _state.value = _state.value.copy(stemsAvailable = false)
+            }
+            if (alive.isEmpty()) return false
+
             // ★R-b：已有结果 → 直接恢复多轨（不必重跑分离）
             //
             // ★G-3fix（用户实报）：必须带上**当前位置**。loadMultiTrack 会给主轨换
             //   MediaItem（mp3 → vocals stem）→ 从 0 开始 → 进度条跳回 0。
             val resumeMs = runCatching { mediaController?.currentPosition ?: 0L }.getOrDefault(0L)
-            Log.i(TAG, "toggleSeparation(true): 用 lastStems(${stems.size}) 恢复多轨 @${resumeMs}ms")
-            loadMultiTrack(stems, startPositionMs = resumeMs)
+            Log.i(TAG, "toggleSeparation(true): 用 lastStems(${alive.size}) 恢复多轨 @${resumeMs}ms")
+            loadMultiTrack(alive, startPositionMs = resumeMs)
             mediaController?.play()
             return true
         } else {
