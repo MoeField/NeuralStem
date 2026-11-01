@@ -492,6 +492,31 @@ class PlaybackService : MediaSessionService() {
                 MultiTrackSession.CMD_TOGGLE_MUTE -> handleToggleMute(args)
                 MultiTrackSession.CMD_TOGGLE_SOLO -> handleToggleSolo(args)
                 MultiTrackSession.CMD_EXIT -> handleExit()
+                MultiTrackSession.CMD_PLAY -> {
+                    // 多轨播/停：驱动 mixer，并同步主轨（保持通知/会话状态一致）
+                    multiTrack?.play()
+                    singlePlayer?.play()
+                    ok()
+                }
+                MultiTrackSession.CMD_PAUSE -> {
+                    multiTrack?.pause()
+                    singlePlayer?.pause()
+                    ok()
+                }
+                MultiTrackSession.CMD_TOGGLE -> {
+                    // ★状态真源在 Service（mixer），不让 VM 自己判 isPlaying（有滞后）
+                    val c = multiTrack
+                    if (c == null) err("非多轨") else {
+                        val nowPlaying = !c.isPlaying()
+                        if (nowPlaying) {
+                            c.play(); singlePlayer?.play()
+                        } else {
+                            c.pause(); singlePlayer?.pause()
+                        }
+                        Log.i(TAG, "CMD_TOGGLE → ${if (nowPlaying) "play" else "pause"}")
+                        ok()
+                    }
+                }
                 MultiTrackSession.CMD_SET_EQ_ENABLED -> handleSetEqEnabled(args)
                 MultiTrackSession.CMD_SET_EQ_BAND -> handleSetEqBand(args)
                 MultiTrackSession.CMD_RESET_EQ -> handleResetEq()

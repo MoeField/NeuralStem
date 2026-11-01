@@ -42,6 +42,25 @@ object MultiTrackSession {
     /** 退出多轨（回到单轨）。无 args。 */
     const val CMD_EXIT = "nst.exitMultiTrack"
 
+    // ★2026-11-01：多轨播/停必须**显式下发**。
+    //
+    // ## 为何不能用“镜像主轨 isPlaying”
+    // 多轨时主轨 ExoPlayer 只是静音门面，本身会因缓冲/静音轨而反复抖动；
+    // 用它驱动 mixer 会导致“刚启动就被 pause”（真机实测）。
+    // 所以播/停指令一律由 UI → VM → Service 显式传递。
+    const val CMD_PLAY = "nst.playMultiTrack"
+    const val CMD_PAUSE = "nst.pauseMultiTrack"
+
+    /**
+     * 多轨切换播/停（**由 Service 自己判断当前状态**）。
+     *
+     * ## 为何需要它，而不是 VM 自己判 isPlaying 再发 PLAY/PAUSE
+     * VM 的 `isPlaying` 来自 extras（200ms 一次），有滞后与瞬时不一致。
+     * 曾经出现过“点了暂停没反应”（VM 以为它在播 → 其实状态已过期）。
+     * 状态的真源是 Service 里的 mixer，toggle 就该由它自己判。
+     */
+    const val CMD_TOGGLE = "nst.toggleMultiTrack"
+
     // ---- M3-P3：EQ 控制（EQ 已搬进 Service）----
 
     /** EQ 开关。args: [KEY_EQ_ENABLED]。 */
@@ -62,8 +81,20 @@ object MultiTrackSession {
     /** **M4/S1 诊断**：日志打印每条轨的 `currentPosition`（验证多轨 seek 后对齐）。 */
     const val CMD_DEBUG_POS = "nst.debugPos"
 
+    /**
+     * 所有自定义命令的**白名单**。
+     *
+     * ## ★新增命令必须加进来（2026-11-01 踩过）
+     * `MediaSession` 只接受在 `onConnect` 里声明过的 session commands。
+     * 不在这个列表里的命令，`MediaController.sendCustomCommand()` 会**静默失败**
+     * （返回的 future 有异常，但我们没监听）→ 表现为“点了没反应、日志也没有”。
+     *
+     * 实测：新增 CMD_TOGGLE 后忘了加这里，暂停按钮完全无效，
+     * Service 侧连 `onCustomCommand` 都不打印。
+     */
     val ALL_COMMANDS = listOf(
         CMD_LOAD, CMD_LOAD_STREAM, CMD_SET_VOLUME, CMD_TOGGLE_MUTE, CMD_TOGGLE_SOLO, CMD_EXIT,
+        CMD_PLAY, CMD_PAUSE, CMD_TOGGLE,
         CMD_SET_EQ_ENABLED, CMD_SET_EQ_BAND, CMD_RESET_EQ, CMD_APPLY_EQ_TEST_CURVE,
         CMD_APPLY_EQ_DEFAULT_CURVE, CMD_DEBUG_POS,
     )
