@@ -16,8 +16,8 @@
     <string name="player_play">Play</string>
     <string name="player_pause">Pause</string>
     <string name="player_reset">Reset</string>
-    <string name="player_sep_on">Separation: multi-track</string>
-    <string name="player_sep_off">Separation: original</string>
+    <string name="player_sep_on">Sep · multi-track</string>
+    <string name="player_sep_off">Sep · original</string>
     <string name="player_go_separate">Go to “Separate” page →</string>
 
     <!-- Separation -->

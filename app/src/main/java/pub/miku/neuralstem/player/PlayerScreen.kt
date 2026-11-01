@@ -416,6 +416,26 @@ private fun ControlsArea(
                 textAlign = TextAlign.Center,
             )
         }
+
+        // ★2026-11-01 排版重做（横屏右栏 / 竖屏下部共用）：
+        //   顺序改为 **歌名 → 导入音频 → 进度条 → 控制（3 个）→ 循环 → 分离开关**。
+        //
+        // ## 为何“导入音频”提到进度条上方
+        //   与**竖屏一致**（竖屏本来就在歌名下方、转盘上方）。之前横屏把它
+        //   塞在底部与分离开关同一行，两边体验不一样。
+        //
+        // ## 为何控制行只剩 3 个按钮
+        //   实测横屏右栏容器只有 536px，而 ⏪/播放/⏩/循环 四个按钮总宽 590px
+        //   → **循环按钮右边被裁掉 30px**（实测 bounds 右边界 1422 > 容器 1392），
+        //   这就是“循环按钮字被挤没”的真因。3 个按钮 422px，余量 114px。
+        //
+        // ## 为何循环按钮自带文字
+        //   旧版按钮在控制行、文字“顺序”孤零零挂在下一行居中，
+        //   看起来像“按钮字掉了”。合并成一个控件后语义完整：`[↻ 顺序]`。
+        onImport?.let {
+            Button(onClick = it) { Text(stringResource(R.string.player_import), maxLines = 1) }
+        }
+
         ProgressBar(
             progressFlow = progressFlow,
             anchorFlow = vm.anchorFlow,
@@ -435,40 +455,50 @@ private fun ControlsArea(
             Button(onClick = { vm.seekTo(vm.progress.positionMs + 10_000) }) {
                 Text("⏩", style = MaterialTheme.typography.titleMedium)
             }
-            Button(
-                onClick = vm::cycleRepeatMode,
-                // 紧凑内容边距（避免默认横向 padding 把 "↻₁" 逼窄 → 换行）。
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+        }
+
+        // 循环模式：图标 + 文字在**同一个按钮内**（点即切换模式）。
+        Button(
+            onClick = vm::cycleRepeatMode,
+            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                // ★ maxLines=1 + softWrap=false：防止 "↻₁" 两个码点被容器宽度逼成两行
-                // （否则 “₁” 会掉到下面，按钮高度翻倍 —— 真机实测）。
+                // maxLines=1 + softWrap=false：防止 "↻₁" 两个码点被逼成两行
                 Text(
                     state.repeatMode.glyph,
                     style = MaterialTheme.typography.titleMedium,
                     maxLines = 1,
                     softWrap = false,
                 )
+                Text(
+                    stringResource(state.repeatMode.labelRes),
+                    style = MaterialTheme.typography.labelLarge,
+                    maxLines = 1,
+                )
             }
         }
-        Text(
-            stringResource(state.repeatMode.labelRes),
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
 
-        // ---- ★⑫：导入音频 + 分离开关（原曲 ↔ 多轨）**同一行** ----
+        // ---- ★2026-11-01：分离开关**独占一行** ----
+        //   标签从「分离开关：多轨」缩为「分离 · 多轨」：
+        //   • 保留“分离”两字（而非只留“多轨”）—— 单独一个“多轨”看不出
+        //     它控制什么；“分离”相当于标题，成本约 50px 但消除歧义。
+        //   • 状态用 `·` 分隔，比全角冒号更紧凑。
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            onImport?.let {
-                Button(onClick = it) { Text(stringResource(R.string.player_import), maxLines = 1) }
-            }
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    stringResource(if (state.separationOn) R.string.player_sep_on else R.string.player_sep_off),
+                    stringResource(
+                        if (state.separationOn) R.string.player_sep_on
+                        else R.string.player_sep_off,
+                    ),
                     style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 1,
                 )
                 // ★G-3ux：边分离边播进行中 → 明确告知“已可听，但后台还在分离”。
                 //   没有这一行，用户会看到“多轨”却没意识到分离尚未完成。
