@@ -310,6 +310,9 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     /** ★⑭b：本次分离是否仍针对“当前曲”（否则不应强行切多轨）。 */
     fun separationMatchesCurrent(): Boolean = separationTargetUri == _state.value.currentUri
 
+    /** 诊断用：当前记录的分离目标 uri（null = 未记录）。 */
+    fun separationTargetUriOrNull(): String? = separationTargetUri
+
     /** 进度记忆落库器（直接写文件——与 [PlaylistStore.recordProgress] 注释一致：播放器直调）。 */
     private val playlistStore by lazy { PlaylistStore(getApplication()) }
 
