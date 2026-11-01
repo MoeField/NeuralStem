@@ -240,6 +240,16 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     @Volatile
     private var pendingSeekMs: Long? = null
 
+    // ==================== ★多轨位置镜像（2026-11-01 单 AudioTrack 重构）====================
+    //
+    // 多轨时真实声音来自 StemMixer（自己的 AudioTrack），而 mediaController 指向的
+    // singlePlayer 只是静音门面，它的 currentPosition **不可用**（实测与 mixer 差 1.3s）。
+    // Service 每 200ms 把 mixer 位置写进 session extras，这里缓存并在轮询时本地插值。
+    @Volatile private var mixPosMs: Long = 0L
+    @Volatile private var mixDurationMs: Long = 0L
+    /** 收到 mixPosMs 时刻的 elapsedRealtime；0 = 尚未收到。 */
+    @Volatile private var mixPosAtClock: Long = 0L
+
     /**
      * ★G-3：边分离边播切轨后要恢复的位置（ms）。
      * 独立于 [pendingSeekMs]，因为切轨会触发 `onMediaItemTransition`（它会清 pendingSeekMs），
@@ -413,11 +423,13 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                     applyEqSnapshot(extras.getString(MultiTrackSession.KEY_EQ_JSON))
                     // ★2026-11-01：多轨真实位置来自 StemMixer（单 AudioTrack），
                     //   主轨 ExoPlayer 只是静音门面，它的 currentPosition 不可用。
+                    //   这里只**缓存**，不直接写 _progress ——
+                    //   否则它会与 100ms 轮询的门面位置交替覆盖 → 时间显示来回跳。
                     if (extras.containsKey(MultiTrackSession.KEY_MIX_POS_MS)) {
-                        val pos = extras.getLong(MultiTrackSession.KEY_MIX_POS_MS, 0L)
-                        val dur = extras.getLong(MultiTrackSession.KEY_MIX_DUR_MS, 0L)
+                        mixPosMs = extras.getLong(MultiTrackSession.KEY_MIX_POS_MS, 0L)
+                        mixDurationMs = extras.getLong(MultiTrackSession.KEY_MIX_DUR_MS, 0L)
+                        mixPosAtClock = android.os.SystemClock.elapsedRealtime()
                         val playing = extras.getBoolean(MultiTrackSession.KEY_MIX_PLAYING, false)
-                        _progress.value = Progress(pos, dur)
                         if (playing != _state.value.isPlaying) {
                             _state.value = _state.value.copy(isPlaying = playing)
                         }
@@ -856,8 +868,29 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             while (isActive) {
                 val p = mediaController
                 if (p != null) {
-                    val dur = p.duration.coerceAtLeast(0L)
-                    var pos = p.currentPosition
+                    // ★★ 2026-11-01 多轨位置修正（修「时间显示前后一秒持续跳」）
+                    //
+                    // ## 问题
+                    // 多轨重构后，真实声音来自 StemMixer（自己的 AudioTrack），
+                    // 而 `p`（mediaController = singlePlayer）只是一个**静音门面**，
+                    // 它仍在从自己那个位置推进（实测与 mixer 差 1.3 秒）。
+                    // 而 extras 每 200ms 才推一次 mixer 位置，
+                    // → 100ms 轮询读到门面位置、200ms 收到 mixer 位置 → **两者来回跳**。
+                    //
+                    // ## 修法
+                    // 多轨时**完全不读门面位置**，改用“最后一次 mixer 位置 + 本地插值”。
+                    // 插值保证 100ms 粒度平滑且单调（不会倒退）。
+                    val multi = isMultiTrackLoaded && mixPosAtClock > 0L
+                    val dur = if (multi) mixDurationMs
+                    else p.duration.coerceAtLeast(0L)
+                    var pos = if (multi) {
+                        val elapsed = if (p.isPlaying) {
+                            (android.os.SystemClock.elapsedRealtime() - mixPosAtClock).coerceAtLeast(0L)
+                        } else 0L
+                        (mixPosMs + elapsed).coerceIn(0L, dur.coerceAtLeast(0L))
+                    } else {
+                        p.currentPosition
+                    }
                     val isPlaying = p.isPlaying
                     // ★ seek 锁定：seek 后 currentPosition 可能短暂回退到旧值 → 防回跳。
                     //
@@ -1211,6 +1244,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         originalUri = uri
         originalName = displayName
         isMultiTrackLoaded = false
+        clearMixMirror()
         // ★R-b：仅“换新曲”时作废分离结果；“回原曲”保留（否则开关关→开就丢结果）。
         if (resetStems) {
             lastStems = null
@@ -1317,9 +1351,18 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun togglePlayPause() {
-        // M3/P2(v2):session 的 player = singlePlayer（多轨时它是主轨）；
-        // Service 在其 play/pause 时同步跟随轨。
         val p = mediaController ?: return
+        // ★2026-11-01：多轨时真实声音在 StemMixer，必须显式下发命令。
+        //   不能再依赖“主轨 isPlaying 镜像到 mixer” —— 主轨是静音门面，
+        //   自身状态会抖动（会在 mixer 刚启动时就把它暂停）。
+        if (isMultiTrackLoaded) {
+            // ★交给 Service 自己 toggle：状态真源在 mixer，VM 的 isPlaying 有滞后
+            userPausedDuringEdge = _state.value.isPlaying
+            Log.i(TAG, "toggle(多轨) → CMD_TOGGLE (wasPlaying=${_state.value.isPlaying})")
+            sendMtCommand(MultiTrackSession.CMD_TOGGLE)
+            return
+        }
+        Log.i(TAG, "toggle(单轨) → p.pause/play (mediaController=${p != null})")
         if (p.isPlaying || p.playWhenReady) {
             // ★闸门：用户**主动**暂停 → 记下来，水位线追上后也不自动恢复。
             userPausedDuringEdge = true
@@ -1334,6 +1377,10 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     /** 显式播放（幂等）。用于“切多轨后确保在播”。 */
     fun play() {
         userPausedDuringEdge = false
+        if (isMultiTrackLoaded) {
+            sendMtCommand(MultiTrackSession.CMD_PLAY)
+            return
+        }
         mediaController?.play()
     }
 
@@ -1515,7 +1562,20 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             pendingMtCommands += name to args
             return
         }
-        mc.sendCustomCommand(MultiTrackSession.cmd(name), args)
+        // ★必须检查 future：未在白名单（MultiTrackSession.ALL_COMMANDS）里的命令，
+        //   media3 会**静默失败** → 表现为“点了没反应、日志也没有”。
+        //   实测踩过：新增 CMD_TOGGLE 忘了加白名单，暂停按钮完全无效。
+        runCatching {
+            val future = mc.sendCustomCommand(MultiTrackSession.cmd(name), args)
+            future.addListener(
+                {
+                    runCatching { future.get() }.onFailure { e ->
+                        Log.e(TAG, "sendMtCommand 失败: $name（是否漏入 ALL_COMMANDS？）", e)
+                    }
+                },
+                { runnable -> runnable.run() },
+            )
+        }.onFailure { Log.e(TAG, "sendCustomCommand 抛异常: $name", it) }
     }
 
     /** 连接就绪后重放暂存的多轨命令。 */
@@ -1734,6 +1794,13 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
      *   只发 `CMD_EXIT` 会让主轨 mediaItem 停留在当前 stem（听感 = 某一轨独响），
      *   必须重载 [originalUri]（保留 [lastStems]，开关再开可恢复）。
      */
+    /** 清除多轨位置镜像（退出多轨 / 清空当前曲时调）。 */
+    private fun clearMixMirror() {
+        mixPosMs = 0L
+        mixDurationMs = 0L
+        mixPosAtClock = 0L
+    }
+
     fun exitMultiTrack() {
         if (!_state.value.isMultiTrack) return   // 幂等：非多轨时点「退出多轨」/发 exitsmt 不做任何事
         val resumeMs = runCatching { mediaController?.currentPosition ?: 0L }.getOrDefault(0L)
@@ -1759,6 +1826,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     private fun bareExitMultiTrack() {
         sendMtCommand(MultiTrackSession.CMD_EXIT)
         isMultiTrackLoaded = false
+        clearMixMirror()
         // ★闸门：退出多轨/回原曲 → 播放侧不再受闸门管（原曲是文件，不是 stem）。
         gatePausedPlayer = false
         userPausedDuringEdge = false
@@ -1788,6 +1856,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         if (_state.value.isMultiTrack) {
             sendMtCommand(MultiTrackSession.CMD_EXIT)
             isMultiTrackLoaded = false
+            clearMixMirror()
         }
         // ★3b：状态机同步回单轨（clearCurrent 后必为单轨）。
         session.syncMode(SessionMode.Single)
