@@ -77,6 +77,16 @@ object MultiTrackSession {
     /** 曲目显示名（通知标题 = 主轨曲目名）。 */
     const val KEY_TITLE = "title"
 
+    /**
+     * ★对齐起播位置（ms）。
+     *
+     * ## 为何必须传给 Service 而不是在 VM 里 seek
+     * VM 的 READY 回调只能 seek **主轨**（mediaController 就是 singlePlayer），
+     * 跟随轨会留在 0 → 两边错位几秒（真机实测）。
+     * 现由 Service 对所有轨下同一位置（见 [MultiTrackController.playWhenAllReady]）。
+     */
+    const val KEY_START_MS = "startMs"
+
     /** Service → UI 的多轨状态快照（JSON）。无该键 = 非多轨模式。 */
     const val KEY_TRACKS_JSON = "nst.tracksJson"
 

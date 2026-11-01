@@ -524,16 +524,26 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                     durationMs = p.duration.coerceAtLeast(0L),
                 )
                 // ★G-3：边分离边播切轨后，READY 时 seek 到 carry-over 位置并开始播放。
+                //
+                // ★2026-11-01 修正：**多轨时不能在这里 seek**。
+                //   `p` 是 mediaController = singlePlayer = **只是主轨**；
+                //   在这里 seek 会把人声移动到 T，而伴奏跟随轨仍留在 0 → 错位几秒。
+                //   现由 Service 的 `playWhenAllReady(anchor)` 对**所有轨**统一下发。
                 if (playbackState == Player.STATE_READY) {
                     val edge = edgeSeekMs
                     if (edge != null) {
                         edgeSeekMs = null
-                        p.seekTo(edge)
                         pendingSeekMs = edge
                         lastShownMs = edge
                         _progress.value = _progress.value.copy(positionMs = edge)
-                        p.play()
-                        Log.i(TAG, "G-3: edge READY → seek ${edge}ms + play")
+                        if (!isMultiTrackLoaded) {
+                            p.seekTo(edge)
+                            p.play()
+                            Log.i(TAG, "G-3: edge READY → seek ${edge}ms + play")
+                        } else {
+                            // 多轨：Service 已按 KEY_START_MS 对齐所有轨，这里只同步 UI
+                            Log.i(TAG, "G-3: 多轨 READY → 位置交给 Service 对齐（${edge}ms）")
+                        }
                     }
                 }
                 // ★T-5：READY 后消费待恢复的续播位置（此处 seek 才有效；prepare 后立即 seek 会被丢弃）。
@@ -1551,6 +1561,9 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                 putString(MultiTrackSession.KEY_ITEMS, items.toString())
                 // 通知标题 = 主轨曲目名（取自当前文件名）
                 putString(MultiTrackSession.KEY_TITLE, _state.value.fileName)
+                // ★对齐起播位置：Service 会对**所有轨**下同一位置
+                //   （不能只靠 VM 的 seek —— 那只会 seek 主轨，跟随轨留在 0）
+                putLong(MultiTrackSession.KEY_START_MS, startPositionMs.coerceAtLeast(0L))
             },
         )
         // 新载入的轨要继承当前变速变调（否则立刻时间轴漂移）
@@ -1588,6 +1601,8 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             Bundle().apply {
                 putString(MultiTrackSession.KEY_ITEMS, items.toString())
                 putString(MultiTrackSession.KEY_TITLE, _state.value.fileName)
+                // ★对齐起播：carry-over 位置交给 Service 对所有轨统一下发
+                putLong(MultiTrackSession.KEY_START_MS, startPositionMs.coerceAtLeast(0L))
             },
         )
         val cur = _state.value

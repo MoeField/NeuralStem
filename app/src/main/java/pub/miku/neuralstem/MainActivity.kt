@@ -277,6 +277,12 @@ class MainActivity : ComponentActivity() {
                 playerVm.play()
             }
             "exitsmt" -> playerVm.exitMultiTrack()
+            // ★mtpos：让 Service 打印**每条轨**的 currentPosition（验证多轨对齐）。
+            //
+            // 为何需要：多轨对齐（2026-11-01「音轨错位」）用听感很难判定分寸，
+            // 必须看真实位置差。正常 4 轨位置应几乎相等（差个位数 ms）；
+            // 旧实现会看到跟随轨停在 0 而主轨已几千 ms。
+            "mtpos" -> playerVm.debugPositions()
             // ★ncmtest：NCM 解码验证（仅在 -Pwith_ncm=true 构建中存在）。
             //   a0 = .ncm 绝对路径。结果写 TAG=NcmVerify。
             //
