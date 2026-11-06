@@ -1449,7 +1449,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             is EdgeSeparationSession.Gate.Starved -> {
                 if (!gatePausedPlayer && p.playWhenReady) {
                     gatePausedPlayer = true
-                    p.pause()
+                    gateSetPaused(true, p)
                     Log.i(TAG, "gate: 播放追上分离 → 暂停 @${positionMs}ms " +
                         "(played=${playedFrames}f avail=${s.availableFrames}f)")
                 }
@@ -1459,7 +1459,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                     gatePausedPlayer = false
                     // ★只在不处于“用户主动暂停”时才恢复（否则是幽灵播放）。
                     if (!userPausedDuringEdge) {
-                        p.play()
+                        gateSetPaused(false, p)
                         Log.i(TAG, "gate: 水位线追上来 → 恢复播放 @${positionMs}ms")
                     } else {
                         Log.i(TAG, "gate: 可恢复了，但用户已手动暂停 → 不自动播放")
@@ -1467,6 +1467,31 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
             else -> Unit
+        }
+    }
+
+    /**
+     * ★Gate 控播放的唯一出口（2026-11-06）。
+     *
+     * ## 为什么不能直接 `mediaController.pause()`
+     * 多轨下真正发声的是 Service 里的 `StemMixer`；`mediaController` 指向的
+     * `singlePlayer` 只是**静音门面**，而 `PlaybackService` 在多轨下**刻意忽略**
+     * 门面的 `isPlaying` 变化（真源是 mixer —— 见其 `onIsPlayingChanged` 注释）。
+     * ⇒ 门面 pause 只停 UI 时钟，混音器照播，Gate 形同虚设。
+     *
+     * 所以多轨必须走和用户点暂停**同一条**命令（`CMD_PAUSE` / `CMD_PLAY`）。
+     * 单轨没有这个问题，仍走 `player.pause()/play()`。
+     */
+    private fun gateSetPaused(paused: Boolean, p: Player?) {
+        if (isMultiTrackLoaded) {
+            sendMtCommand(
+                if (paused) MultiTrackSession.CMD_PAUSE else MultiTrackSession.CMD_PLAY,
+            )
+            Log.i(TAG, "gate: mixer ${if (paused) "PAUSE" else "PLAY"}")
+        } else if (paused) {
+            p?.pause()
+        } else {
+            p?.play()
         }
     }
 
@@ -1483,7 +1508,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         userPausedDuringEdge = false
         if (s.gate.value is EdgeSeparationSession.Gate.Starved) {
             gatePausedPlayer = true
-            mediaController?.pause()
+            gateSetPaused(true, mediaController)
             Log.i(TAG, "gate: seek 到未分离区 → 暂停 @${positionMs}ms")
         }
     }
@@ -1792,9 +1817,8 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             //   但 UI 已经显示「分离 · 多轨」—— 看着就是“清了缓存开关还能开”。
             //
             // 也不能靠“清缓存时通知”：缓存还可能被 LRU 淘汰（Avs3PcmCache.evict）、
-            // 或被系统清理。**在使用处校验才是唯一可靠的点。**
-            // ★★ 2026-11-01：必须校验文件**还在磁盘上**（用户实报：清了缓存开关还能开）。
-            //   判据统一放在 [StemAvailability]，可 JVM 单测。
+            // 或被系统清理。**在使用处校验才是唯一可靠的点**，判据统一放在
+            // [StemAvailability]（可 JVM 单测）。
             val alive = StemAvailability.alive(stems)
             if (alive.size != stems.size) {
                 Log.w(
