@@ -183,6 +183,17 @@ class MultiTrackController(private val context: Context) : Closeable {
     }
 
     /**
+     * ★多轨变速变调（2026-11-06）。
+     *
+     * @param speed 速度倍率
+     * @param pitchRate 音高倍率（2^(半音/12)）
+     */
+    fun setSpeedPitch(speed: Float, pitchRate: Float) {
+        mixer?.setSpeedPitch(speed, pitchRate)
+        Log.i(TAG, "setSpeedPitch speed=$speed pitchRate=$pitchRate")
+    }
+
+    /**
      * 同步 seek。
      *
      * ## 为何现在“同步”是天然的
@@ -200,6 +211,9 @@ class MultiTrackController(private val context: Context) : Closeable {
     fun durationMs(): Long = mixer?.durationMs ?: 0L
 
     fun isPlaying(): Boolean = mixer?.isPlaying ?: false
+
+    /** 混音器是否已到曲尾（变速时比门面先到）。 */
+    fun isEnded(): Boolean = mixer?.ended ?: false
 
     fun isReady(): Boolean = mixer != null && tracks.isNotEmpty()
 

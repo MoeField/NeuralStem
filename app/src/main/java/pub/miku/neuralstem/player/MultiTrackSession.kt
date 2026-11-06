@@ -61,6 +61,16 @@ object MultiTrackSession {
      */
     const val CMD_TOGGLE = "nst.toggleMultiTrack"
 
+    /**
+     * ★2026-11-06：多轨变速变调。args: [KEY_SPEED]（倍率）, [KEY_PITCH_RATE]（倍率）。
+     *
+     * ## 为何不能用 `mediaController.playbackParameters`
+     * 那会把参数下发给**静音门面** ExoPlayer，触发它的 AudioSink 重配
+     * （坑 48：频繁改参 → ERROR_CODE_TIMEOUT），而真正发声的 StemMixer 收不到。
+     * 所以多轨必须走这条自定义命令，由 Service 转给 StemMixer。
+     */
+    const val CMD_SET_SPEED_PITCH = "nst.setSpeedPitch"
+
     // ---- M3-P3：EQ 控制（EQ 已搬进 Service）----
 
     /** EQ 开关。args: [KEY_EQ_ENABLED]。 */
@@ -94,7 +104,7 @@ object MultiTrackSession {
      */
     val ALL_COMMANDS = listOf(
         CMD_LOAD, CMD_LOAD_STREAM, CMD_SET_VOLUME, CMD_TOGGLE_MUTE, CMD_TOGGLE_SOLO, CMD_EXIT,
-        CMD_PLAY, CMD_PAUSE, CMD_TOGGLE,
+        CMD_PLAY, CMD_PAUSE, CMD_TOGGLE, CMD_SET_SPEED_PITCH,
         CMD_SET_EQ_ENABLED, CMD_SET_EQ_BAND, CMD_RESET_EQ, CMD_APPLY_EQ_TEST_CURVE,
         CMD_APPLY_EQ_DEFAULT_CURVE, CMD_DEBUG_POS,
     )
@@ -104,6 +114,10 @@ object MultiTrackSession {
     const val KEY_ITEMS = "items"
     const val KEY_TRACK_ID = "trackId"
     const val KEY_VOLUME = "volume"
+
+    /** 多轨变速/变调（倍率，1.0 = 原速/原调）。 */
+    const val KEY_SPEED = "nst.speed"
+    const val KEY_PITCH_RATE = "nst.pitchRate"
 
     /** 曲目显示名（通知标题 = 主轨曲目名）。 */
     const val KEY_TITLE = "title"
@@ -127,6 +141,14 @@ object MultiTrackSession {
     const val KEY_MIX_POS_MS = "nst.mixPosMs"
     const val KEY_MIX_DUR_MS = "nst.mixDurMs"
     const val KEY_MIX_PLAYING = "nst.mixPlaying"
+
+    /**
+     * ★2026-11-06：混音器是否已到曲尾。
+     *
+     * 变速后混音器的媒体时间与门面 ExoPlayer 不同步（2× 时混音器先结束），
+     * 不能只靠门面的 STATE_ENDED 自动切下一首 —— 否则会白等半首歌。
+     */
+    const val KEY_MIX_ENDED = "nst.mixEnded"
 
     /** Service → UI 的多轨状态快照（JSON）。无该键 = 非多轨模式。 */
     const val KEY_TRACKS_JSON = "nst.tracksJson"

@@ -60,6 +60,15 @@ class PlaybackService : MediaSessionService() {
     private val handler = Handler(Looper.getMainLooper())
 
     /**
+     * ★2026-11-06：多轨变速变调参数缓存。
+     *
+     * 单轨由 ExoPlayer 自己记；多轨要把同一组参数交给 `StemMixer`。
+     * 进入多轨时用它初始化（否则会从 1.0× 开始，与 UI 显示不一致）。
+     */
+    @Volatile private var lastSpeed: Float = 1f
+    @Volatile private var lastPitchRate: Float = 1f
+
+    /**
      * M3-P3：EQ 控制器（**从 VM 搬进 Service**）。
      * 单轨挂 singlePlayer 会话；多轨每轨各挂一份（参数由 EqController 同步）。
      */
@@ -101,10 +110,13 @@ class PlaybackService : MediaSessionService() {
             }
 
             override fun onPlaybackParametersChanged(playbackParameters: PlaybackParameters) {
-                // ★2026-11-01：多轨不再需要镜像参数 —— 混音器固定 1.0×（见 StemMixer）。
-                //   主轨即使因 UI 误操作改了速率，也不影响混音（它本身是静音的，只当门面）。
+                // 单轨的真源仍是 ExoPlayer；缓存下来供进入多轨时初始化 StemMixer。
+                lastSpeed = playbackParameters.speed
+                lastPitchRate = playbackParameters.pitch
                 if (inMultiTrack) {
-                    Log.i(TAG, "多轨下忽略 playbackParameters 变更：$playbackParameters")
+                    // ★多轨不再写门面参数（VM 走 CMD_SET_SPEED_PITCH）。
+                    //   若仍然收到变更，只记录：混音器的真源是它自己的 targetSpeed/targetPitchRate。
+                    Log.i(TAG, "多轨下收到门面 playbackParameters 变更（忽略）：$playbackParameters")
                 }
             }
 
@@ -176,6 +188,7 @@ class PlaybackService : MediaSessionService() {
                 b.putLong(MultiTrackSession.KEY_MIX_POS_MS, c.currentPositionMs())
                 b.putLong(MultiTrackSession.KEY_MIX_DUR_MS, c.durationMs())
                 b.putBoolean(MultiTrackSession.KEY_MIX_PLAYING, c.isPlaying())
+                b.putBoolean(MultiTrackSession.KEY_MIX_ENDED, c.isEnded())
                 session?.setSessionExtras(b)
             }
             handler.postDelayed(this, 200L)
@@ -343,6 +356,8 @@ class PlaybackService : MediaSessionService() {
         //    所以保留“session 认真实 ExoPlayer”这条已验证的路径。）
         singlePlayer?.volume = 0f
         c.load(items, args.getString(MultiTrackSession.KEY_TITLE))
+        // ★把单轨期间/上次多轨的变速变调带给新混音器（否则会从 1.0× 开始，与 UI 不一致）。
+        c.setSpeedPitch(lastSpeed, lastPitchRate)
         inMultiTrack = true
         c.playWhenAllReady(args.getLong(MultiTrackSession.KEY_START_MS, 0L))
         attachMultiTrackEq(c)
@@ -385,6 +400,7 @@ class PlaybackService : MediaSessionService() {
         singlePlayer?.volume = 0f
         val c = ensureMultiTrack()
         c.loadStream(items, args.getString(MultiTrackSession.KEY_TITLE))
+        c.setSpeedPitch(lastSpeed, lastPitchRate)
         inMultiTrack = true
         c.playWhenAllReady(args.getLong(MultiTrackSession.KEY_START_MS, 0L))
         attachMultiTrackEq(c)
@@ -516,6 +532,16 @@ class PlaybackService : MediaSessionService() {
                         Log.i(TAG, "CMD_TOGGLE → ${if (nowPlaying) "play" else "pause"}")
                         ok()
                     }
+                }
+                MultiTrackSession.CMD_SET_SPEED_PITCH -> {
+                    val c = multiTrack ?: return Futures.immediateFuture(err("非多轨"))
+                    val speed = args.getFloat(MultiTrackSession.KEY_SPEED, 1f)
+                    val pitchRate = args.getFloat(MultiTrackSession.KEY_PITCH_RATE, 1f)
+                    lastSpeed = speed
+                    lastPitchRate = pitchRate
+                    c.setSpeedPitch(speed, pitchRate)
+                    Log.i(TAG, "CMD_SET_SPEED_PITCH speed=$speed pitchRate=$pitchRate")
+                    ok()
                 }
                 MultiTrackSession.CMD_SET_EQ_ENABLED -> handleSetEqEnabled(args)
                 MultiTrackSession.CMD_SET_EQ_BAND -> handleSetEqBand(args)

@@ -272,6 +272,10 @@ class MainActivity : ComponentActivity() {
                 if (pairs.isNotEmpty()) playerVm.playQueue(pairs, 0)
             }
             "eq" -> playerVm.setEqEnabled(a0?.toBooleanStrictOrNull() ?: false)
+            // ★speed / pitch：变速变调（多轨与单轨走同一 UI 方法；测试用）
+            "speed" -> a0?.toFloatOrNull()?.let { playerVm.setSpeed(it) }
+            "pitch" -> a0?.toFloatOrNull()?.let { playerVm.setPitchSemitones(it) }
+            "resetsp" -> playerVm.resetSpeedPitch()
             "inmt" -> if (a0 != null && a1 != null) {
                 playerVm.loadMultiTrack(
                     listOf(

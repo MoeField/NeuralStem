@@ -6,6 +6,7 @@ import android.media.AudioTrack
 import android.util.Log
 import pub.miku.neuralstem.devtools.EdgeProbe
 import java.io.Closeable
+import java.nio.ByteBuffer
 
 /**
  * ★多轨混音器：**一个 AudioTrack，所有 stem 在同一采样计数上求和**（2026-11-01）。
@@ -48,21 +49,47 @@ class StemMixer(
 
     @Volatile private var running = false
 
-    /** 播放头（绝对帧）。渲染线程推进；seek 时由外部改写。 */
+    /**
+     * **源读头**（绝对帧）。渲染线程推进；seek 时由外部改写。
+     *
+     * ★2026-11-06：变速后它**不再等于媒体位置**（2× 时播 1 秒只前进 0.5 秒媒体）。
+     * 对外位置一律看 [playFrame]。
+     */
     @Volatile private var framePos: Long = 0L
+
+    /**
+     * 对外报告的**媒体帧位置**：旁路时 = [framePos]；变速时 = Sonic 的输出映射。
+     * 渲染线程每块写一次，主线程只读。
+     */
+    @Volatile private var playFrame: Long = 0L
 
     @Volatile private var playing = false
 
+    /** 是否已到曲尾（供 Service/VM 触发自动下一首；seek/重播会清掉）。 */
+    @Volatile var ended: Boolean = false
+        private set
+
     /** 请求 seek 到的目标帧；渲染线程看到后跳到该处。 */
     @Volatile private var seekRequest: Long = -1L
+
+    /** 目标参数（UI/命令线程写；渲染线程读并应用）。 */
+    @Volatile private var targetSpeed: Float = 1f
+    @Volatile private var targetPitchRate: Float = 1f
+
+    /** 渲染线程已生效的参数（与 target 比较，避免每块重复 flush）。 */
+    private var appliedSpeed: Float = 1f
+    private var appliedPitchRate: Float = 1f
+
+    /** 输出端 Sonic（1.0× 时 `isActive == false`，走原路径零开销）。 */
+    private val stage = SonicStage(sampleRate, channels, CHUNK_FRAMES)
 
     /** 本曲总帧数（取所有 voice 的最小值，短的先结束）。 */
     val totalFrames: Long
         get() = voices.minOfOrNull { it.source.totalFrames } ?: 0L
 
-    /** 当前播放位置（ms）。 */
+    /** 当前播放位置（ms，**媒体时间**，不是写出时间）。 */
     val positionMs: Long
-        get() = if (sampleRate <= 0) 0L else framePos * 1000L / sampleRate
+        get() = if (sampleRate <= 0) 0L else playFrame * 1000L / sampleRate
 
     val durationMs: Long
         get() = if (sampleRate <= 0) 0L else totalFrames * 1000L / sampleRate
@@ -102,9 +129,32 @@ class StemMixer(
         voices.clear()
         items.forEach { voices += Voice(it.first, it.second) }
         framePos = 0L
+        playFrame = 0L
         seekRequest = -1L
+        ended = false
+        lastBeatFrame = 0L
+        // 线程已停 → 可以安全重置 Sonic 时钟；参数保持 target（Service 在 load 后会下发）。
+        stage.flushAt(0L)
+        appliedSpeed = 1f
+        appliedPitchRate = 1f
         ensureTrack()
         Log.i(TAG, "load: ${voices.size} voice(s) ${voices.map { it.id }} @${sampleRate}Hz/${channels}ch")
+    }
+
+    /**
+     * 设置变速/变调（任意线程可调；渲染线程下一块生效）。
+     *
+     * @param speed 速度倍率（1.0 = 原速）
+     * @param pitchRate 音高倍率（= 2^(semitones/12)，1.0 = 原调）
+     */
+    fun setSpeedPitch(speed: Float, pitchRate: Float) {
+        val s = if (speed.isFinite() && speed > 0f) speed else 1f
+        val p = if (pitchRate.isFinite() && pitchRate > 0f) pitchRate else 1f
+        if (s == targetSpeed && p == targetPitchRate) return
+        targetSpeed = s
+        targetPitchRate = p
+        Log.i(TAG, "setSpeedPitch: speed=$s pitchRate=$p")
+        EdgeProbe.log("Mixer", "params speed=$s pitch=$p")
     }
 
     /** 启动渲染线程（幂等）。 */
@@ -113,13 +163,25 @@ class StemMixer(
         playing = true
         ensureTrack()
         val t = track ?: return
+        // ★2026-11-06：曲尾后线程已退出，但 `running` 可能还是 true（旧实现的遗留）→
+        //   只按 running 判断会“按播放没反应”。改为看线程是否还活着。
+        val aliveThread = thread
+        if (running && aliveThread != null && aliveThread.isAlive) return
+        // 在曲尾按播放：从 0 重来（否则读头在 totalFrames，启动即又结束）。
+        if (totalFrames > 0 && framePos >= totalFrames) {
+            framePos = 0L
+            playFrame = 0L
+            ended = false
+            lastBeatFrame = 0L
+            stage.flushAt(0L)
+            EdgeProbe.log("Mixer", "play at end → restart from 0")
+        }
         // ★★ 必须真的让 AudioTrack 进入 PLAYSTATE_PLAYING，否则 write() 会
         //   永远阻塞（以为消费者没在消费）—— 真机实测：渲染线程启动后无任何日志，
         //   位置冻结在 46ms。
         if (t.playState != AudioTrack.PLAYSTATE_PLAYING) {
             runCatching { t.play() }.onFailure { Log.w(TAG, "AudioTrack.play() 失败", it) }
         }
-        if (running) return
         running = true
         thread = Thread({ renderLoop() }, "StemMixer").apply {
             priority = Thread.MAX_PRIORITY      // 音频线程要高优先级，否则容易 underrun
@@ -140,6 +202,8 @@ class StemMixer(
         seekRequest = f
         // 立刻反映到对外位置（UI 不用等渲染线程）
         framePos = f
+        playFrame = f
+        ended = false
         Log.i(TAG, "seek → ${positionMs}ms (${f}frame)")
     }
 
@@ -207,23 +271,46 @@ class StemMixer(
     private fun renderLoop() {
         val mix = FloatArray(CHUNK_FRAMES * channels)
         val tmp = FloatArray(CHUNK_FRAMES * channels)
-        val t = track ?: return
         var loopWarn = 0
 
         while (running) {
             try {
+                // ★每轮重新取 track：write 失败重建后，旧的局部引用会指向已 release 的对象。
+                val t = track ?: break
+
                 // ★seek 要放在“暂停检查”**之前**：
                 //   否则暂停状态下的 seek 永远不生效（下一轮又 continue 了）。
                 val req = seekRequest
                 if (req >= 0L) {
                     seekRequest = -1L
                     framePos = req
+                    playFrame = req
+                    lastBeatFrame = req
+                    stage.flushAt(req)          // 丢弃 Sonic 内部残留，时钟锚到新位置
                     // 重定位 AudioTrack（flush 必须先 pause）
                     runCatching { t.pause() }
                     runCatching { t.flush() }
                     runCatching { t.play() }
                     reloadSources(framePos)
                     Log.i(TAG, "renderLoop: seek 生效 @${framePos}frame (playState=${t.playState})")
+                }
+
+                // ★参数变更（UI → Service → 这里）：Sonic 只在渲染线程上调用。
+                val ts = targetSpeed
+                val tp = targetPitchRate
+                if (ts != appliedSpeed || tp != appliedPitchRate) {
+                    stage.setParams(ts, tp)
+                    val newSrc = stage.applyParams(framePos)
+                    framePos = newSrc
+                    playFrame = newSrc
+                    appliedSpeed = ts
+                    appliedPitchRate = tp
+                    Log.i(
+                        TAG,
+                        "renderLoop: 应用参数 speed=$ts pitch=$tp " +
+                            "active=${stage.isActive} src=$newSrc",
+                    )
+                    EdgeProbe.log("Mixer", "apply speed=$ts pitch=$tp active=${stage.isActive}")
                 }
 
                 if (!playing) {
@@ -267,7 +354,36 @@ class StemMixer(
                     val allFinished = voices.all { it.source.isFinished }
                     if (allFinished && totalFrames > 0 && framePos >= totalFrames) {
                         Log.i(TAG, "renderLoop: 到达曲尾 @${framePos}/${totalFrames}")
+                        // Sonic 有延迟线：把最后 ~31ms 排空，否则曲尾会被截掉。
+                        if (stage.isActive) {
+                            var err = 0
+                            stage.finish { buf, len ->
+                                // ★AudioTrack.write 会**自己推进** buffer.position；
+                                //   传 duplicate，让 SonicStage 统一推进原 buffer（否则 double-advance）。
+                                val w = runCatching {
+                                    t.write(buf.duplicate(), len, AudioTrack.WRITE_BLOCKING)
+                                }.getOrDefault(-1)
+                                if (w < 0) {
+                                    err = -1
+                                    0
+                                } else {
+                                    w
+                                }
+                            }
+                            playFrame = stage.positionFrames()
+                            EdgeProbe.log(
+                                "Mixer",
+                                "end sonic play=${playFrame}f " +
+                                    "(${playFrame * 1000 / sampleRate}ms) err=$err " +
+                                    "active=${stage.isActive}",
+                            )
+                        }
+                        // UI 上到曲尾就应满格（Sonic 映射可能差几十 ms）。
+                        playFrame = totalFrames
                         playing = false
+                        ended = true
+                        // ★让 play() 能以“线程已死”为由重启（旧实现 running 永远 true）。
+                        running = false
                         break
                     }
                     // 边播中：不写静音、也不推进 framePos —— 等分离追上，由 Gate 决定暂停/恢复。
@@ -279,31 +395,68 @@ class StemMixer(
                 // 软限幅：多轨相加可能超过 ±1，直接写会削波失真
                 clampInPlace(mix, framesRead * channels)
 
-                val written = t.write(mix, 0, framesRead * channels, AudioTrack.WRITE_BLOCKING)
-                if (written < 0) {
-                    // ★write 返回错误（常见于 seek 期间状态切换）→ 重建 AudioTrack 后继续，
-                    //   不能像以前那样只 sleep 一下就不管（会永久无声）。
-                    Log.w(TAG, "AudioTrack.write 失败: $written → 重建 AudioTrack")
-                    runCatching {
-                        track?.release()
-                        track = null
+                if (!stage.isActive) {
+                    // ---- 旁路：1.0×，与旧路径完全一致 ----
+                    val written = t.write(mix, 0, framesRead * channels, AudioTrack.WRITE_BLOCKING)
+                    if (written < 0) {
+                        Log.w(TAG, "AudioTrack.write 失败: $written → 重建 AudioTrack")
+                        runCatching {
+                            track?.release()
+                            track = null
+                        }
+                        ensureTrack()
+                        Thread.sleep(20)
+                        continue
                     }
-                    ensureTrack()
-                    Thread.sleep(20)
-                    continue
+                    framePos += (written / channels).toLong()
+                    playFrame = framePos
+                } else {
+                    // ---- Sonic：变速/变调 ----
+                    var writeErr = 0
+                    stage.process(mix, framesRead) { buf, len ->
+                        // ★同上：AudioTrack 会推进传入 buffer 的 position，必须给它 duplicate。
+                        val w = runCatching {
+                            t.write(buf.duplicate(), len, AudioTrack.WRITE_BLOCKING)
+                        }.getOrDefault(-1)
+                        if (w < 0) {
+                            writeErr = -1
+                            0
+                        } else {
+                            w
+                        }
+                    }
+                    // 源读头按**读入**帧推进；对外位置由 Sonic 的输出映射得出。
+                    framePos += framesRead
+                    playFrame = stage.positionFrames()
+                    if (writeErr < 0) {
+                        Log.w(TAG, "Sonic 输出写入失败 → 重建 AudioTrack")
+                        runCatching {
+                            track?.release()
+                            track = null
+                        }
+                        ensureTrack()
+                        Thread.sleep(20)
+                        continue
+                    }
                 }
-                framePos += (written / channels).toLong()
 
                 // ★心跳：确认渲染线程真的在推进（排查“位置卡住”时靠它）
-                if (framePos - lastBeatFrame >= sampleRate * 5) {
-                    lastBeatFrame = framePos
+                //   seek 回退/改参回退后 playFrame 会小于 lastBeatFrame → 先把基准拉回来，
+                //   否则要等超过旧位置才会再打心跳（真机排查时被这个坑过）。
+                if (playFrame < lastBeatFrame) lastBeatFrame = playFrame
+                if (playFrame - lastBeatFrame >= sampleRate * 5) {
+                    lastBeatFrame = playFrame
                     Log.i(
                         TAG,
-                        "heartbeat: frame=$framePos (${framePos * 1000 / sampleRate}ms) " +
-                            "voices=${voices.size}",
+                        "heartbeat: src=$framePos play=$playFrame " +
+                            "(${playFrame * 1000 / sampleRate}ms) speed=$appliedSpeed " +
+                            "active=${stage.isActive}",
                     )
-                    // 仅 debug 落文件（vivo 吞 logcat）；每 5s 一行，用来证明恢复后确实在推进。
-                    EdgeProbe.log("Mixer", "hb ${framePos * 1000 / sampleRate}ms")
+                    // 仅 debug 落文件（vivo 吞 logcat）；每 5s 一行，用来证明位置真的在推进。
+                    EdgeProbe.log(
+                        "Mixer",
+                        "hb ${playFrame * 1000 / sampleRate}ms speed=$appliedSpeed",
+                    )
                 }
             } catch (_: InterruptedException) {
                 Thread.currentThread().interrupt()
@@ -319,7 +472,7 @@ class StemMixer(
                 Thread.sleep(50)
             }
         }
-        Log.i(TAG, "renderLoop 退出 @${framePos}frame")
+        Log.i(TAG, "renderLoop 退出 @src=$framePos play=$playFrame")
     }
 
     /**

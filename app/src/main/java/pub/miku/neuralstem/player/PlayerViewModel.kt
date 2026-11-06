@@ -251,6 +251,11 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     /** 收到 mixPosMs 时刻的 elapsedRealtime；0 = 尚未收到。 */
     @Volatile private var mixPosAtClock: Long = 0L
 
+    /** 混音器是否已到曲尾（Service 经 extras 推来）。 */
+    @Volatile private var mixEnded = false
+    /** 本次曲尾是否已处理（避免每 100ms 重复触发自动下一首）。 */
+    @Volatile private var mixEndedHandled = false
+
     /**
      * ★G-3：边分离边播切轨后要恢复的位置（ms）。
      * 独立于 [pendingSeekMs]，因为切轨会触发 `onMediaItemTransition`（它会清 pendingSeekMs），
@@ -446,6 +451,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                     if (extras.containsKey(MultiTrackSession.KEY_MIX_POS_MS)) {
                         mixPosMs = extras.getLong(MultiTrackSession.KEY_MIX_POS_MS, 0L)
                         mixDurationMs = extras.getLong(MultiTrackSession.KEY_MIX_DUR_MS, 0L)
+                        mixEnded = extras.getBoolean(MultiTrackSession.KEY_MIX_ENDED, false)
                         mixPosAtClock = android.os.SystemClock.elapsedRealtime()
                         val playing = extras.getBoolean(MultiTrackSession.KEY_MIX_PLAYING, false)
                         if (playing != _state.value.isPlaying) {
@@ -601,8 +607,15 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 // ★R-a：曲目自然播完 → 自动下一首（顺序到尾停/循环绕回；见 playNext）。
                 if (playbackState == Player.STATE_ENDED) {
-                    Log.i(TAG, "STATE_ENDED → autoAdvanceOnEnded")
-                    autoAdvanceOnEnded()
+                    if (isMultiTrackLoaded) {
+                        // ★2026-11-06：多轨下门面只是静音时钟，变速后它与混音器的
+                        //   结束时刻**不一致**（0.5× 时门面先结束）。真源是 mixEnded，
+                        //   在这里切歌会提前把还在播的混音器换掉。
+                        Log.i(TAG, "STATE_ENDED(门面) 在多轨下忽略 → 等 mixEnded")
+                    } else {
+                        Log.i(TAG, "STATE_ENDED → autoAdvanceOnEnded")
+                        autoAdvanceOnEnded()
+                    }
                 }
                 // M2-D:AudioTrack 会话在准备好后才有效。注意 VM 持有的是
                 // MediaController(不是真实 ExoPlayer) —— 会话 id 在 Service 里，
@@ -902,9 +915,15 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                     val dur = if (multi) mixDurationMs
                     else p.duration.coerceAtLeast(0L)
                     var pos = if (multi) {
+                        // ★2026-11-06：多轨变速后**媒体位置按 speed 推进**（2× 时 1 秒走 2 秒），
+                        //   插值也必须乘 speed，否则每 200ms 会“追一次”，进度条呈锯齿。
+                        val spd = _state.value.speed.coerceIn(0.05f, 8f)
                         val elapsed = if (p.isPlaying) {
-                            (android.os.SystemClock.elapsedRealtime() - mixPosAtClock).coerceAtLeast(0L)
-                        } else 0L
+                            ((android.os.SystemClock.elapsedRealtime() - mixPosAtClock)
+                                .coerceAtLeast(0L) * spd).toLong()
+                        } else {
+                            0L
+                        }
                         (mixPosMs + elapsed).coerceIn(0L, dur.coerceAtLeast(0L))
                     } else {
                         p.currentPosition
@@ -944,6 +963,15 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                     _progress.value = Progress(pos, shownDur)
                     // ★闸门（2026-10-20）：边播期间每 tick 报告播放位置，由 Gate 决定暂停/恢复。
                     edgeGateTick(pos)
+
+                    // ★2026-11-06：多轨曲尾。变速后混音器的媒体时钟与门面 ExoPlayer
+                    //   不同步（2× 时混音器先结束），不能只等门面 STATE_ENDED —— 否则
+                    //   会白等半首歌。Service 每 200ms 把 mixEnded 推来，这里触发队列前进。
+                    if (isMultiTrackLoaded && mixEnded && !mixEndedHandled) {
+                        mixEndedHandled = true
+                        Log.i(TAG, "mix ended → autoAdvanceOnEnded（不再等门面 STATE_ENDED）")
+                        autoAdvanceOnEnded()
+                    }
                     // ★T-5：进度记忆——**节流落库**（每 ≥PROGRESS_SAVE_INTERVAL_MS 或曲目变化）。
                     //   仅在队列来自歌单（currentListId!=null）且有当前曲时记。
                     recordProgressThrottled(pos)
@@ -1276,6 +1304,10 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                 stemsAvailable = if (resetStems) false else _state.value.stemsAvailable,
             ),
         )
+        // ★2026-11-06：把 UI 当前的变速变调重新下发给单轨播放器。
+        //   多轨期间参数只作用于 StemMixer，门面 ExoPlayer 保持旧值；
+        //   退出多轨/换曲后必须同步，否则“UI 显示 2×、声音还是 1×”。
+        applyPlaybackParameters(_state.value.speed, _state.value.pitchSemitones)
     }
 
     // ============================ ★R-a：播放队列（歌单=队列）============================
@@ -1396,6 +1428,12 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     fun play() {
         userPausedDuringEdge = false
         if (isMultiTrackLoaded) {
+            // ★2026-11-06：曲尾按播放 → 先把**门面与混音器一起**拉回 0。
+            //   只让 mixer 自己重启会导致 MediaSession 停在 STOPPED（通知与声音不一致）。
+            if (mixEnded || (mixDurationMs > 0 && mixPosMs >= mixDurationMs - 500)) {
+                Log.i(TAG, "play at mix end → seek 0 (facade + mixer)")
+                seekTo(0L)
+            }
             sendMtCommand(MultiTrackSession.CMD_PLAY)
             return
         }
@@ -1427,6 +1465,9 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             _state.value.speed, _state.value.isPlaying, p.duration.coerceAtLeast(0L),
         )
         _progress.value = _progress.value.copy(positionMs = clamped)
+        // seek 离开曲尾 → 允许下一次曲尾再次触发自动下一首（混音器侧也会把 ended 清掉）。
+        mixEnded = false
+        mixEndedHandled = false
         p.seekTo(clamped)
         // ★闸门：seek 是**位置跳变**，不能等到下个 100ms tick 才反应（那会漏一段静音）。
         onSeekGate(clamped)
@@ -1705,10 +1746,11 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                 putLong(MultiTrackSession.KEY_START_MS, startPositionMs.coerceAtLeast(0L))
             },
         )
-        // 新载入的轨要继承当前变速变调（否则立刻时间轴漂移）
-        val cur = _state.value
-        mediaController?.playbackParameters =
-            PlaybackParameters(cur.speed, semitonesToRate(cur.pitchSemitones))
+        // ★2026-11-06：变速变调由 Service 在 CMD_LOAD 时从 lastSpeed/lastPitchRate
+        //   交给 StemMixer。这里**不能**再写 mediaController.playbackParameters ——
+        //   那是静音门面，会触发 AudioSink 重配（坑 48），且混音器收不到。
+        mixEnded = false
+        mixEndedHandled = false
         Log.i(TAG, "loadMultiTrack → Service: ${stems.size} stems")
         // ★一致性修复：多轨“已载入 = 有媒体”，否则 UI 会显示“尚未导入音频”而实际在响。
         //   fileName 若为空（如自动化直接载 stems）给一个回退名，避免标题空白。
@@ -1744,9 +1786,9 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                 putLong(MultiTrackSession.KEY_START_MS, startPositionMs.coerceAtLeast(0L))
             },
         )
-        val cur = _state.value
-        mediaController?.playbackParameters =
-            PlaybackParameters(cur.speed, semitonesToRate(cur.pitchSemitones))
+        // 变速变调由 Service 在 CMD_LOAD_STREAM 时传给 StemMixer（不写门面，理由同上）。
+        mixEnded = false
+        mixEndedHandled = false
         // 位置 carry-over：用 edgeSeekMs（跨 onMediaItemTransition 保留），在 READY 消费。
         edgeSeekMs = startPositionMs
         pendingSeekMs = startPositionMs
@@ -1890,6 +1932,8 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         mixPosMs = 0L
         mixDurationMs = 0L
         mixPosAtClock = 0L
+        mixEnded = false
+        mixEndedHandled = false
     }
 
     fun exitMultiTrack() {
@@ -2060,6 +2104,19 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             delay(PARAM_DEBOUNCE_MS)
             val p = pendingParams ?: return@launch
             pendingParams = null
+            if (isMultiTrackLoaded) {
+                // ★2026-11-06：多轨只发命令给 StemMixer，**不碰门面 ExoPlayer**
+                //   （写门面会触发它的 AudioSink 重配 = 坑 48，且混音器收不到）。
+                sendMtCommand(
+                    MultiTrackSession.CMD_SET_SPEED_PITCH,
+                    Bundle().apply {
+                        putFloat(MultiTrackSession.KEY_SPEED, p.speed)
+                        putFloat(MultiTrackSession.KEY_PITCH_RATE, p.pitch)
+                    },
+                )
+                Log.i(TAG, "applyPlaybackParameters(多轨): speed=${p.speed} pitchRate=${p.pitch}")
+                return@launch
+            }
             // 下发前再校验：仅当与 player 当前值确有差异才下发（避免无谓重配）
             val ctrl = mediaController ?: return@launch
             if (ctrl.playbackParameters == p) return@launch
@@ -2070,8 +2127,10 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 一键回到 1.0x / 0 半音 */
     fun resetSpeedPitch() {
-        mediaController?.playbackParameters = PlaybackParameters.DEFAULT
         _state.value = _state.value.copy(speed = 1f, pitchSemitones = 0f)
+        // ★走统一下发（多轨走 CMD，单轨写 player）——不要直接写 mediaController，
+        //   否则多轨下只会改门面（坑 48 + 混音器收不到）。
+        applyPlaybackParameters(speed = 1f, pitchSemitones = 0f)
         Log.i(TAG, "resetSpeedPitch")
     }
 

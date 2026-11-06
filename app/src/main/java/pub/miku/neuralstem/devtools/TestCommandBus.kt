@@ -75,6 +75,9 @@ object TestCommandBus {
           repeat  a0=seq|all|one     设置播放模式（同循环按钮选定的模式）
           cyclerepeat                 切换播放模式（同循环按钮点击）
           eq      a0=on(bool)         开关 EQ
+          speed   a0=倍率              变速（多轨走 StemMixer，单轨走 ExoPlayer）
+          pitch   a0=半音              变调（±12，独立于速度）
+          resetsp                    变速变调复位（1.0× / 0 半音）
           inmt    a0=vocals a1=accomp 载入多轨（abs 路径）
           exitsmt                     退出多轨
           edge    [a0=fromMs]         启动「边播分离」（默认从当前位置；测试 Gate 用）
