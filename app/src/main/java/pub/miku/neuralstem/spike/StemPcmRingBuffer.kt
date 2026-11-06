@@ -168,20 +168,7 @@ class StemPcmRingBuffer(
                         0
                     } else {
                         val n = minOf(avail, frames.toLong()).toInt()
-                        var read = 0
-                        while (read < n) {
-                            val absFrame = position + read
-                            val ringIdx = (absFrame % capFrames).toInt()
-                            val run = minOf(n - read, capFrames - ringIdx)
-                            System.arraycopy(
-                                buf,
-                                ringIdx * channels,
-                                dst,
-                                (offsetFrames + read) * channels,
-                                run * channels,
-                            )
-                            read += run
-                        }
+                        copyFramesLocked(dst, offsetFrames, position, n)
                         position += n
                         // 读完即回收“所有游标都已读过”的旧数据 → 腾出写端空间。
                         reclaimLocked()
@@ -190,6 +177,57 @@ class StemPcmRingBuffer(
                     }
                 }
                 if (!retry) return result
+            }
+        }
+
+        /**
+         * ★非阻塞读（2026-11-06）：没数据立即返回 0，**绝不等待**。
+         *
+         * ## 为什么需要
+         * 本游标的 [read] 在无数据时会 `awaitNanos(2s)`。这个语义适合
+         * ExoPlayer 的 loader 线程，但**不适合音频渲染线程**：
+         * `StemMixer.renderLoop()` 直接在当前线程调 `read`，分离跟不上时
+         * 整个混音停摆 → AudioTrack underrun、位置冻结，而 Gate 又靠位置判饥饿，
+         * 于是“等分离”表现为“卡住没声”。
+         *
+         * 交给音频线程用的版本必须“立刻返回”，由上层决定是写静音还是暂停。
+         *
+         * @return 实际帧数；0 = 暂时没数据（稍后重试）；-1 = 已关闭且读完（EOF）。
+         */
+        fun tryRead(
+            dst: FloatArray,
+            offsetFrames: Int = 0,
+            frames: Int = dst.size / channels,
+        ): Int = lock.withLock {
+            if (position < headFrames) position = headFrames
+            val avail = writeFrames - position
+            if (avail <= 0) {
+                if (closed) -1 else 0
+            } else {
+                val n = minOf(avail, frames.toLong()).toInt()
+                copyFramesLocked(dst, offsetFrames, position, n)
+                position += n
+                reclaimLocked()
+                spaceAvailable.signalAll()
+                n
+            }
+        }
+
+        /** 调用方须持 [lock]。把 [from] 起的 [n] 帧拷进 [dst]（处理环形回绕）。 */
+        private fun copyFramesLocked(dst: FloatArray, offsetFrames: Int, from: Long, n: Int) {
+            var read = 0
+            while (read < n) {
+                val absFrame = from + read
+                val ringIdx = (absFrame % capFrames).toInt()
+                val run = minOf(n - read, capFrames - ringIdx)
+                System.arraycopy(
+                    buf,
+                    ringIdx * channels,
+                    dst,
+                    (offsetFrames + read) * channels,
+                    run * channels,
+                )
+                read += run
             }
         }
 

@@ -252,14 +252,22 @@ class StemMixer(
                         Log.w(
                             TAG,
                             "renderLoop 无数据: framePos=$framePos total=$totalFrames " +
+                                "finished=${voices.map { "${it.id}=${it.source.isFinished}" }} " +
                                 "gains=${voices.map { "${it.id}=${gainProvider(it.id)}" }}",
                         )
                     }
-                    if (framePos >= totalFrames && totalFrames > 0) {
+                    // ★2026-11-06：曲终必须同时满足「所有源都不会再有数据」。
+                    //   边播时 `totalFrames` 是**可增长**的，追上写头（framePos == totalFrames）
+                    //   不等于结束；旧判断会在这里 break，渲染线程永久退出。
+                    //   旧实现靠阻塞读掩盖了这点（读不到数据时会等），现在读是非阻塞的，
+                    //   必须显式区分“暂时没数据”和“真的没了”。
+                    val allFinished = voices.all { it.source.isFinished }
+                    if (allFinished && totalFrames > 0 && framePos >= totalFrames) {
                         Log.i(TAG, "renderLoop: 到达曲尾 @${framePos}/${totalFrames}")
                         playing = false
                         break
                     }
+                    // 边播中：不写静音、也不推进 framePos —— 等分离追上，由 Gate 决定暂停/恢复。
                     Thread.sleep(10)
                     continue
                 }

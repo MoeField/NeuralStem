@@ -32,6 +32,17 @@ interface StemSource : Closeable {
     val totalFrames: Long
 
     /**
+     * 是否已**确定**不会再有新数据（2026-11-06）。
+     *
+     * 混音器要区分两种“读到 0”：
+     * - `isFinished == true` 且已到总帧数 → 真的曲终，停渲染线程；
+     * - `isFinished == false`（边播中）→ 只是暂时没数据，**不能停**，交给 Gate 暂停。
+     *
+     * 文件源恒为 true；环缓冲要等分离结束/取消（`buffer.close()`）才为 true。
+     */
+    val isFinished: Boolean get() = true
+
+    /**
      * 从绝对帧 [framePos] 起读 [frames] 帧，写进 [out]（交织）。
      *
      * @param out 长度需 >= `frames * channels`
@@ -84,16 +95,26 @@ class RingBufferStemSource(
     override val totalFrames: Long
         get() = ringStartFrame + buffer.totalWrittenFrames
 
+    /** 分离结束/取消（buffer.close）后才是真的“不会再有数据”。 */
+    override val isFinished: Boolean get() = buffer.isClosed
+
     private var cursor: StemPcmRingBuffer.Cursor? = null
 
+    /**
+     * ★2026-11-06：改用**非阻塞** `tryRead`。
+     *
+     * 本类只被 `StemMixer` 的渲染线程使用（见 MultiTrackController.loadStream）。
+     * 旧实现用阻塞版 `Cursor.read`，分离跟不上时音频线程会 `awaitNanos(2s)`
+     * → 整个混音停摆，表现为“位置冻结 + 没声”，Gate 也无法介入。
+     */
     override fun read(framePos: Long, out: FloatArray, frames: Int): Int {
         val rel = framePos - ringStartFrame
         if (rel < 0) return 0          // 分离起点之前没有数据
         val c = cursor ?: buffer.openCursor(rel).also { cursor = it }
         // cursor 只顺序前进；位置不符就 seek（回退可能被 clamp，属预期）
         if (c.position != rel) runCatching { c.seekTo(rel) }
-        val n = runCatching { c.read(out, 0, frames) }.getOrDefault(0)
-        return if (n < 0) 0 else n     // -1 = EOF
+        val n = runCatching { c.tryRead(out, 0, frames) }.getOrDefault(0)
+        return if (n < 0) 0 else n     // -1 = EOF；对混音器而言与“暂无数据”同义
     }
 
     override fun close() {

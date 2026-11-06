@@ -135,6 +135,53 @@ class StemPcmRingBufferTest {
         }
     }
 
+    // ---------------- ★2026-11-06：非阻塞读（音频线程用） ----------------
+
+    @Test
+    fun `tryRead 无数据时立即返回 0 且不阻塞`() {
+        val rb = StemPcmRingBuffer(channels = 1, capacityFrames = 16)
+        try {
+            val cur = rb.openCursor()
+            val t0 = System.nanoTime()
+            assertEquals(0, cur.tryRead(FloatArray(4), 0, 4))
+            val elapsedMs = (System.nanoTime() - t0) / 1_000_000
+            // 阻塞版在同样场景会等 2s。这里必须“立刻”返回。
+            assertTrue("tryRead 不应阻塞（实际 ${elapsedMs}ms）", elapsedMs < 100)
+        } finally {
+            rb.close()
+        }
+    }
+
+    @Test
+    fun `tryRead 有数据时正常读出，追上写头返回 0 而非 EOF`() {
+        val rb = StemPcmRingBuffer(channels = 1, capacityFrames = 16)
+        try {
+            rb.append(f(1f, 2f, 3f))
+            val cur = rb.openCursor()
+            val dst = FloatArray(3)
+            assertEquals(3, cur.tryRead(dst))
+            assertEqF(f(1f, 2f, 3f), dst)
+            // 已追上写头：边播中只是“暂时没数据”，不能返回 -1（否则上层误判曲终）。
+            assertEquals(0, cur.tryRead(dst))
+            rb.append(f(4f))
+            assertEquals(1, cur.tryRead(dst))
+            assertEquals(4f, dst[0], 0f)
+        } finally {
+            rb.close()
+        }
+    }
+
+    @Test
+    fun `tryRead 关闭且读完后返回 EOF（-1）`() {
+        val rb = StemPcmRingBuffer(channels = 1, capacityFrames = 8)
+        rb.append(f(1f, 2f))
+        rb.close()
+        val cur = rb.openCursor()
+        val dst = FloatArray(4)
+        assertEquals(2, cur.tryRead(dst))
+        assertEquals(-1, cur.tryRead(dst))
+    }
+
     @Test
     fun `写端背压：容量满时阻塞，消费后继续`() {
         val rb = StemPcmRingBuffer(channels = 1, capacityFrames = 2)
