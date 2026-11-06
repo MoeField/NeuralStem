@@ -10,10 +10,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import pub.miku.neuralstem.devtools.EdgeProbe
 import pub.miku.neuralstem.player.SeparationTask
 import pub.miku.neuralstem.player.SessionStateMachine
 import pub.miku.neuralstem.settings.SettingsRepository
@@ -138,6 +141,31 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
         // ★3a-2：常驻订阅 repo → 驱动状态机（不再只在“开始时订阅”）。
         //   否则：页面重入 / VM 重建时 SM 停在 Idle，即使 repo 正在跑/已完成。
         subscribeRepo()
+        // ★2026-11-06 诊断：分离期间每秒把「实际状态」落文件（vivo 吞 logcat 时取证用）。
+        //   与分离页的「显示状态」日志（SepUI）对照，验证 UI 是否如实反映工作进度。
+        //   仅 debug：release 不跑这个 1s 轮询。
+        if (pub.miku.neuralstem.BuildConfig.DEBUG) {
+            viewModelScope.launch {
+                while (isActive) {
+                    delay(1_000)
+                    val task = session.separation
+                    if (repo.isRunning ||
+                        task is SeparationTask.Preparing ||
+                        task is SeparationTask.Running
+                    ) {
+                        val e = EdgeSeparationSession.get()
+                        val es = e.state.value
+                        EdgeProbe.log(
+                            "SepTick",
+                            "repo=${describeRepo(repo.state.value)} task=${describeTask(task)} " +
+                                "edge=${es::class.simpleName}" +
+                                (if (es is EdgeSeparationSession.State.Running) "(${es.percent}%)" else "") +
+                                " gate=${e.gate.value} avail=${e.availableFrames} start=${e.startFrame}",
+                        )
+                    }
+                }
+            }
+        }
     }
 
     /** 从设置读取默认引擎并应用。 */
@@ -400,6 +428,11 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
                     SeparationRepository.State.Idle -> Unit
                 }
                 pushSeparationTask()
+                // ★2026-11-06 诊断：repo 状态 → 页面任务态 的映射逐次落文件。
+                EdgeProbe.log(
+                    "SepState",
+                    "repo=${describeRepo(s)} -> task=${describeTask(session.separation)}",
+                )
 
                 // 既有镜像（供页面本地 State 消费者；逐步收起）
                 when (s) {
@@ -642,6 +675,30 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
 
     /** M4/S3：供 4-stem 路径复用「已导入的源文件」。 */
     fun sourceFileFor4(): File? = pendingFile
+
+    /** 诊断用：把 repo 状态压成一行（字段够对比“显示 vs 实际”）。 */
+    private fun describeRepo(s: SeparationRepository.State): String = when (s) {
+        is SeparationRepository.State.Preparing -> "Preparing(${s.phase})"
+        is SeparationRepository.State.Running ->
+            "Running(${s.percent}% ${s.doneFrames}/${s.totalFrames}f)"
+        is SeparationRepository.State.Done -> "Done(cache=${s.fromCache})"
+        is SeparationRepository.State.Done4 -> "Done4"
+        is SeparationRepository.State.EdgeDone -> "EdgeDone"
+        is SeparationRepository.State.Failed -> "Failed(${s.message})"
+        SeparationRepository.State.Cancelled -> "Cancelled"
+        SeparationRepository.State.Idle -> "Idle"
+    }
+
+    /** 诊断用：把页面任务态压成一行。 */
+    private fun describeTask(t: SeparationTask): String = when (t) {
+        is SeparationTask.Preparing -> "Preparing(${t.phase})"
+        is SeparationTask.Running -> "Running(${t.percent}%)"
+        is SeparationTask.Done2 -> "Done2(cache=${t.fromCache})"
+        is SeparationTask.Done4 -> "Done4(cache=${t.fromCache})"
+        is SeparationTask.Failed -> "Failed(${t.message})"
+        SeparationTask.Cancelled -> "Cancelled"
+        SeparationTask.Idle -> "Idle"
+    }
 
     companion object {
         const val TAG = "SpikeVm"

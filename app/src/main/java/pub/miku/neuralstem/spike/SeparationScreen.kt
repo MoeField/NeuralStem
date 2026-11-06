@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.launch
 import pub.miku.neuralstem.R
+import pub.miku.neuralstem.devtools.EdgeProbe
 import pub.miku.neuralstem.export.StemExporter
 import pub.miku.neuralstem.player.SeparationTask
 import pub.miku.neuralstem.settings.SettingsRepository
@@ -163,6 +164,23 @@ fun SeparationScreen(
     // ★3a-2：busy 单一来源（不再拼接 spikeState + repoState）。
     val busy = separationTask is SeparationTask.Preparing ||
         separationTask is SeparationTask.Running
+
+    // ★2026-11-06 诊断：把**页面实际显示的状态**落文件，与 `SepTick`/`SepState` 对照，
+    //   验证“解码/分离中的文案与百分比”是否真的对应后台工作。
+    val uiStatus = when (val t = separationTask) {
+        is SeparationTask.Preparing ->
+            if (backfillPercent != null) "backfilling($backfillPercent%)" else "preparing(${t.phase})"
+        is SeparationTask.Running ->
+            if (edgePercent != null) "playable·separating(${t.percent}%)" else "separating(${t.percent}%)"
+        is SeparationTask.Done2 -> "done2"
+        is SeparationTask.Done4 -> "done4"
+        is SeparationTask.Failed -> "failed"
+        SeparationTask.Cancelled -> "cancelled"
+        SeparationTask.Idle -> "idle"
+    }
+    LaunchedEffect(uiStatus, edgeStarved, busy) {
+        EdgeProbe.log("SepUI", "text=$uiStatus starved=$edgeStarved busy=$busy")
+    }
 
     // ---- 完成 → 自动切多轨（★I3：**一次性消费**，天然只响应"Running→Done 转换"，----
     //      不响应进入时的遗留态；不再用 prevSpike/prevRepo 手搓 → 重建也不会误触发）----
