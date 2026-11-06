@@ -21,6 +21,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import pub.miku.neuralstem.devtools.EdgeProbe
 import pub.miku.neuralstem.devtools.TestCommandBus
 import pub.miku.neuralstem.player.Avs3Decode
 import pub.miku.neuralstem.player.PlayerViewModel
@@ -28,7 +29,9 @@ import pub.miku.neuralstem.player.WaveformCache
 import pub.miku.neuralstem.settings.ModelCatalog
 import pub.miku.neuralstem.settings.ModelDownloader
 import pub.miku.neuralstem.settings.SettingsRepository
+import pub.miku.neuralstem.spike.CurrentTrackBridge
 import pub.miku.neuralstem.spike.DeviceBenchmark
+import pub.miku.neuralstem.spike.SeparationRepository
 import pub.miku.neuralstem.spike.StemOrderProbe
 import pub.miku.neuralstem.ui.AppShell
 import pub.miku.neuralstem.ui.theme.NeuralStemTheme
@@ -67,6 +70,8 @@ class MainActivity : ComponentActivity() {
         runCatching { DeviceBenchmark(application).seedFromBuiltinIfExact() }
         // ★⑭c：启动清理损坏/半截的波形缓存（防“外圈波形只占一段”）。
         runCatching { WaveformCache.cleanCorrupt(application) }
+        // ★仅 debug：边播 Gate/混音器取证文件（vivo 吞 logcat → 写 files/edge_probe.txt）
+        EdgeProbe.init(application)
 
         setContent {
             NeuralStemTheme {
@@ -277,6 +282,38 @@ class MainActivity : ComponentActivity() {
                 playerVm.play()
             }
             "exitsmt" -> playerVm.exitMultiTrack()
+            // ★edge：a0 = 起始毫秒（默认当前位置）—— 启动「边播分离」。
+            //
+            // 为什么需要：边播 Gate 只能从 UI 点“开始分离”触发，自动化无法驱动。
+            // 这里直接走与分离页相同的两条底层路径（CurrentTrackBridge → repo.startEdge），
+            // 并 markSeparationTarget，保证 AppShell 的“会话属于当前曲”判断能通过。
+            // 取证：files/edge_probe.txt（vivo 吞 logcat）。
+            "edge" -> {
+                val uri = playerVm.state.value.currentUri
+                if (uri.isNullOrBlank()) {
+                    Log.w("TestCmd", "edge: 当前没有曲目")
+                    EdgeProbe.log("Edge", "no current track")
+                } else {
+                    playerVm.markSeparationTarget(uri)
+                    val fromMs = a0?.toLongOrNull() ?: playerVm.progress.positionMs
+                    lifecycleScope.launch {
+                        val src = CurrentTrackBridge.toFile(application, uri)
+                        if (src == null) {
+                            Log.e("TestCmd", "edge: CurrentTrackBridge.toFile 失败 uri=$uri")
+                            EdgeProbe.log("Edge", "toFile failed uri=$uri")
+                        } else {
+                            EdgeProbe.log("Edge", "start ${src.name} from=${fromMs}ms")
+                            SeparationRepository.get(application).startEdge(src, fromMs)
+                        }
+                    }
+                }
+            }
+            // ★clearcache：清分离缓存（测试用；返回删除的目录数，-1=分离进行中拒绝）
+            "clearcache" -> {
+                val n = SeparationRepository.get(application).clearCache()
+                Log.i("TestCmd", "clearCache -> $n")
+                EdgeProbe.log("Cache", "clearCache -> $n")
+            }
             // ★mtpos：让 Service 打印**每条轨**的 currentPosition（验证多轨对齐）。
             //
             // 为何需要：多轨对齐（2026-11-01「音轨错位」）用听感很难判定分寸，

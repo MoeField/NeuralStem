@@ -4,6 +4,7 @@ import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
 import android.util.Log
+import pub.miku.neuralstem.devtools.EdgeProbe
 import java.io.Closeable
 
 /**
@@ -125,11 +126,13 @@ class StemMixer(
             start()
         }
         Log.i(TAG, "play: 渲染线程启动 @${framePos}frame (trackState=${t.playState})")
+        EdgeProbe.log("Mixer", "play @${framePos}f (thread=${thread?.isAlive})")
     }
 
     fun pause() {
         playing = false
         Log.i(TAG, "pause @${framePos}frame")
+        EdgeProbe.log("Mixer", "pause @${framePos}f")
     }
 
     fun seekTo(positionMs: Long) {
@@ -299,6 +302,8 @@ class StemMixer(
                         "heartbeat: frame=$framePos (${framePos * 1000 / sampleRate}ms) " +
                             "voices=${voices.size}",
                     )
+                    // 仅 debug 落文件（vivo 吞 logcat）；每 5s 一行，用来证明恢复后确实在推进。
+                    EdgeProbe.log("Mixer", "hb ${framePos * 1000 / sampleRate}ms")
                 }
             } catch (_: InterruptedException) {
                 Thread.currentThread().interrupt()

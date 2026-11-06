@@ -77,6 +77,9 @@ object TestCommandBus {
           eq      a0=on(bool)         开关 EQ
           inmt    a0=vocals a1=accomp 载入多轨（abs 路径）
           exitsmt                     退出多轨
+          edge    [a0=fromMs]         启动「边播分离」（默认从当前位置；测试 Gate 用）
+                                      取证：files/edge_probe.txt
+          clearcache                  清分离缓存（分离进行中返回 -1）
           dlmodel a0=all|<packId,...> 下载模型（all=全部；或逗号分隔的 pack id）
           dlstatus                    打印下载进度（指 dlmodel 的屏上日志）
           ncmtest a0=<path>           验证 NCM 解码（仅 -Pwith_ncm=true 构建可用）

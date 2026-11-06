@@ -33,6 +33,7 @@ import java.io.File
 import org.json.JSONArray
 import org.json.JSONObject
 import kotlin.math.abs
+import pub.miku.neuralstem.devtools.EdgeProbe
 import pub.miku.neuralstem.playlist.PlaylistStore
 import pub.miku.neuralstem.settings.SettingsRepository
 import pub.miku.neuralstem.spike.EdgeSeparationSession
@@ -283,6 +284,20 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     /** 上一次由**闸门**发出的暂停（避免重复下发 pause → 与用户操作打架）。 */
     @Volatile
     private var gatePausedPlayer: Boolean = false
+
+    /**
+     * ★seek 到未分离区后的**恢复抑制期**（2026-11-06 真机观测）。
+     *
+     * 现象：seek 到水位线之外时，Gate 立即暂停；但下一 tick（~100ms）读到的
+     * 还是**旧的多轨位置**（mixPos 每 200ms 才从 extras 更新），被误判为 Playable
+     * → 短暂恢复 0.1s 再暂停（真机 probe：pause → play → hb → pause）。
+     * 听感上是一次很短的“漏音”。
+     *
+     * 修法：Starved 的 seek 之后 1s 内不允许自动恢复（足够覆盖 extras 的 200ms 延迟，
+     * 又不影响正常追赶；正常追赶本来就要 15s LEAD）。
+     */
+    @Volatile
+    private var gateResumeHoldUntilMs: Long = 0L
 
     // ============================ ★T-5：进度记忆（歌单“回到上次位置继续播”）============================
     /** 当前队列所属歌单 id（null = 非歌单来源，如单曲导入 → 不记进度）。playQueue 设置。 */
@@ -1455,7 +1470,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
             is EdgeSeparationSession.Gate.Playable -> {
-                if (gatePausedPlayer) {
+                if (gatePausedPlayer && SystemClock.elapsedRealtime() >= gateResumeHoldUntilMs) {
                     gatePausedPlayer = false
                     // ★只在不处于“用户主动暂停”时才恢复（否则是幽灵播放）。
                     if (!userPausedDuringEdge) {
@@ -1483,6 +1498,8 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
      * 单轨没有这个问题，仍走 `player.pause()/play()`。
      */
     private fun gateSetPaused(paused: Boolean, p: Player?) {
+        // 取证（仅 debug，写 files/edge_probe.txt）：vivo 吞 logcat，看不到这条。
+        EdgeProbe.log("Gate", "paused=$paused multi=$isMultiTrackLoaded")
         if (isMultiTrackLoaded) {
             sendMtCommand(
                 if (paused) MultiTrackSession.CMD_PAUSE else MultiTrackSession.CMD_PLAY,
@@ -1508,6 +1525,8 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         userPausedDuringEdge = false
         if (s.gate.value is EdgeSeparationSession.Gate.Starved) {
             gatePausedPlayer = true
+            // 抑制 1s：等 extras 把新的 mixPos 推上来，避免“旧位置被判 Playable”而漏音。
+            gateResumeHoldUntilMs = SystemClock.elapsedRealtime() + 1_000L
             gateSetPaused(true, mediaController)
             Log.i(TAG, "gate: seek 到未分离区 → 暂停 @${positionMs}ms")
         }
