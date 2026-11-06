@@ -1726,8 +1726,10 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         // ★F5.1：为各 stem 提取波形（转盘外环叠加显示）
         extractStemWaveforms(stems)
         // 多轨状态经 MediaController.Listener.onExtrasChanged 回传（构建时已注册）
-        // 进入多轨前暂停单轨（Service 内部也会暂停，双保险）
-        mediaController?.pause()
+        // ★2026-11-06：**不要**在这里 `mediaController.pause()`。
+        //   它是异步标准命令，可能晚于 CMD_LOAD/CMD_PLAY 到达，
+        //   把刚被 Service 拉起的门面又暂停 → MediaSession 停在 PAUSED、
+        //   UI 按钮显示「播放」而混音器在响。Service 会在 load 时把门面静音并 play。
         val items = JSONArray().apply {
             stems.forEach { (id, label, file) ->
                 put(JSONObject().apply {
@@ -1772,7 +1774,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     fun loadEdgeMultiTrack(startPositionMs: Long) {
         isMultiTrackLoaded = true
         ensureOriginalWaveformForMultiTrack()
-        mediaController?.pause()
+        // 同上：这里不能 pause 门面（异步命令可能晚到，把 Service 的 play 覆盖掉）。
         val items = JSONArray().apply {
             put(JSONObject().apply { put("id", "vocals"); put("label", "人声"); put("host", "vocals") })
             put(JSONObject().apply { put("id", "accompaniment"); put("label", "伴奏"); put("host", "accompaniment") })

@@ -360,6 +360,10 @@ class PlaybackService : MediaSessionService() {
         c.setSpeedPitch(lastSpeed, lastPitchRate)
         inMultiTrack = true
         c.playWhenAllReady(args.getLong(MultiTrackSession.KEY_START_MS, 0L))
+        // ★2026-11-06：门面也必须真的在播 —— 否则 MediaSession 停在 PAUSED，
+        //   UI 的 play/pause 按钮会显示「播放」而混音器实际在响（用户一按反而暂停）。
+        //   之前只依赖 VM 侧的 CMD_PLAY，实测偶发丢失。
+        singlePlayer?.play()
         attachMultiTrackEq(c)
         handler.removeCallbacks(progressRunnable)
         handler.post(progressRunnable)      // ★开始推送 mix 进度（真实位置来自 StemMixer）
@@ -403,6 +407,7 @@ class PlaybackService : MediaSessionService() {
         c.setSpeedPitch(lastSpeed, lastPitchRate)
         inMultiTrack = true
         c.playWhenAllReady(args.getLong(MultiTrackSession.KEY_START_MS, 0L))
+        singlePlayer?.play()   // 同上：门面必须与混音器同播
         attachMultiTrackEq(c)
         handler.removeCallbacks(progressRunnable)
         handler.post(progressRunnable)      // ★开始推送 mix 进度

@@ -39,6 +39,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -124,7 +125,10 @@ fun AppShell(
     // ★闸门（2026-10-20）：切轨条件从“首段就绪”改为“水位线领先够”。
     //   旧逻辑在首块产出（~4s）就切轨 → 播 4s 就掉进预分配静音区（用户实报“放一小段没声”）。
     val edgeGate by edgeSession.gate.collectAsState()
-    var edgeSwitched by remember { mutableStateOf(false) }
+    // ★2026-11-06：用 rememberSaveable —— 旋转/Activity 重建后不能丢。
+    //   丢了会再次进入下面的切轨分支，把播放位置按 startPositionMs 重置
+    //   （用户实报：“旋转屏幕就跳回分离起点重新播”）。
+    var edgeSwitched by rememberSaveable { mutableStateOf(false) }
     // ★G-3ux：Snackbar 文案在 Composable 上下文取（协程内不能用 stringResource）。
     val edgeSwitchedMsg = stringResource(R.string.sep_edge_switched)
     val edgeAbortedMsg = stringResource(R.string.sep_edge_aborted)
@@ -213,22 +217,41 @@ fun AppShell(
             return@LaunchedEffect
         }
 
+        // ★2026-11-06：旋转/重建后若**已经在播这次分离的结果**，绝不能再切一次。
+        //   rememberSaveable 已覆盖大部分场景；这里是第二道闸（状态来自 VM/Service）。
+        if (ready && !edgeSwitched && playerState.isMultiTrack && playerState.separationOn) {
+            edgeSwitched = true
+            Log.i("AppShell", "edge gate=$gate 但已在多轨（重建/旋转）→ 跳过重复切轨")
+            return@LaunchedEffect
+        }
+
         if (ready && !edgeSwitched) {
             edgeSwitched = true
             val sr = edgeSession.sampleRate.coerceAtLeast(1)
-            val posMs = edgeSession.startFrame.toLong() * 1000L / sr
+            val startMs = edgeSession.startFrame.toLong() * 1000L / sr
+            // ★2026-11-06：切轨位置 = **当前播放位置**，不是分离起点。
+            //   旧实现用 startFrame（用户 4s 点分离 → 切轨就回到 4s，白听一段）。
+            //   stem 文件是完整曲长（未分离区静音），只要不超过水位线就能连续播；
+            //   留 2s 余量（与 Gate 的 SAFETY 一致），避免切过去立刻撞饥饿。
+            val availEndMs = startMs + edgeSession.availableFrames.toLong() * 1000L / sr
+            val currentMs = playerVm.progress.positionMs
+            val posMs = currentMs.coerceIn(
+                startMs,
+                (availEndMs - 2_000L).coerceAtLeast(startMs),
+            )
             val vf = edgeSession.vocalsFile
             val af = edgeSession.accompFile
             if (vf != null && af != null) {
                 // ★G-3-重构（文件模式）：直接播**完整曲长的 stem 文件**。
-                //   文件从 0 就是对的（未分离区是静音），所以：
-                //   - 不需要 seek 补偿（位置天然对齐）；
-                //   - 不会“跳回起点”；
-                //   - 波形与文件时长一致。
+                //   文件从 0 就是对的（未分离区是静音），所以不需要 seek 补偿。
                 //
-                // ★闸门（2026-10-20）：此时水位线已领先 startFrame 至少 LEAD_FRAMES，
-                //   所以从这里起播能连续出声，不会撞上未分离的静音区。
-                Log.i("AppShell", "edge gate=${edgeGate} → 文件模式播 ${vf.name} @${posMs}ms")
+                // ★闸门（2026-10-20）：水位线已领先 startFrame 至少 LEAD_FRAMES，
+                //   切到当前位置能连续出声，不会撞上未分离的静音区。
+                Log.i(
+                    "AppShell",
+                    "edge gate=${edgeGate} → 文件模式播 ${vf.name} @${posMs}ms " +
+                        "(current=${currentMs} start=${startMs} availEnd=${availEndMs})",
+                )
                 playerVm.loadMultiTrack(
                     listOf(
                         Triple("vocals", "人声", vf),
