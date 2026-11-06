@@ -436,7 +436,13 @@ private fun ControlsArea(
         //   旧版按钮在控制行、文字“顺序”孤零零挂在下一行居中，
         //   看起来像“按钮字掉了”。合并成一个控件后语义完整：`[↻ 顺序]`。
         onImport?.let {
-            Button(onClick = it) { Text(stringResource(R.string.player_import), maxLines = 1) }
+            Button(onClick = it) {
+                Text(
+                    stringResource(R.string.player_import),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
 
         ProgressBar(
@@ -502,6 +508,8 @@ private fun ControlsArea(
                     ),
                     style = MaterialTheme.typography.bodyMedium,
                     maxLines = 1,
+                    // 同文件其它单行文本：显式 overflow，否则被硬切无省略号（英文/大字号会撞）。
+                    overflow = TextOverflow.Ellipsis,
                 )
                 // ★G-3ux：边分离边播进行中 → 明确告知“已可听，但后台还在分离”。
                 //   没有这一行，用户会看到“多轨”却没意识到分离尚未完成。
