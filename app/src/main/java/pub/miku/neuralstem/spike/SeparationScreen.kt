@@ -24,6 +24,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -37,6 +38,7 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import pub.miku.neuralstem.R
 import pub.miku.neuralstem.devtools.EdgeProbe
@@ -155,6 +157,8 @@ fun SeparationScreen(
     val benchmarked = benchRtfAll.isNotEmpty()
     // ★3a-2：分离任务状态 = 单一真源（来自状态机）；repoState 不再直接读。
     val separationTask by vm.separationTask.collectAsState()
+    // ★2026-11-07：边播完成后的短时完成态（5s 后自动消失）。
+    val lastEdgeDone by vm.lastEdgeDone.collectAsState()
     // ★F5.4：分离完成时的触感反馈。
     val haptic = LocalHapticFeedback.current
     var cacheMsg by remember { mutableStateOf<String?>(null) }
@@ -171,7 +175,12 @@ fun SeparationScreen(
         is SeparationTask.Preparing ->
             if (backfillPercent != null) "backfilling($backfillPercent%)" else "preparing(${t.phase})"
         is SeparationTask.Running ->
-            if (edgePercent != null) "playable·separating(${t.percent}%)" else "separating(${t.percent}%)"
+            if (edgePercent != null) {
+                // 同时记录是否已切多轨（决定 UI 是「已可播放」还是「就绪后自动切」）
+                (if (separationOn) "playable" else "waiting") + "·separating(${t.percent}%)"
+            } else {
+                "separating(${t.percent}%)"
+            }
         is SeparationTask.Done2 -> "done2"
         is SeparationTask.Done4 -> "done4"
         is SeparationTask.Failed -> "failed"
@@ -180,6 +189,20 @@ fun SeparationScreen(
     }
     LaunchedEffect(uiStatus, edgeStarved, busy) {
         EdgeProbe.log("SepUI", "text=$uiStatus starved=$edgeStarved busy=$busy")
+    }
+
+    // ★2026-11-07：解码阶段没有真实进度回调 → 至少显示“已解码 x 秒”，
+    //   否则 10s 的静态“解码音频…”看起来像卡死。
+    var decodingSeconds by remember { mutableIntStateOf(0) }
+    val decodingPhase = (separationTask as? SeparationTask.Preparing)?.phase
+    LaunchedEffect(decodingPhase) {
+        decodingSeconds = 0
+        if (decodingPhase == SeparationTask.PrepPhase.DECODING) {
+            while (true) {
+                delay(1_000)
+                decodingSeconds++
+            }
+        }
     }
 
     // ---- 完成 → 自动切多轨（★I3：**一次性消费**，天然只响应"Running→Done 转换"，----
@@ -470,16 +493,18 @@ fun SeparationScreen(
             )
             if (hasSong) {
                 Text(fileName, style = MaterialTheme.typography.titleMedium, maxLines = 1)
-                Text(
-                    buildString {
-                        if (playlistName.isNotBlank()) { append(playlistName); append(" · ") }
-                        append(
-                            if (trackIndex >= 0 && trackCount > 0) "${trackIndex + 1}/$trackCount" else "—",
-                        )
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                // ★2026-11-07：没有歌单序号时不再渲染一行孤零零的「—」。
+                val subtitle = buildString {
+                    if (playlistName.isNotBlank()) { append(playlistName); append(" · ") }
+                    if (trackIndex >= 0 && trackCount > 0) append("${trackIndex + 1}/$trackCount")
+                }
+                if (subtitle.isNotBlank()) {
+                    Text(
+                        subtitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             } else {
                 Text(
                     stringResource(R.string.sep_no_song),
@@ -563,7 +588,8 @@ fun SeparationScreen(
                 } else {
                     Text(
                         when (t.phase) {
-                            SeparationTask.PrepPhase.DECODING -> stringResource(R.string.sep_prep_decoding)
+                            SeparationTask.PrepPhase.DECODING ->
+                                stringResource(R.string.sep_prep_decoding_elapsed, decodingSeconds)
                             SeparationTask.PrepPhase.LOADING_MODEL -> stringResource(R.string.sep_prep_loading_model)
                             SeparationTask.PrepPhase.MODEL_READY -> stringResource(R.string.sep_prep_model_ready)
                             SeparationTask.PrepPhase.START -> stringResource(R.string.sep_preparing)
@@ -579,8 +605,15 @@ fun SeparationScreen(
                 // ★G-3ux：边分离边播时，多轨已可听但仍需后台分离 → 文案要说明白，
                 //   否则“分离开关：多轨”与“分离中 58%”自相矛盾。
                 if (edgePercent != null) {
+                    // ★2026-11-07：只有**真的切到多轨之后**才说“已可播放”。
+                    //   旧实现只看 edgePercent != null（边播会话在跑），
+                    //   实测 gate 还 Buffering（4%）时就写了“已可播放”，是假话。
                     Text(
-                        stringResource(R.string.sep_running_playable, t.percent),
+                        stringResource(
+                            if (separationOn) R.string.sep_running_playable
+                            else R.string.sep_running_waiting,
+                            t.percent,
+                        ),
                         color = MaterialTheme.colorScheme.primary,
                     )
                     // ★闸门：分离跟不上播放 → 已自动暂停，需要解释
@@ -610,6 +643,16 @@ fun SeparationScreen(
             SeparationTask.Cancelled ->
                 Text(stringResource(R.string.sep_cancelled), color = MaterialTheme.colorScheme.onSurfaceVariant)
             SeparationTask.Idle -> Unit
+        }
+        // ★2026-11-07：边播完成的短时提示（5s）——否则完成后页面立刻回到初始态，
+        //   看起来像“什么都没发生”。
+        lastEdgeDone?.let { d ->
+            Text(
+                stringResource(
+                    if (d.complete) R.string.sep_edge_done else R.string.sep_edge_done_partial,
+                ),
+                color = MaterialTheme.colorScheme.primary,
+            )
         }
         if (busy) {
             Button(onClick = { vm.cancelSeparation() }) { Text(stringResource(R.string.sep_cancel)) }

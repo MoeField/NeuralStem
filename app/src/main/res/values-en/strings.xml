@@ -60,11 +60,15 @@
     <string name="sep_preparing">Preparing…</string>
     <!-- ★Prep sub-phases: measured ~13s from tap to first chunk (mostly decoding) -->
     <string name="sep_prep_decoding">Preparing · decoding audio…</string>
+    <string name="sep_prep_decoding_elapsed">Preparing · decoding… %1$ds</string>
     <string name="sep_prep_loading_model">Preparing · loading model…</string>
     <string name="sep_prep_model_ready">Preparing · starting…</string>
     <string name="sep_running_pct">Separating %1$d%%</string>
     <!-- ★G-3ux: edge separation — playable while separating in background -->
     <string name="sep_running_playable">Playing · separating %1$d%% in background</string>
+    <string name="sep_running_waiting">Separating %1$d%% · auto-switch when ready</string>
+    <string name="sep_edge_done">✓ Separation complete · full track ready</string>
+    <string name="sep_edge_done_partial">✓ Done · gap at the start (can backfill)</string>
     <string name="sep_edge_switched">Switched to separated stems, resuming from current position</string>
     <string name="sep_edge_aborted">Separation aborted — back to original track</string>
     <!-- ★gate: watermark not far enough ahead yet -->

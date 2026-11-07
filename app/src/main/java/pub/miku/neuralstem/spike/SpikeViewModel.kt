@@ -107,6 +107,22 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
     private val _lastExportable = MutableStateFlow<List<File>?>(null)
     val lastExportable: StateFlow<List<File>?> = _lastExportable.asStateFlow()
 
+    /**
+     * ★2026-11-07：边播完成后的**短时完成态**（UI 显示 5 秒后自动消失）。
+     *
+     * 解决“分离完了页面像没跑过”：`EdgeDone` 会把任务态置回 `Idle`，
+     * 页面不能只靠 `separationTask` 表达“刚刚完成”。
+     */
+    data class EdgeDoneUi(
+        val complete: Boolean,
+        val inferTimeMs: Long,
+        val audioDurationMs: Long,
+    )
+
+    private val _lastEdgeDone = MutableStateFlow<EdgeDoneUi?>(null)
+    val lastEdgeDone: StateFlow<EdgeDoneUi?> = _lastEdgeDone.asStateFlow()
+    private var edgeDoneFlashJob: Job? = null
+
     /** ★I3：消费一次分离完成结果（返回并清空）。UI 完成回调只经此。 */
     fun consumeSeparationDone() = session.consumeSeparationDone().also { done ->
         // ★在清空之前把可导出文件抄下来（下单的推流会把它置回 Idle）
@@ -423,7 +439,24 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
                         session.onSeparationFailed(s.message, s.cause)
                     // ★G-3fix：edge 完成（无落盘文件）→ 必须退出 Running，否则 UI 永卡 99%。
                     //   用 Cancelled 语义不合适（会弹“已取消”），故回到 Idle（“无进行中任务”）。
-                    is SeparationRepository.State.EdgeDone -> session.onSeparationEdgeDone()
+                    is SeparationRepository.State.EdgeDone -> {
+                        session.onSeparationEdgeDone()
+                        // ★2026-11-07：留一个 5 秒的完成提示，否则页面立刻回到初始态。
+                        _lastEdgeDone.value = EdgeDoneUi(
+                            complete = s.complete,
+                            inferTimeMs = s.inferTimeMs,
+                            audioDurationMs = s.audioDurationMs,
+                        )
+                        edgeDoneFlashJob?.cancel()
+                        edgeDoneFlashJob = viewModelScope.launch {
+                            delay(5_000)
+                            _lastEdgeDone.value = null
+                        }
+                        // ★全曲已覆盖才允许导出（缺口时导出会得到前半段静音）。
+                        if (s.complete && s.vocalsFile != null && s.accompanimentFile != null) {
+                            _lastExportable.value = listOf(s.vocalsFile, s.accompanimentFile)
+                        }
+                    }
                     SeparationRepository.State.Cancelled -> session.onSeparationCancelled()
                     SeparationRepository.State.Idle -> Unit
                 }
@@ -518,6 +551,7 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
      * 均先驱动状态机（[SessionStateMachine.onSeparationPreparing]）。
      */
     fun startOption(source: File, opt: SepOption) {
+        _lastEdgeDone.value = null   // 新一轮开始，清掉上一次的完成提示
         when (opt) {
             is SepOption.Sherpa -> {
                 engineOverride = true
@@ -554,6 +588,7 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
      * 与 [startOption] 同构（先驱动状态机），但走 [SeparationRepository.startEdge]。
      */
     fun startEdgeOption(source: File, fromPositionMs: Long) {
+        _lastEdgeDone.value = null   // 新一轮开始，清掉上一次的完成提示
         engineOverride = true
         engineMode = SherpaSourceSeparation.MODE_SPLEETER
         Log.i(TAG, "startEdgeOption: from=${fromPositionMs}ms")
@@ -668,6 +703,7 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
     fun reset() {
         pendingFile = null
         _state.value = State.Idle
+        _lastEdgeDone.value = null
         // 清空分离任务态（页面重置；不影响 repo 任务）
         session.consumeSeparationDone()  // 若为完成态则消费掉
         pushSeparationTask()

@@ -62,11 +62,18 @@
     <string name="sep_preparing">准备中…</string>
     <!-- ★准备子阶段：实测点“快速”到首块推理要 ~13s（主要解码），细分让用户知道在干什么 -->
     <string name="sep_prep_decoding">准备中 · 解码音频…</string>
+    <!-- ★2026-11-07：解码无真实进度，至少显示已用秒数 -->
+    <string name="sep_prep_decoding_elapsed">准备中 · 解码音频… 已 %1$d 秒</string>
     <string name="sep_prep_loading_model">准备中 · 加载模型…</string>
     <string name="sep_prep_model_ready">准备中 · 即将开始…</string>
     <string name="sep_running_pct">分离中 %1$d%%</string>
     <!-- ★G-3ux：边分离边播——已可听但仍在后台分离 -->
     <string name="sep_running_playable">已可播放 · 后台分离中 %1$d%%</string>
+    <!-- ★2026-11-07：还没切到多轨（gate Buffering）时不能说“已可播放” -->
+    <string name="sep_running_waiting">分离中 %1$d%% · 就绪后自动切多轨</string>
+    <!-- ★2026-11-07：边播完成后的短时提示（5s） -->
+    <string name="sep_edge_done">✓ 分离完成 · 全曲可播</string>
+    <string name="sep_edge_done_partial">✓ 已完成 · 前段有缺口（可补齐）</string>
     <string name="sep_edge_switched">已切到分离结果，可从当前位置继续播放</string>
     <string name="sep_edge_aborted">分离已中止，已回到原曲播放</string>
     <!-- ★闸门：水位线还没领先够，暂不切轨 -->

@@ -232,12 +232,13 @@ fun AppShell(
             // ★2026-11-06：切轨位置 = **当前播放位置**，不是分离起点。
             //   旧实现用 startFrame（用户 4s 点分离 → 切轨就回到 4s，白听一段）。
             //   stem 文件是完整曲长（未分离区静音），只要不超过水位线就能连续播；
-            //   留 2s 余量（与 Gate 的 SAFETY 一致），避免切过去立刻撞饥饿。
+            //   ★2026-11-07：余量从 2s 提到 5s —— 2s 正好等于 Gate 的 SAFETY 阈值，
+            //   实测切过去会立刻 Starved（停 1.7s）。5s 给分离追上留一点时间。
             val availEndMs = startMs + edgeSession.availableFrames.toLong() * 1000L / sr
             val currentMs = playerVm.progress.positionMs
             val posMs = currentMs.coerceIn(
                 startMs,
-                (availEndMs - 2_000L).coerceAtLeast(startMs),
+                (availEndMs - 5_000L).coerceAtLeast(startMs),
             )
             val vf = edgeSession.vocalsFile
             val af = edgeSession.accompFile

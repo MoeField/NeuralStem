@@ -536,7 +536,12 @@ private fun ControlsArea(
                         color = MaterialTheme.colorScheme.error,
                     )
                     pct != null -> Text(
-                        stringResource(R.string.sep_running_playable, pct),
+                        // ★2026-11-07：切过去之前不要说“已可播放”（gate 可能还在 Buffering）。
+                        stringResource(
+                            if (state.separationOn) R.string.sep_running_playable
+                            else R.string.sep_running_waiting,
+                            pct,
+                        ),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.primary,
                     )

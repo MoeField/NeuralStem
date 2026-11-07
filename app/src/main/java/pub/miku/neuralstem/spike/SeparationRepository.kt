@@ -119,6 +119,12 @@ class SeparationRepository(private val app: Application) {
             /** 落盘文件对应的起始帧（播放切过去时 seek 到这里）。 */
             val startFrame: Int = 0,
             val sampleRate: Int = 44_100,
+            /**
+             * ★2026-11-07：全曲是否已覆盖。
+             * `false` = 成本门控跳过了前段补齐，文件里有静音缺口 → **不允许导出**
+             * （否则用户拿到的 WAV 前半段是静音）。
+             */
+            val complete: Boolean = false,
         ) : State
     }
 
@@ -292,6 +298,7 @@ class SeparationRepository(private val app: Application) {
                             accompanimentFile = aFile,
                             startFrame = startFrame,
                             sampleRate = frameSource.sampleRate,
+                            complete = true,
                         )
                         Log.i(TAG, "edge 缓存命中：跳过分离（complete=true）")
                         return@launch
@@ -505,6 +512,7 @@ class SeparationRepository(private val app: Application) {
                                 accompanimentFile = aFile,
                                 startFrame = startFrame,
                                 sampleRate = frameSource.sampleRate,
+                                complete = manifest.complete,
                             )
                             Log.i(
                                 TAG,
