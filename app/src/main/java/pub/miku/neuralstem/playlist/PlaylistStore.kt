@@ -24,7 +24,10 @@ import java.io.File
  * - 旧数据无 `isDefault`/进度字段 → 默认值。
  * - **若无"默认歌单" → 自动创建一个并持久化**（保证"不切歌单就进默认歌单"成立）。
  */
-class PlaylistStore(app: Application) {
+class PlaylistStore internal constructor(private val dir: File) {
+
+    /** 生产入口；[dir] 重载供 JVM 单测（不依赖 Application.filesDir）。 */
+    constructor(app: Application) : this(app.filesDir)
 
     /** 歌单类型：文件选择 / 文件夹。 */
     enum class ListType { FILE, FOLDER }
@@ -44,7 +47,7 @@ class PlaylistStore(app: Application) {
         val lastPositionMs: Long = 0L,
     )
 
-    private val file = File(app.filesDir, PLAYLISTS_FILE)
+    private val file = File(dir, PLAYLISTS_FILE)
 
     /** 默认歌单的稳定 id（便于"取默认歌单"）。 */
     val defaultListId: String = DEFAULT_LIST_ID
@@ -54,6 +57,13 @@ class PlaylistStore(app: Application) {
      */
     fun load(): List<Playlist> {
         val raw = readRaw()
+        if (raw == null) {
+            // ★2026-11-09（P0-2）：解析失败**绝不能**用空结果回写覆盖原文件
+            //   （旧行为：ensureDefault(empty) → save → 1000+ 首永久丢失）。
+            //   保留一份损坏副本，本次只在内存里返回默认歌单；文件保持原样。
+            backupCorrupt()
+            return ensureDefault(emptyList())
+        }
         val withDefault = ensureDefault(raw)
         val migrated = migrateUnreadableFileUris(withDefault)
         // ★ 只要规范化**产生了任何变化**（新增默认歌单，或改动了字段）就落盘，
@@ -62,6 +72,15 @@ class PlaylistStore(app: Application) {
             save(migrated)
         }
         return migrated
+    }
+
+    /** 解析失败时保留现场：复制为 `playlists.json.corrupt-<ts>`，供用户/日志恢复。 */
+    private fun backupCorrupt() {
+        runCatching {
+            val backup = File(file.parentFile, "${file.name}.corrupt-${System.currentTimeMillis()}")
+            file.copyTo(backup, overwrite = false)
+            Log.w(TAG, "playlists.json 解析失败 → 已保留损坏副本 ${backup.name}（不用空数据覆盖）")
+        }.onFailure { Log.w(TAG, "backup corrupt playlists failed", it) }
     }
 
     /**
@@ -112,7 +131,8 @@ class PlaylistStore(app: Application) {
         return content.toString()
     }
 
-    private fun readRaw(): List<Playlist> {
+    /** @return null = 文件存在但解析失败（调用方必须保留原文件，不得回写空数据）。 */
+    private fun readRaw(): List<Playlist>? {
         if (!file.exists()) return emptyList()
         return runCatching {
             val arr = JSONArray(file.readText())
@@ -139,7 +159,7 @@ class PlaylistStore(app: Application) {
                     lastPositionMs = o.optLong("lastPositionMs", 0L),
                 )
             }
-        }.onFailure { Log.w(TAG, "load failed", it) }.getOrDefault(emptyList())
+        }.onFailure { Log.w(TAG, "load failed", it) }.getOrNull()
     }
 
     /** 确保存在一个默认歌单；若已有标记为 default 的，保留（且强制规范）。 */
@@ -198,34 +218,52 @@ class PlaylistStore(app: Application) {
     }
 
     fun save(list: List<Playlist>) {
-        runCatching {
-            val arr = JSONArray()
-            list.forEach { p ->
-                arr.put(JSONObject().apply {
-                    put("id", p.id)
-                    put("name", p.name)
-                    put("type", p.type.name)
-                    put("folderUri", p.folderUri ?: "")
-                    put("isDefault", p.isDefault)
-                    put("lastPlayedUri", p.lastPlayedUri ?: "")
-                    put("lastPositionMs", p.lastPositionMs)
-                    put("tracks", JSONArray().apply {
-                        p.tracks.forEach { t ->
-                            put(JSONObject().apply {
-                                put("uri", t.uri)
-                                put("title", t.title)
-                            })
-                        }
+        // ★2026-11-09（P0-2）：tmp + fsync + rename 原子替换 + 进程内串行化。
+        //   旧实现直接 `file.writeText`，多写者（进度落盘/歌单编辑）或被杀会截断 JSON；
+        //   下次启动解析失败又会被空歌单覆盖 → 整份歌单丢失。
+        synchronized(IO_LOCK) {
+            runCatching {
+                val arr = JSONArray()
+                list.forEach { p ->
+                    arr.put(JSONObject().apply {
+                        put("id", p.id)
+                        put("name", p.name)
+                        put("type", p.type.name)
+                        put("folderUri", p.folderUri ?: "")
+                        put("isDefault", p.isDefault)
+                        put("lastPlayedUri", p.lastPlayedUri ?: "")
+                        put("lastPositionMs", p.lastPositionMs)
+                        put("tracks", JSONArray().apply {
+                            p.tracks.forEach { t ->
+                                put(JSONObject().apply {
+                                    put("uri", t.uri)
+                                    put("title", t.title)
+                                })
+                            }
+                        })
                     })
-                })
-            }
-            file.writeText(arr.toString())
-        }.onFailure { Log.w(TAG, "save failed", it) }
+                }
+                val text = arr.toString()
+                val tmp = File(file.parentFile, "${file.name}.tmp")
+                java.io.FileOutputStream(tmp).use { out ->
+                    out.write(text.toByteArray(Charsets.UTF_8))
+                    out.fd.sync()
+                }
+                if (!tmp.renameTo(file)) {
+                    // 极少数文件系统不支持同目录 rename → 退化为覆盖写（仍比直写安全）
+                    tmp.copyTo(file, overwrite = true)
+                    tmp.delete()
+                }
+            }.onFailure { Log.w(TAG, "save failed", it) }
+        }
     }
 
     companion object {
         private const val TAG = "PlaylistStore"
         private const val PLAYLISTS_FILE = "playlists.json"
+
+        /** 进程内串行化所有 save（多实例共享同一文件）。 */
+        private val IO_LOCK = Any()
 
         /** 默认歌单的固定 id（避免"找不到默认歌单"）。 */
         const val DEFAULT_LIST_ID = "default"
