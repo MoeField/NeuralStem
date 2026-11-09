@@ -175,35 +175,182 @@ object SeparationInput {
         val isWav = localFile.extension.equals("wav", ignoreCase = true)
 
         if (isWav) {
-            // 先探采样率:44.1k 才能走流式直读(零解码、零驻留)
+            // 44.1k WAV 仍走流式直读(零解码、零驻留)；其它采样率包一层重采样。
             val info = WavIo.probe(localFile)
             if (info.sampleRate == MODEL_SAMPLE_RATE) {
                 Log.i(TAG, "wav @44.1k → 流式直读(零解码)")
                 return WavFrameSource(WavReader(localFile))
             }
-            Log.i(TAG, "wav @${info.sampleRate}Hz → 需要重采样,转解码路径")
+            Log.i(TAG, "wav @${info.sampleRate}Hz → ResamplingFrameSource")
+            return ResamplingFrameSource(
+                WavFrameSource(WavReader(localFile)),
+                info.sampleRate,
+                MODEL_SAMPLE_RATE,
+            )
         }
 
-        // 通用路径:解码全部 PCM → 重采样 → 补声道
-        val decoded = decodeToPcm(context, Uri.fromFile(localFile))
-        var samples = decoded.samples
-        var channels = decoded.channels
-
-        samples = Resampler.resample(
-            samples, channels, decoded.sampleRate, MODEL_SAMPLE_RATE,
+        // ★2026-11-09：压缩源改为**流式解码到临时 WAV**，不再把整曲按源采样率读进
+        //   FloatArray（192k/148s 一次 227MB → 真机 OOM）。临时文件在 close 时删除。
+        cleanupStaleTemps(context)
+        val tmp = File(
+            context.cacheDir,
+            "sep-src-${System.currentTimeMillis()}-${localFile.name.hashCode()}.wav",
         )
-
-        if (channels == 1) {
-            samples = toStereo(samples)
-            channels = MODEL_CHANNELS
-            Log.i(TAG, "mono → stereo (duplicated)")
-        } else if (channels > MODEL_CHANNELS) {
-            samples = takeFirstTwoChannels(samples, channels)
-            Log.i(TAG, "multichannel($channels) → first 2 channels")
-            channels = MODEL_CHANNELS
+        val ok = try {
+            decodeToTempWav(context, localFile, tmp)
+        } catch (t: Throwable) {
+            Log.e(TAG, "decodeToTempWav failed: ${localFile.name}", t)
+            false
         }
+        if (!ok) {
+            runCatching { tmp.delete() }
+            error("解码失败: ${localFile.name}")
+        }
+        val wav = WavFrameSource(WavReader(tmp))
+        Log.i(
+            TAG,
+            "decoded temp wav: ${tmp.name} ${tmp.length()}B " +
+                "sr=${wav.sampleRate} ch=${wav.channels} frames=${wav.totalFrames}",
+        )
+        return if (wav.sampleRate == MODEL_SAMPLE_RATE) {
+            TempFileFrameSource(wav, tmp)
+        } else {
+            ResamplingFrameSource(wav, wav.sampleRate, MODEL_SAMPLE_RATE, tmp)
+        }
+    }
 
-        return MemoryFrameSource(samples, channels, MODEL_SAMPLE_RATE)
+    /** 清理上次崩溃/被杀残留的临时 WAV（超过 1 小时）。 */
+    private fun cleanupStaleTemps(context: Context) {
+        runCatching {
+            val now = System.currentTimeMillis()
+            context.cacheDir.listFiles { f ->
+                f.name.startsWith("sep-src-") && now - f.lastModified() > 3_600_000L
+            }?.forEach { it.delete() }
+        }
+    }
+
+    /**
+     * ★2026-11-09：把压缩源**流式**解码成临时 WAV（源采样率、16-bit、立体声）。
+     *
+     * 内存 O(解码块)，不再需要 `ByteArrayOutputStream` + 整曲 `FloatArray`。
+     * 返回 false = 未收到真正的 EOS（取消或 guard 熔断），调用方应删除临时文件。
+     */
+    private fun decodeToTempWav(context: Context, localFile: File, temp: File): Boolean {
+        val extractor = MediaExtractor()
+        try {
+            extractor.setDataSource(context, Uri.fromFile(localFile), null)
+            var trackIndex = -1
+            var format: MediaFormat? = null
+            for (i in 0 until extractor.trackCount) {
+                val f = extractor.getTrackFormat(i)
+                if (f.getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true) {
+                    trackIndex = i
+                    format = f
+                    break
+                }
+            }
+            check(trackIndex >= 0) { "no audio track in ${localFile.name}" }
+            extractor.selectTrack(trackIndex)
+            val mime = format!!.getString(MediaFormat.KEY_MIME)!!
+            val codec = MediaCodec.createDecoderByType(mime)
+            try {
+                codec.configure(format, null, null, 0)
+                codec.start()
+                val info = MediaCodec.BufferInfo()
+                var inputDone = false
+                var outputDone = false
+                var guard = 0
+                var writer: WavWriter? = null
+                var outRate = 44_100
+
+                while (!outputDone && guard++ < 200_000) {
+                    if (!inputDone) {
+                        val inBuf = codec.dequeueInputBuffer(10_000)
+                        if (inBuf >= 0) {
+                            val buf = codec.getInputBuffer(inBuf)!!
+                            val size = extractor.readSampleData(buf, 0)
+                            if (size < 0) {
+                                codec.queueInputBuffer(
+                                    inBuf, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM,
+                                )
+                                inputDone = true
+                            } else {
+                                codec.queueInputBuffer(inBuf, 0, size, extractor.sampleTime, 0)
+                                extractor.advance()
+                            }
+                        }
+                    }
+                    when (val outIdx = codec.dequeueOutputBuffer(info, 10_000)) {
+                        MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> Unit
+                        MediaCodec.INFO_TRY_AGAIN_LATER -> Unit
+                        else -> if (outIdx >= 0) {
+                            val buf = codec.getOutputBuffer(outIdx)!!
+                            buf.position(info.offset)
+                            buf.limit(info.offset + info.size)
+                            val of = codec.outputFormat
+                            val ch = of.getInteger(MediaFormat.KEY_CHANNEL_COUNT).coerceAtLeast(1)
+                            val sr = of.getInteger(MediaFormat.KEY_SAMPLE_RATE).coerceAtLeast(1)
+                            if (writer == null) {
+                                outRate = sr
+                                writer = WavWriter(temp, 2, sr)
+                            }
+                            val enc = if (of.containsKey(MediaFormat.KEY_PCM_ENCODING)) {
+                                of.getInteger(MediaFormat.KEY_PCM_ENCODING)
+                            } else {
+                                AudioFormat.ENCODING_PCM_16BIT
+                            }
+                            val floats: FloatArray = when (enc) {
+                                AudioFormat.ENCODING_PCM_16BIT -> {
+                                    val sb = buf.order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
+                                    val n = sb.remaining()
+                                    FloatArray(n) { sb.get(it) / 32768f }
+                                }
+                                AudioFormat.ENCODING_PCM_FLOAT -> {
+                                    val fb = buf.order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer()
+                                    val n = fb.remaining()
+                                    FloatArray(n) { fb.get(it) }
+                                }
+                                else -> {
+                                    codec.releaseOutputBuffer(outIdx, false)
+                                    error("unsupported decoder PCM encoding $enc")
+                                }
+                            }
+                            val frames = floats.size / ch
+                            if (frames > 0) {
+                                val stereo = FloatArray(frames * 2)
+                                for (f in 0 until frames) {
+                                    if (ch == 1) {
+                                        val v = floats[f]
+                                        stereo[f * 2] = v
+                                        stereo[f * 2 + 1] = v
+                                    } else {
+                                        stereo[f * 2] = floats[f * ch]
+                                        stereo[f * 2 + 1] = floats[f * ch + 1]
+                                    }
+                                }
+                                writer!!.append(stereo)
+                            }
+                            codec.releaseOutputBuffer(outIdx, false)
+                            if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) {
+                                outputDone = true
+                            }
+                        }
+                    }
+                }
+                writer?.close()
+                Log.i(
+                    TAG,
+                    "decodeToTempWav: ${localFile.name} sr=$outRate " +
+                        "frames=${writer?.framesWritten} eos=$outputDone",
+                )
+                return outputDone && writer != null && temp.length() > 44
+            } finally {
+                codec.stop()
+                codec.release()
+            }
+        } finally {
+            extractor.release()
+        }
     }
 
     private fun toStereo(mono: FloatArray): FloatArray {
