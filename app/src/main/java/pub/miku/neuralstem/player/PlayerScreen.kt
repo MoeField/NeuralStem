@@ -550,6 +550,9 @@ private fun ControlsArea(
             Switch(
                 checked = state.separationOn,
                 onCheckedChange = { onSeparationToggle(it) },
+                // ★2026-11-09：分离进行中、还没切多轨时禁用（就绪后自动切），
+                //   避免点了只得到「无分离结果」；已切多轨后仍可关。
+                enabled = !(state.edgePercent != null && !state.separationOn),
             )
         }
         // ★⑬：横屏不显“去「分离」页处理 →”（底栏已有“分离”tab）；竖屏保留。

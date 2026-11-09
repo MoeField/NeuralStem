@@ -128,6 +128,16 @@ class EdgeSeparationSession private constructor() {
     @Volatile var sourceUri: String? = null
         private set
 
+    /**
+     * ★2026-11-09：会话代号（每次 [begin]/[beginFiles] +1）。
+     *
+     * 解决“新分离缓存命中时不自动切多轨”：`AppShell` 原先用一次性布尔
+     * `edgeSwitched` 判断，缓存命中时状态从 Done 直接到 Done、**不经过 Preparing**，
+     * 复位逻辑丢失 → 新会话永远不切 → `lastStems` 为空 → 开关报“无分离结果”。
+     */
+    @Volatile var generation: Long = 0L
+        private set
+
     /** 整段音频总帧数（用于合成 WAV 头的预测长度）；0=未知。 */
     @Volatile var totalFrames: Int = 0
         private set
@@ -360,6 +370,7 @@ class EdgeSeparationSession private constructor() {
         capacityFrames: Int = StemPcmRingBuffer.DEFAULT_CAPACITY_FRAMES,
     ) {
         abort()
+        generation++
         this.startFrame = startFrame.coerceAtLeast(0)
         this.sampleRate = sampleRate
         this.channels = channels
@@ -425,6 +436,7 @@ class EdgeSeparationSession private constructor() {
         sourceUri: String? = null,
     ) {
         abort()
+        generation++
         this.startFrame = startFrame.coerceAtLeast(0)
         this.sampleRate = sampleRate
         this.channels = channels

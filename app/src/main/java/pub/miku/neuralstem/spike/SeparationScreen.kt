@@ -543,7 +543,10 @@ fun SeparationScreen(
                     val ok = onToggleSeparation(on)
                     if (on && !ok) onHint(noSepHint, null, null)
                 },
-                enabled = hasSong,
+                // ★2026-11-09：分离进行中且尚未切多轨 → 先禁用开关。
+                //   此时开关点了只会弹「无分离结果」，而正确的预期是“就绪后自动切”。
+                //   已切多轨（separationOn）时仍允许关掉。
+                enabled = hasSong && (separationOn || !busy),
             )
         }
 

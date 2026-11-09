@@ -128,7 +128,15 @@ fun AppShell(
     // ★2026-11-06：用 rememberSaveable —— 旋转/Activity 重建后不能丢。
     //   丢了会再次进入下面的切轨分支，把播放位置按 startPositionMs 重置
     //   （用户实报：“旋转屏幕就跳回分离起点重新播”）。
-    var edgeSwitched by rememberSaveable { mutableStateOf(false) }
+    //
+    // ★2026-11-09：从**一次性布尔**改成**会话键**。原因：缓存命中时
+    //   `edgeState` 从 Done 直接到 Done、不经过 Preparing，旧的“Preparing 时
+    //   edgeSwitched=false”永远不触发 → 新分离不切多轨 → lastStems 为空 →
+    //   用户点分离开关报“无分离结果”。会话键 = generation + source + start，
+    //   换一次分离就是新键（自动切），旋转/重建后键不变（不重复切）。
+    var switchedSessionKey by rememberSaveable { mutableStateOf<String?>(null) }
+    fun currentEdgeSessionKey(): String =
+        "${edgeSession.generation}:${edgeSession.sourceUri}:${edgeSession.startFrame}"
     // ★G-3ux：Snackbar 文案在 Composable 上下文取（协程内不能用 stringResource）。
     val edgeSwitchedMsg = stringResource(R.string.sep_edge_switched)
     val edgeAbortedMsg = stringResource(R.string.sep_edge_aborted)
@@ -156,7 +164,9 @@ fun AppShell(
     // ★缓冲提示（闸门版）：分离在跑、但水位线还没领先够 → 告诉用户“在缓冲”，
     //   而不是傻等（用户不知道为何还没切到分离结果）。
     LaunchedEffect(edgeGate) {
-        if (edgeGate is EdgeSeparationSession.Gate.Buffering && !edgeSwitched) {
+        if (edgeGate is EdgeSeparationSession.Gate.Buffering &&
+            switchedSessionKey != currentEdgeSessionKey()
+        ) {
             scope.launch {
                 snackbarHostState.showSnackbar(edgeBufferingMsg)
             }
@@ -166,7 +176,8 @@ fun AppShell(
     LaunchedEffect(edgeState, edgeGate) {
         val st = edgeState
         val gate = edgeGate
-        if (st is EdgeSeparationSession.State.Preparing) edgeSwitched = false
+        val sessionKey = currentEdgeSessionKey()
+        val edgeSwitched = switchedSessionKey == sessionKey
         // ★切轨条件 = **闸门**（不是分离进度）：
         //   Playable = 水位线已领先 startFrame 至少 LEAD_FRAMES→ 现在切过去能连续出声；
         //   Finished = 分离已跑完，整曲都有数据 → 自然也可切。
@@ -220,13 +231,13 @@ fun AppShell(
         // ★2026-11-06：旋转/重建后若**已经在播这次分离的结果**，绝不能再切一次。
         //   rememberSaveable 已覆盖大部分场景；这里是第二道闸（状态来自 VM/Service）。
         if (ready && !edgeSwitched && playerState.isMultiTrack && playerState.separationOn) {
-            edgeSwitched = true
+            switchedSessionKey = sessionKey
             Log.i("AppShell", "edge gate=$gate 但已在多轨（重建/旋转）→ 跳过重复切轨")
             return@LaunchedEffect
         }
 
         if (ready && !edgeSwitched) {
-            edgeSwitched = true
+            switchedSessionKey = sessionKey
             val sr = edgeSession.sampleRate.coerceAtLeast(1)
             val startMs = edgeSession.startFrame.toLong() * 1000L / sr
             // ★2026-11-06：切轨位置 = **当前播放位置**，不是分离起点。
@@ -279,7 +290,7 @@ fun AppShell(
         val aborted = st is EdgeSeparationSession.State.Cancelled ||
             st is EdgeSeparationSession.State.Failed
         if (aborted && edgeSwitched) {
-            edgeSwitched = false
+            switchedSessionKey = null
             Log.i("AppShell", "edge session aborted (${st::class.simpleName}) → 回原曲")
             // ★修正：只用 exitMultiTrack() 会“退了多轨但没播”、“1 Tracks 0 active”。
             //   必须走 toggleSeparation(false) —— 它内部 exitMultiTrack + doLoad(originalUri)
