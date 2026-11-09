@@ -174,9 +174,14 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         val volume: Float = 1f,
         val muted: Boolean = false,
         val solo: Boolean = false,
+        /** ★B1：stem 文件 uri（VM 重建时还原 lastStems 用）。 */
+        val uri: String? = null,
     )
 
     private val _state = MutableStateFlow(PlayerState())
+
+    /** ★B1：上一次应用的 tracks JSON；progress extras 每 200ms 触发，避免重复解析/刷日志。 */
+    private var lastTracksJson: String? = null
     val state: StateFlow<PlayerState> = _state.asStateFlow()
 
     /**
@@ -442,7 +447,36 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             // （addListener 只收 Player.Listener）—— 用它收多轨状态快照
             .setListener(object : MediaController.Listener {
                 override fun onExtrasChanged(controller: MediaController, extras: Bundle) {
-                    applyTracksSnapshot(extras.getString(MultiTrackSession.KEY_TRACKS_JSON))
+                    val tracksJson = extras.getString(MultiTrackSession.KEY_TRACKS_JSON)
+                    if (tracksJson != lastTracksJson) {
+                    lastTracksJson = tracksJson
+                    applyTracksSnapshot(tracksJson)
+                    // ★B1：VM/Activity 重建后恢复 originalUri/lastStems/变速变调。
+                    val isMt = !tracksJson.isNullOrBlank() &&
+                        runCatching { JSONArray(tracksJson).length() > 0 }.getOrDefault(false)
+                    if (isMt) {
+                        val ou = extras.getString(MultiTrackSession.KEY_ORIGINAL_URI)
+                        if (!ou.isNullOrBlank()) {
+                            originalUri = Uri.parse(ou)
+                            val title = extras.getString(MultiTrackSession.KEY_ORIGINAL_TITLE).orEmpty()
+                            if (title.isNotBlank()) originalName = title
+                            _state.value = _state.value.copy(
+                                hasMedia = true,
+                                fileName = if (title.isNotBlank()) title else _state.value.fileName,
+                                currentUri = ou,
+                            )
+                        }
+                        val sp = extras.getFloat(MultiTrackSession.KEY_SPEED, 1f)
+                        val pr = extras.getFloat(MultiTrackSession.KEY_PITCH_RATE, 1f)
+                        val semis = if (pr > 0f) {
+                            (12.0 * kotlin.math.log2(pr.toDouble())).toFloat()
+                        } else {
+                            0f
+                        }
+                        _state.value = _state.value.copy(speed = sp, pitchSemitones = semis)
+                        Log.i(TAG, "B1 extras: originalUri=$ou speed=$sp pitchRate=$pr")
+                    }
+                    }   // tracksJson 变化时才应用
                     applyEqSnapshot(extras.getString(MultiTrackSession.KEY_EQ_JSON))
                     // ★2026-11-01：多轨真实位置来自 StemMixer（单 AudioTrack），
                     //   主轨 ExoPlayer 只是静音门面，它的 currentPosition 不可用。
@@ -470,6 +504,11 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             //   置于重放 pendingLoad **之前**：若本次确实有待载入请求，replay 的 doLoad
             //   会覆盖回填值（以新曲为准）；无待载入请求时回填值保留（=重建场景）。
             restoreFromSession(c)
+            // ★B1：循环模式从 SettingsRepository 回填（多轨/重建都不丢）。
+            val savedRepeat = settingsRepo.repeatMode
+            _state.value = _state.value.copy(repeatMode = savedRepeat)
+            c.repeatMode = savedRepeat.toPlayerRepeatMode()
+            Log.i(TAG, "B1 restore repeatMode=$savedRepeat")
             // 重放连接前收到的载入请求
             val replay = pendingLoad
             pendingLoad = {}
@@ -496,6 +535,16 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
      * 多轨的轨迹状态由快照 [applyTracksSnapshot] 另行同步。
      */
     private fun restoreFromSession(c: MediaController) {
+        // ★B1：多轨快照已先到时，currentMediaItem 可能是 stem；优先用 Service 给的原始 uri。
+        if (isMultiTrackLoaded && originalUri != null) {
+            _state.value = _state.value.copy(
+                fileName = originalName.ifBlank { _state.value.fileName },
+                hasMedia = true,
+                currentUri = originalUri?.toString(),
+            )
+            Log.i(TAG, "P3: restoreFromSession(multi) → original=$originalName uri=$originalUri")
+            return
+        }
         val item = c.currentMediaItem ?: return
         val uri = item.localConfiguration?.uri
         val title = item.mediaMetadata.title?.toString()
@@ -1607,15 +1656,37 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             if (inMt) SessionMode.MultiTrack("primary", tracks.map { it.id })
             else SessionMode.Single,
         )
-        // 多轨时 isReady 以 UI 意义上“轨已载入”为准；- 时长等待播放器 READY 后由 controller 监听补
-        // ★3b：`isMultiTrack` **不在此手动 copy** —— 由 [withDerived] 从状态机派生（单一真源）。
-        _state.value = withDerived(
-            _state.value.copy(
-                tracks = tracks,
-                isReady = _state.value.isReady || inMt,
-            ),
-        )
-        Log.i(TAG, "tracks snapshot: ${tracks.size} 轨 (inMultiTrack=$inMt)")
+        if (inMt) {
+            // ★B1：VM/Activity 重建 → 直接从快照恢复“已在多轨”的本地态，
+            //   否则 separationOn/lastStems=false，开关显示“原曲”、关不掉。
+            isMultiTrackLoaded = true
+            val stems = tracks.mapNotNull { t ->
+                val u = t.uri ?: return@mapNotNull null
+                if (!u.startsWith("file://")) return@mapNotNull null
+                val path = runCatching { Uri.parse(u).path }.getOrNull() ?: return@mapNotNull null
+                val f = File(path)
+                if (f.exists()) Triple(t.id, t.label, f) else null
+            }
+            if (stems.size >= 2) lastStems = stems
+            _state.value = withDerived(
+                _state.value.copy(
+                    tracks = tracks,
+                    isReady = _state.value.isReady || inMt,
+                    separationOn = true,
+                    stemsAvailable = lastStems != null,
+                ),
+            )
+        } else {
+            isMultiTrackLoaded = false
+            _state.value = withDerived(
+                _state.value.copy(
+                    tracks = emptyList(),
+                    separationOn = false,
+                    stemsAvailable = lastStems != null,
+                ),
+            )
+        }
+        Log.i(TAG, "tracks snapshot: ${tracks.size} 轨 (inMultiTrack=$inMt, lastStems=$lastStems)")
     }
 
     /** 把 Service 回传的 EQ 状态快照镜像到 UI state（M3-P3）。 */

@@ -153,6 +153,15 @@ object MultiTrackSession {
     /** Service → UI 的多轨状态快照（JSON）。无该键 = 非多轨模式。 */
     const val KEY_TRACKS_JSON = "nst.tracksJson"
 
+    /**
+     * ★2026-11-10（B1）：Service → UI 的**原始曲** uri/title。
+     *
+     * VM 重建后靠它恢复 `originalUri`（关开关/Mix 退出要回原曲）。
+     * 不能依赖 session 的 currentMediaItem：多轨下它可能是 stem。
+     */
+    const val KEY_ORIGINAL_URI = "nst.originalUri"
+    const val KEY_ORIGINAL_TITLE = "nst.originalTitle"
+
     // ---- M3-P3：EQ 相关键 ----
 
     /** EQ 开关（Bundle boolean）。 */

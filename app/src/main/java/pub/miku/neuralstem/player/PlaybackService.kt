@@ -84,6 +84,10 @@ class PlaybackService : MediaSessionService() {
         onMultiTrackFocusChange(change)
     }
 
+    /** ★B1：多轨当前曲的原始 uri/title（VM 重建恢复用）。 */
+    private var mtOriginalUri: String? = null
+    private var mtOriginalTitle: String? = null
+
     /**
      * M3-P3：EQ 控制器（**从 VM 搬进 Service**）。
      * 单轨挂 singlePlayer 会话；多轨每轨各挂一份（参数由 EqController 同步）。
@@ -225,10 +229,16 @@ class PlaybackService : MediaSessionService() {
                         put("volume", t.volume.toDouble())
                         put("muted", t.muted)
                         put("solo", c.soloTrackId == t.id)
+                        put("uri", t.uri.toString())
                     },
                 )
             }
             extras.putString(MultiTrackSession.KEY_TRACKS_JSON, arr.toString())
+            // ★B1：VM 重建恢复所需
+            extras.putString(MultiTrackSession.KEY_ORIGINAL_URI, mtOriginalUri ?: "")
+            extras.putString(MultiTrackSession.KEY_ORIGINAL_TITLE, mtOriginalTitle ?: "")
+            extras.putFloat(MultiTrackSession.KEY_SPEED, lastSpeed)
+            extras.putFloat(MultiTrackSession.KEY_PITCH_RATE, lastPitchRate)
         }
         // M3-P3：EQ 状态快照（available/enabled/bands/levels）一起回传
         extras.putString(MultiTrackSession.KEY_EQ_JSON, eqSnapshotJson())
@@ -449,6 +459,8 @@ class PlaybackService : MediaSessionService() {
         //   通知/前台服务/MediaController 都看它，但我们把它静音，只让它跑时钟。
         //   （为何不换成 SimpleBasePlayer：v1 用 ForwardingPlayer 实测**不出通知**，
         //    所以保留“session 认真实 ExoPlayer”这条已验证的路径。）
+        mtOriginalUri = singlePlayer?.currentMediaItem?.localConfiguration?.uri?.toString()
+        mtOriginalTitle = singlePlayer?.currentMediaItem?.mediaMetadata?.title?.toString()
         singlePlayer?.volume = 0f
         c.load(items, args.getString(MultiTrackSession.KEY_TITLE))
         // ★把单轨期间/上次多轨的变速变调带给新混音器（否则会从 1.0× 开始，与 UI 不一致）。
@@ -497,6 +509,8 @@ class PlaybackService : MediaSessionService() {
         }
         if (items.isEmpty()) return err("items 为空")
 
+        mtOriginalUri = singlePlayer?.currentMediaItem?.localConfiguration?.uri?.toString()
+        mtOriginalTitle = singlePlayer?.currentMediaItem?.mediaMetadata?.title?.toString()
         singlePlayer?.volume = 0f
         val c = ensureMultiTrack()
         c.loadStream(items, args.getString(MultiTrackSession.KEY_TITLE))
@@ -548,6 +562,8 @@ class PlaybackService : MediaSessionService() {
                 "followers=${multiTrack?.trackList.orEmpty().joinToString { "${it.id}:${it.uri}" }}",
         )
         inMultiTrack = false
+        mtOriginalUri = null
+        mtOriginalTitle = null
         exitMultiTrackFocus()
         handler.removeCallbacks(progressRunnable)   // ★停止 mix 进度推送
         // 混音器释放（它不再持有任何 ExoPlayer；singlePlayer 不受影响）
