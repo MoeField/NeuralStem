@@ -1,6 +1,7 @@
 package pub.miku.neuralstem.player
 
 import android.content.Intent
+import android.media.AudioManager
 import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
@@ -67,6 +68,21 @@ class PlaybackService : MediaSessionService() {
      */
     @Volatile private var lastSpeed: Float = 1f
     @Volatile private var lastPitchRate: Float = 1f
+
+    /**
+     * ★2026-11-10（A3）：多轨音频焦点由 Service 统一持有。
+     *
+     * 门面 singlePlayer 原先 `handleAudioFocus=true`：来电/他 App 抢焦点时
+     * ExoPlayer 只暂停静音门面，真正出声的 StemMixer 继续播。
+     * 进入多轨时关掉门面的焦点处理，由这里 requestAudioFocus；
+     * 焦点丢失 → 同时暂停 mixer + 门面；恢复 → 按丢失前状态恢复。
+     */
+    private var mtAudioAttributes: AudioAttributes? = null
+    private var mtFocusHeld = false
+    private var mtFocusWasPlaying = false
+    private val mtFocusListener = AudioManager.OnAudioFocusChangeListener { change ->
+        onMultiTrackFocusChange(change)
+    }
 
     /**
      * M3-P3：EQ 控制器（**从 VM 搬进 Service**）。
@@ -341,6 +357,85 @@ class PlaybackService : MediaSessionService() {
         return ok()
     }
 
+    // ---------------- ★A3：多轨音频焦点 / 门面同步 ----------------
+
+    /**
+     * 进入多轨：门面不再自己抢焦点，改由 Service 持有。
+     * 否则焦点丢失时只有静音门面被 ExoPlayer 暂停，StemMixer 继续满音量。
+     */
+    private fun enterMultiTrackFocus() {
+        val sp = singlePlayer ?: return
+        if (mtAudioAttributes == null) mtAudioAttributes = sp.audioAttributes
+        // false = 不再让 ExoPlayer 管理焦点；由 mtFocusListener 统一处理。
+        mtAudioAttributes?.let { sp.setAudioAttributes(it, false) }
+        if (mtFocusHeld) return
+        val am = getSystemService(AudioManager::class.java) ?: return
+        @Suppress("DEPRECATION")
+        val granted = am.requestAudioFocus(
+            mtFocusListener,
+            AudioManager.STREAM_MUSIC,
+            AudioManager.AUDIOFOCUS_GAIN,
+        ) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        mtFocusHeld = granted
+        Log.i(TAG, "multi-track audio focus held=$granted")
+    }
+
+    /** 退出多轨：放弃 Service 的焦点，恢复门面自己的焦点处理。 */
+    private fun exitMultiTrackFocus() {
+        val am = getSystemService(AudioManager::class.java)
+        if (mtFocusHeld) {
+            @Suppress("DEPRECATION")
+            am?.abandonAudioFocus(mtFocusListener)
+        }
+        mtFocusHeld = false
+        mtFocusWasPlaying = false
+        mtAudioAttributes?.let { singlePlayer?.setAudioAttributes(it, true) }
+    }
+
+    private fun onMultiTrackFocusChange(change: Int) {
+        if (!inMultiTrack) return
+        when (change) {
+            AudioManager.AUDIOFOCUS_LOSS,
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT,
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
+                mtFocusWasPlaying = multiTrack?.isPlaying() == true
+                multiTrack?.pause()
+                singlePlayer?.pause()
+                mtFocusHeld = false
+                Log.i(TAG, "multi-track focus lost($change) → paused (wasPlaying=$mtFocusWasPlaying)")
+            }
+            AudioManager.AUDIOFOCUS_GAIN -> {
+                val resume = mtFocusWasPlaying
+                mtFocusWasPlaying = false
+                mtFocusHeld = true
+                if (resume) {
+                    multiTrack?.play()
+                    singlePlayer?.play()
+                }
+                Log.i(TAG, "multi-track focus gain → resume=$resume")
+            }
+        }
+    }
+
+    /**
+     * 让静音门面的播放态跟真源 mixer 一致（通知栏/UI 才不会反着显示）。
+     *
+     * 媒体键的 onPlayerCommandRequest 只能拿到 COMMAND_PLAY_PAUSE、拿不到方向；
+     * 我们先按 mixer 状态切换，再让默认命令执行，150ms 后按 mixer 纠正门面。
+     */
+    private fun reconcileFacadeToMixer() {
+        if (!inMultiTrack) return
+        val c = multiTrack ?: return
+        val sp = singlePlayer ?: return
+        if (c.isPlaying() && !sp.isPlaying) {
+            sp.play()
+            Log.i(TAG, "reconcile: facade → play (mixer playing)")
+        } else if (!c.isPlaying() && sp.isPlaying) {
+            sp.pause()
+            Log.i(TAG, "reconcile: facade → pause (mixer paused)")
+        }
+    }
+
     // ---------------- 多轨：命令处理 ----------------
 
     private fun handleLoadMultiTrack(args: Bundle): SessionResult {
@@ -364,6 +459,7 @@ class PlaybackService : MediaSessionService() {
         //   UI 的 play/pause 按钮会显示「播放」而混音器实际在响（用户一按反而暂停）。
         //   之前只依赖 VM 侧的 CMD_PLAY，实测偶发丢失。
         singlePlayer?.play()
+        enterMultiTrackFocus()
         attachMultiTrackEq(c)
         handler.removeCallbacks(progressRunnable)
         handler.post(progressRunnable)      // ★开始推送 mix 进度（真实位置来自 StemMixer）
@@ -408,6 +504,7 @@ class PlaybackService : MediaSessionService() {
         inMultiTrack = true
         c.playWhenAllReady(args.getLong(MultiTrackSession.KEY_START_MS, 0L))
         singlePlayer?.play()   // 同上：门面必须与混音器同播
+        enterMultiTrackFocus()
         attachMultiTrackEq(c)
         handler.removeCallbacks(progressRunnable)
         handler.post(progressRunnable)      // ★开始推送 mix 进度
@@ -451,6 +548,7 @@ class PlaybackService : MediaSessionService() {
                 "followers=${multiTrack?.trackList.orEmpty().joinToString { "${it.id}:${it.uri}" }}",
         )
         inMultiTrack = false
+        exitMultiTrackFocus()
         handler.removeCallbacks(progressRunnable)   // ★停止 mix 进度推送
         // 混音器释放（它不再持有任何 ExoPlayer；singlePlayer 不受影响）
         multiTrack?.close()
@@ -499,6 +597,61 @@ class PlaybackService : MediaSessionService() {
                 .build()
         }
 
+        /**
+         * ★2026-11-10（A3）：系统媒体键/通知栏/锁屏的标准 play/pause 走这里。
+         *
+         * 多轨时 session 仍认静音门面 `singlePlayer`：media3 会先把命令交到这里
+         * （返回 SUCCESS 后才执行默认动作），我们借此同步驱动真源 `StemMixer`，
+         * 再让默认路径更新门面/通知状态。
+         *
+         * 不能靠 `onIsPlayingChanged` 反向驱动：门面是静音轨道，缓冲/焦点会让它
+         * 自己 isPlaying=false，直接映射会把刚启动的 mixer 误暂停（历史坑）。
+         *
+         * 方向判定：回调发生在默认命令执行**之前**，`playWhenReady` 仍是旧值：
+         * 请求 pause 时旧值 true；请求 play 时旧值 false。
+         */
+        @Suppress("DEPRECATION")
+        override fun onPlayerCommandRequest(
+            session: MediaSession,
+            controller: MediaSession.ControllerInfo,
+            playerCommand: Int,
+        ): Int {
+            if (inMultiTrack) {
+                when (playerCommand) {
+                    Player.COMMAND_PLAY_PAUSE -> {
+                        // ★媒体键是“切换”语义；用真源 mixer 的状态判断方向。
+                        //   默认命令随后还会操作门面，150ms 后 reconcile 纠正。
+                        val c = multiTrack
+                        if (c != null) {
+                            val wasPlaying = c.isPlaying()
+                            if (wasPlaying) {
+                                c.pause()
+                                singlePlayer?.pause()
+                                mtFocusWasPlaying = false
+                            } else {
+                                c.play()
+                                singlePlayer?.play()
+                            }
+                            Log.i(TAG, "media PLAY_PAUSE → ${if (wasPlaying) "pause" else "play"}")
+                            handler.postDelayed({ reconcileFacadeToMixer() }, 150)
+                        }
+                    }
+                    Player.COMMAND_SET_SPEED_AND_PITCH -> {
+                        // 系统级 setPlaybackParameters（如 Android Auto/通知扩展）：
+                        // 多轨真源是 StemMixer，门面参数也要同步（位置时钟）。
+                        val p = singlePlayer?.playbackParameters
+                        if (p != null) {
+                            lastSpeed = p.speed
+                            lastPitchRate = p.pitch
+                            multiTrack?.setSpeedPitch(p.speed, p.pitch)
+                            Log.i(TAG, "media SET_SPEED_AND_PITCH → ${p.speed}x/${p.pitch}")
+                        }
+                    }
+                }
+            }
+            return SessionResult.RESULT_SUCCESS
+        }
+
         override fun onCustomCommand(
             session: MediaSession,
             controller: MediaSession.ControllerInfo,
@@ -522,6 +675,7 @@ class PlaybackService : MediaSessionService() {
                 MultiTrackSession.CMD_PAUSE -> {
                     multiTrack?.pause()
                     singlePlayer?.pause()
+                    mtFocusWasPlaying = false
                     ok()
                 }
                 MultiTrackSession.CMD_TOGGLE -> {
@@ -533,6 +687,7 @@ class PlaybackService : MediaSessionService() {
                             c.play(); singlePlayer?.play()
                         } else {
                             c.pause(); singlePlayer?.pause()
+                            mtFocusWasPlaying = false
                         }
                         Log.i(TAG, "CMD_TOGGLE → ${if (nowPlaying) "play" else "pause"}")
                         ok()
@@ -571,6 +726,7 @@ class PlaybackService : MediaSessionService() {
     override fun onDestroy() {
         Log.i(TAG, "service destroyed")
         eqController.detachAll()   // M3-P3：EQ 随 Service 释放
+        exitMultiTrackFocus()
         multiTrack?.close()
         multiTrack = null
         mediaSession?.run {
