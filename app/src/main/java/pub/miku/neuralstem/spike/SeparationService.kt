@@ -80,8 +80,9 @@ class SeparationService : Service() {
     /** 订阅仓库状态：刷新进度 / 终态自停。 */
     private fun observeState() {
         if (observer?.isActive == true) return
+        val repo = SeparationRepository.get(application)
         observer = scope.launch {
-            SeparationRepository.get(application).state.collectLatest { s ->
+            repo.state.collectLatest { s ->
                 when (s) {
                     is SeparationRepository.State.Preparing -> {
                         notifyProgress(0, "准备中…")
@@ -95,7 +96,10 @@ class SeparationService : Service() {
                     is SeparationRepository.State.Failed,
                     is SeparationRepository.State.Cancelled,
                     is SeparationRepository.State.Idle -> {
-                        stopSelfCleanly()
+                        // ★2026-11-09（P0-3）：取消→立刻重试时，旧任务会先发 Cancelled，
+                        //   但新任务已经在排队/等待旧任务 join（repo.isRunning=true）。
+                        //   此时不能 stopSelf，否则新任务掉出前台被降频。
+                        if (!repo.isRunning) stopSelfCleanly()
                     }
                 }
             }

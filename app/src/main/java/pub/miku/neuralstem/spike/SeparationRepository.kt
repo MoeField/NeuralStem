@@ -133,9 +133,52 @@ class SeparationRepository(private val app: Application) {
 
     /** 应用级作用域:不随页面销毁(进程级存活) */
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private var job: Job? = null
+    @Volatile private var job: Job? = null
 
-    val isRunning: Boolean get() = job?.isActive == true
+    /**
+     * ★2026-11-09（P0-3）：已取消但可能仍在 native 推理块里的旧任务。
+     *
+     * `cancel()` 会先把 [job] 移到这个引用；下一次启动必须 `join` 它，
+     * 否则“取消 → 立刻重试”时旧任务还会写新会话/同一批 stem 文件。
+     */
+    @Volatile private var cancelledJob: Job? = null
+
+    /** 任务代号：每次启动 +1。等待旧任务 join 期间又被新启动取代时用来放弃。 */
+    private val generation = java.util.concurrent.atomic.AtomicLong(0L)
+
+    val isRunning: Boolean get() = job?.isActive == true || cancelledJob?.isActive == true
+
+    /**
+     * 串行化启动：先取消并**等待**上一个任务真正退出，再执行 [block]。
+     *
+     * ## 为什么必须 join（2026-11-09，P0-3）
+     * `SeparationRepository` 原先只有一个 `job` 字段：`cancel()` 把它置 null 后
+     * 立刻重试，新任务拿不到旧 Job，两者会并发：
+     * - 旧任务下一块边界 `session.abort()` 把新会话 gate 打回 Idle；
+     * - 旧任务迟到 `session.complete()`/`EdgeDone` 抢新任务的终态；
+     * - 两者同时写同一份 `vocals.wav`/`accompaniment.wav`。
+     *
+     * 旧任务即使处在 native 推理块里不可立即中断，`join` 也只是让新任务
+     * **等一个块**（≤30s），换来的是一致性。用户看到的是 Preparing，
+     * 而不是新会话被旧任务打坏。
+     */
+    private fun launchSeparation(block: suspend CoroutineScope.(Long) -> Unit): Job {
+        val previous = job ?: cancelledJob
+        previous?.cancel()
+        val myGen = generation.incrementAndGet()
+        val newJob = scope.launch {
+            previous?.join()
+            // 在等旧任务期间又被更新的启动取代 → 静默放弃
+            if (generation.get() != myGen) return@launch
+            block(myGen)
+        }
+        job = newJob
+        newJob.invokeOnCompletion {
+            if (job === newJob) job = null
+            if (cancelledJob === previous) cancelledJob = null
+        }
+        return newJob
+    }
 
     /**
      * 启动分离。若已有任务在跑则先取消旧任务。
@@ -156,10 +199,9 @@ class SeparationRepository(private val app: Application) {
         if (job?.isActive == true) {
             Log.i(TAG, "start: cancelling running job (concurrent request wins)")
         }
-        job?.cancel()
         // ★G-4：升前台（分离窗口跑在 dataSync 前台服务里，避免后台被 /background cgroup 降频 ~2×）。
         SeparationService.start(app)
-        job = scope.launch {
+        job = launchSeparation { _ ->
             try {
                 _state.value = State.Preparing(State.PrepPhase.START)
 
@@ -171,7 +213,7 @@ class SeparationRepository(private val app: Application) {
                 if (cached != null) {
                     Log.i(TAG, "cache HIT: ${outDir.absolutePath}")
                     _state.value = cached
-                    return@launch
+                    return@launchSeparation
                 }
 
                 val result = separate(source, engine, uvrModelName, chunkOverrideFrames, outDir)
@@ -203,14 +245,19 @@ class SeparationRepository(private val app: Application) {
         fromPositionMs: Long,
         uvrModelName: String = "UVR-MDX-NET-Voc_FT.onnx",
     ) {
-        job?.cancel()
         SeparationService.start(app)
         val session = EdgeSeparationSession.get()
-        job = scope.launch {
+        job = launchSeparation { myGen ->
             // ★取消支持：捕获本协程的 Job（`cancel()` 会把外层 `job` 置 null，不能用它判断）。
             val thisJob = coroutineContext[Job]
+            // ★2026-11-09（P0-3）：旧任务即使已被取消，native 块返回后仍会调
+            //   onWrite/onProgress → 把 session/State 从 Cancelled 改回 Running，
+            //   导致 UI busy、无法立刻重试。所有写入都要先过这道门。
+            var mySessionGen = -1L
+            fun stillCurrent(): Boolean =
+                generation.get() == myGen && thisJob?.isActive != false
             try {
-                _state.value = State.Preparing(State.PrepPhase.DECODING)
+                if (stillCurrent()) _state.value = State.Preparing(State.PrepPhase.DECODING)
                 // 1) 解码/重采样输入
                 val frameSource = SeparationInput.open(app, source)
                 try {
@@ -277,6 +324,7 @@ class SeparationRepository(private val app: Application) {
                         // ★绑定源 uri：切歌后旧会话不得自动切多轨
                         sourceUri = source.absolutePath,
                     )
+                    mySessionGen = session.generation
                     Log.i(TAG, "edge(file): 完整曲长文件 ${outDir.absolutePath} " +
                         "total=${frameSource.totalFrames} from frame=$startFrame")
 
@@ -284,6 +332,7 @@ class SeparationRepository(private val app: Application) {
                     //   为何要这一个提前返回：否则会白跑一遍完整分离（18 秒 CPU），
                     //   而且如果没有 reuseExisting 就会把数据抹掉。
                     if (alreadyComplete) {
+                        if (!stillCurrent()) return@launchSeparation
                         vRw.close(); aRw.close()
                         session.complete()
                         // 让 Gate 直接进 Playable，AppShell 会立即切多轨。
@@ -301,12 +350,12 @@ class SeparationRepository(private val app: Application) {
                             complete = true,
                         )
                         Log.i(TAG, "edge 缓存命中：跳过分离（complete=true）")
-                        return@launch
+                        return@launchSeparation
                     }
 
                     try {
                         // 3) 定位模型（仅 Spleeter 2-stem）
-                        _state.value = State.Preparing(State.PrepPhase.LOADING_MODEL)
+                        if (stillCurrent()) _state.value = State.Preparing(State.PrepPhase.LOADING_MODEL)
                         val (vocalsPath, accompPath) = resolveModels(SherpaSourceSeparation.MODE_SPLEETER, uvrModelName)
                         val sep = SherpaSourceSeparation.create(
                             vocalsPath, accompPath,
@@ -346,6 +395,7 @@ class SeparationRepository(private val app: Application) {
 
                             /** 每写完一块：落区间 + 定期刷盘 + 存 manifest。 */
                             fun onBlockWritten(frames: Int, absFrame: Int) {
+                                if (!stillCurrent()) return
                                 manifest = manifest.plus(absFrame, absFrame + frames)
                                 val now = SystemClock.elapsedRealtime()
                                 if (now - lastManifestSave >= MANIFEST_SAVE_INTERVAL_MS) {
@@ -376,27 +426,33 @@ class SeparationRepository(private val app: Application) {
                                     reader = frameSource,
                                     separator = sep::separate,
                                     onWrite = { v, a, frames, absFrame ->
-                                        vRw.writeAt(v, 0, frames, absFrame)
-                                        aRw.writeAt(a, 0, frames, absFrame)
-                                        session.updateWaterMark(absFrame + frames)
-                                        onBlockWritten(frames, absFrame)
+                                        if (stillCurrent()) {
+                                            vRw.writeAt(v, 0, frames, absFrame)
+                                            aRw.writeAt(a, 0, frames, absFrame)
+                                            session.updateWaterMark(absFrame + frames)
+                                            onBlockWritten(frames, absFrame)
+                                        }
                                     },
                                     startFrame = startFrame,
                                     chunkSchedule = schedule,
                                     onProgress = { done, total ->
-                                        val pct = if (total > 0) {
-                                            ((done.toDouble() * 100.0) / total).toInt().coerceIn(0, 100)
-                                        } else 0
-                                        session.updateProgress(pct)
-                                        _state.value = State.Running(done, total, 0L, currentPssMb())
+                                        if (stillCurrent()) {
+                                            val pct = if (total > 0) {
+                                                ((done.toDouble() * 100.0) / total).toInt().coerceIn(0, 100)
+                                            } else 0
+                                            session.updateProgress(pct)
+                                            _state.value = State.Running(done, total, 0L, currentPssMb())
+                                        }
                                     },
                                     onFirstSegmentReady = {
-                                        session.markFirstSegmentReady(1)
+                                        if (stillCurrent()) session.markFirstSegmentReady(1)
                                     },
                                     onEnvelope = { stemIndex, absFrame, mn, mx, n ->
-                                        session.appendEnvelope(stemIndex, absFrame, mn, mx, n)
+                                        if (stillCurrent()) {
+                                            session.appendEnvelope(stemIndex, absFrame, mn, mx, n)
+                                        }
                                     },
-                                    isCancelled = { thisJob?.isActive == false },
+                                    isCancelled = { !stillCurrent() },
                                 ).run()
                             }
 
@@ -441,18 +497,18 @@ class SeparationRepository(private val app: Application) {
                                     )
                                     // 分离页据此显示「前 N 分钟未分离 · 点击补齐」。
                                     missing.firstOrNull()?.let {
-                                        session.markPendingBackfill(it.first..it.last)
+                                        if (stillCurrent()) session.markPendingBackfill(it.first..it.last)
                                     }
                                 }
                                 missing.isNotEmpty() && thisJob?.isActive != false -> {
-                                    session.enterBackfill()
+                                    if (stillCurrent()) session.enterBackfill()
                                     Log.i(
                                         TAG,
                                         "edge 阶段2 开始: 补 ${missing.size} 段缺口 " +
                                             "(共 $missingFrames 帧 = ${gapSeconds.toInt()}s)",
                                     )
                                     missing.forEachIndexed { idx, gap ->
-                                        if (thisJob?.isActive == false) return@forEachIndexed
+                                        if (!stillCurrent()) return@forEachIndexed
                                         _state.value = State.Preparing(State.PrepPhase.START)
                                         Log.i(
                                             TAG,
@@ -463,11 +519,13 @@ class SeparationRepository(private val app: Application) {
                                             reader = frameSource,
                                             separator = sep::separate,
                                             onWrite = { v, a, frames, absFrame ->
-                                                vRw.writeAt(v, 0, frames, absFrame)
-                                                aRw.writeAt(a, 0, frames, absFrame)
-                                                // 水印不更新 —— 阶段 2 填的是缺口，
-                                                //   “连续可播到哪”由 manifest 说了算。
-                                                onBlockWritten(frames, absFrame)
+                                                if (stillCurrent()) {
+                                                    vRw.writeAt(v, 0, frames, absFrame)
+                                                    aRw.writeAt(a, 0, frames, absFrame)
+                                                    // 水印不更新 —— 阶段 2 填的是缺口，
+                                                    //   “连续可播到哪”由 manifest 说了算。
+                                                    onBlockWritten(frames, absFrame)
+                                                }
                                             },
                                             startFrame = gap.first,
                                             // 为何 +overlap：块之间用 0.5s 交叉淡化，
@@ -478,13 +536,15 @@ class SeparationRepository(private val app: Application) {
                                                 .coerceAtMost(totalFrames),
                                             chunkSchedule = schedule,
                                             onProgress = { done, total ->
-                                                val span = 100.0 / missing.size
-                                                val base = idx * span
-                                                val local = if (total > 0) done.toDouble() / total * span else 0.0
-                                                session.updateBackfillProgress((base + local).toInt())
+                                                if (stillCurrent()) {
+                                                    val span = 100.0 / missing.size
+                                                    val base = idx * span
+                                                    val local = if (total > 0) done.toDouble() / total * span else 0.0
+                                                    session.updateBackfillProgress((base + local).toInt())
+                                                }
                                             },
                                             // 阶段 2 不产生“新可播区域”的 Gate 语义
-                                            isCancelled = { thisJob?.isActive == false },
+                                            isCancelled = { !stillCurrent() },
                                         ).run()
                                         vRw.flush(); aRw.flush()
                                         manifest.save(outDir)
@@ -501,6 +561,7 @@ class SeparationRepository(private val app: Application) {
                             // 刷盘 + 关闭（头部长度已在构造时写死，无需回填）。
                             vRw.close()
                             aRw.close()
+                            if (!stillCurrent()) return@launchSeparation
                             session.complete()
                             val audioMs = totalFrames.toLong() * 1000L /
                                 frameSource.sampleRate.coerceAtLeast(1)
@@ -531,21 +592,45 @@ class SeparationRepository(private val app: Application) {
                     frameSource.close()
                 }
             } catch (ce: CancellationException) {
-                session.abort()
-                _state.value = State.Cancelled
+                // 只 abort 属于本代次的会话；新一代已开始时绝不能动它。
+                if (mySessionGen >= 0 && session.generation == mySessionGen) session.abort()
+                // 取消后若已有新任务接替（generation 变了），不写终态避免覆盖新任务。
+                if (generation.get() == myGen) _state.value = State.Cancelled
                 throw ce
             } catch (t: Throwable) {
-                Log.e(TAG, "edge separation failed", t)
-                session.fail(t.message ?: "edge separation failed")
-                _state.value = State.Failed("边分离边播失败: ${t.message}", t)
+                if (generation.get() == myGen) {
+                    Log.e(TAG, "edge separation failed", t)
+                    if (mySessionGen >= 0 && session.generation == mySessionGen) {
+                        session.fail(t.message ?: "edge separation failed")
+                    }
+                    _state.value = State.Failed("边分离边播失败: ${t.message}", t)
+                }
             }
         }
     }
 
-    /** guide N5:取消正在跑的分离任务 */
+    /**
+     * guide N5:取消正在跑的分离任务。
+     *
+     * ★2026-11-09（P0-3）：不再把 Job 直接丢掉——移到 [cancelledJob]，
+     * 下一次 [launchSeparation] 会 `join` 它。否则“取消 → 立刻重试”
+     * 时旧任务仍可能在 native 推理块里，之后写 session/同一批 stem 文件。
+     * 同时把仓库状态置为 [State.Cancelled]（前台 Service 据此 stopSelf；
+     * 旧协程 catch 里的 Cancelled 写入会因代号变化而跳过）。
+     */
     fun cancel() {
-        job?.cancel()
+        val j = job ?: return
+        generation.incrementAndGet()
         job = null
+        cancelledJob = j
+        j.cancel()
+        j.invokeOnCompletion {
+            if (cancelledJob === j) cancelledJob = null
+            // 旧任务收尾完成且没有新任务 → 回到 Idle，让前台 Service 停掉。
+            // （旧协程 catch 里的 `Cancelled` 可能因新一代已启动而被 Service 忽略，
+            //   这里补一个终态，避免 Service 泄漏。）
+            if (job == null) _state.value = State.Idle
+        }
     }
 
     // ---------------- M4/S3：4-stem 分离 ----------------
@@ -562,9 +647,8 @@ class SeparationRepository(private val app: Application) {
         if (job?.isActive == true) {
             Log.i(TAG, "start4: cancelling running job (concurrent request wins)")
         }
-        job?.cancel()
         SeparationService.start(app)   // ★G-4 升前台
-        job = scope.launch {
+        job = launchSeparation { _ ->
             try {
                 _state.value = State.Preparing(State.PrepPhase.START)
                 val dir = modelDir ?: File(app.filesDir, "spleeter4")
@@ -573,7 +657,7 @@ class SeparationRepository(private val app: Application) {
                 readCache4(outDir)?.let {
                     Log.i(TAG, "cache HIT (4-stem): ${outDir.absolutePath}")
                     _state.value = it
-                    return@launch
+                    return@launchSeparation
                 }
 
                 val result = separate4(source, dir, outDir)
@@ -681,9 +765,8 @@ class SeparationRepository(private val app: Application) {
      */
     fun startDemucs(source: File, modelFile: File? = null, threads: Int = DEMUCS_THREADS, useNnapi: Boolean = false) {
         if (job?.isActive == true) Log.i(TAG, "startDemucs: cancelling running job")
-        job?.cancel()
         SeparationService.start(app)   // ★G-4 升前台
-        job = scope.launch {
+        job = launchSeparation { _ ->
             try {
                 _state.value = State.Preparing(State.PrepPhase.START)
                 val mdl = modelFile ?: File(app.filesDir, "demucs/htdemucs_embedded.onnx")
@@ -692,7 +775,7 @@ class SeparationRepository(private val app: Application) {
                 readCacheDemucs(outDir)?.let {
                     Log.i(TAG, "cache HIT (demucs): ${outDir.absolutePath}")
                     _state.value = it
-                    return@launch
+                    return@launchSeparation
                 }
                 val result = separateDemucs(source, mdl, outDir, threads, useNnapi)
                 writeCacheManifest4(outDir, result)
