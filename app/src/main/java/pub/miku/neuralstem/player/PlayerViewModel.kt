@@ -1612,11 +1612,13 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         val target = separationTargetUriOrNull()
         if (target != null && !separationMatchesCurrent()) return
         val gate = s.gate.value
-        if (gate is EdgeSeparationSession.Gate.Idle || gate is EdgeSeparationSession.Gate.Finished) return
+        if (gate is EdgeSeparationSession.Gate.Idle) return
         val sr = s.sampleRate.coerceAtLeast(1)
         val startMs = s.startFrame.toLong() * 1000L / sr
         val playedFrames = ((positionMs - startMs) * sr / 1000L).toInt()
         s.onSeekTo(playedFrames)
+        // ★B4：Finished 也要走到 onSeekTo（灰区提示）；只是不再做 Gate 暂停/恢复。
+        if (gate is EdgeSeparationSession.Gate.Finished) return
         // 用户 seek = 明确的“我要听这里”意图 → 清除手动暂停标记。
         userPausedDuringEdge = false
         if (s.gate.value is EdgeSeparationSession.Gate.Starved) {

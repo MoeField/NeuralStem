@@ -206,7 +206,11 @@ class SeparationRepository(private val app: Application) {
                 _state.value = State.Preparing(State.PrepPhase.START)
 
                 val engineTag = engineLabel(engine, uvrModelName)
-                val outDir = File(app.filesDir, "stems-cache/${contentHash(source)}-$engineTag")
+                // ★B4：普通完整分离用独立目录（-full），不与边播的 -spleeter 共用。
+                //   共用时两套 manifest（cache 的 manifest.txt vs 边播 MANIFEST.json）
+                //   互不失效；普通分离的 WavWriter 会 setLength 把边播文件清零，
+                //   之后边播 alreadyComplete 命中 → 全曲静音却报 complete=true。
+                val outDir = File(app.filesDir, "stems-cache/${contentHash(source)}-$engineTag-full")
 
                 // F3.3:缓存命中直接返回
                 val cached = readCache(outDir)
@@ -279,14 +283,32 @@ class SeparationRepository(private val app: Application) {
                     //    已完成的文件 setLength() 清空 → 用户听到十几秒静音后才重新填回来。
                     // 2. `complete=false` → 有缺口 → 复用文件 + 只补缺口
                     // 3. 无 manifest / 文件缺失 → 从头开始（旧行为）
-                    val existing = RangeManifest.load(
-                        outDir,
-                        expectTotalFrames = frameSource.totalFrames,
-                        expectModelId = ModelRegistry.SPLEETER.id,
-                    )
-                    val filesIntact = vFile.exists() && aFile.exists()
-                    // ★复用条件只看“文件在不在”，不再看 complete：
-                    //   完整缓存也必须复用（否则 setLength 会抹掉已有数据）。
+                    // ★B4：先校验文件长度与“完整曲长文件”一致，再信 manifest。
+                    //   旧实现只查 exists → 长度不符（普通分离截断/旧版本）时
+                    //   RandomAccessWavWriter 会重新 setLength 清零，而 manifest 仍 complete=true
+                    //   → 命中“已完整”直接跳过分离：全曲静音、导出也是静音。
+                    val expectedLen = 44L +
+                        frameSource.totalFrames.toLong() * frameSource.channels * 2L
+                    val filesExist = vFile.exists() && aFile.exists()
+                    val lengthOk = filesExist &&
+                        vFile.length() == expectedLen && aFile.length() == expectedLen
+                    if (filesExist && !lengthOk) {
+                        Log.w(
+                            TAG,
+                            "edge 缓存长度不符（expect=$expectedLen v=${vFile.length()} " +
+                                "a=${aFile.length()}）→ 视为无效缓存，重建",
+                        )
+                    }
+                    val existing = if (lengthOk) {
+                        RangeManifest.load(
+                            outDir,
+                            expectTotalFrames = frameSource.totalFrames,
+                            expectModelId = ModelRegistry.SPLEETER.id,
+                        )
+                    } else {
+                        null
+                    }
+                    val filesIntact = lengthOk
                     val resumable = existing != null && filesIntact
                     val alreadyComplete = existing?.complete == true
 
@@ -325,6 +347,20 @@ class SeparationRepository(private val app: Application) {
                         sourceUri = source.absolutePath,
                     )
                     mySessionGen = session.generation
+                    // ★B4：续算跳过阶段 1 时 beginFiles 把水位线置 0 → Gate 全程 Buffering，
+                    //   已分离的正向段反而不自动切轨。用 manifest 恢复“包含 startFrame
+                    //   的连续区间右端”作为水位线。
+                    if (resumable && existing != null && !alreadyComplete) {
+                        val covered = existing.ranges.firstOrNull { startFrame in it }
+                        if (covered != null) {
+                            session.updateWaterMark(covered.last + 1)
+                            Log.i(
+                                TAG,
+                                "edge 续算：水位线恢复到 ${covered.last + 1} " +
+                                    "(start=$startFrame)",
+                            )
+                        }
+                    }
                     Log.i(TAG, "edge(file): 完整曲长文件 ${outDir.absolutePath} " +
                         "total=${frameSource.totalFrames} from frame=$startFrame")
 

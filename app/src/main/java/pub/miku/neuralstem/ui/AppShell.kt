@@ -247,10 +247,17 @@ fun AppShell(
             //   实测切过去会立刻 Starved（停 1.7s）。5s 给分离追上留一点时间。
             val availEndMs = startMs + edgeSession.availableFrames.toLong() * 1000L / sr
             val currentMs = playerVm.progress.positionMs
-            val posMs = currentMs.coerceIn(
-                startMs,
-                (availEndMs - 5_000L).coerceAtLeast(startMs),
-            )
+            // ★B4：位置在分离起点之前（灰区）→ 保持当前位置，不要硬跳到 start。
+            //   stem 这段是预分配静音，但 PlayerScreen 会显示“此段未参与本次分离”。
+            //   旧实现 coerceIn(startMs,..) 会把 0:10 硬跳到 1:30，静默跳播。
+            val posMs = if (currentMs < startMs) {
+                currentMs
+            } else {
+                currentMs.coerceIn(
+                    startMs,
+                    (availEndMs - 5_000L).coerceAtLeast(startMs),
+                )
+            }
             val vf = edgeSession.vocalsFile
             val af = edgeSession.accompFile
             if (vf != null && af != null) {
@@ -402,6 +409,8 @@ fun AppShell(
                 edgeStarved = playerState.edgeStarved,
                 // ★两阶段：补前段进度
                 backfillPercent = playerState.backfillPercent,
+                // ★B4：成本门控跳过的缺口 → 分离页显示“补齐前段”入口。
+                pendingBackfillMs = playerState.pendingBackfillMs,
                 // ★G-3ux：无缓存时跳过来 → 自动开始分离（不用用户再点一次）。
                 autoStartToken = autoStartSeparate,
                 // ★无可用模型时的出口：跳设置页并直接打开模型库

@@ -230,6 +230,16 @@ class EdgeSeparationSession private constructor() {
      * - 中间灰区 → **不动**（保持当前态，避免抖动）
      */
     fun onSeekTo(playedFrames: Int) {
+        // ★B4：灰区判定必须在 Finished/Idle 早退之前。
+        //   cost-gated（complete=false）/全曲完成后用户仍可 seek 回 [0,startFrame)，
+        //   那段永远是预分配静音，必须提示“未参与本次分离”。
+        val inGray = playedFrames < 0
+        if (seekInGrayZone != inGray) {
+            seekInGrayZone = inGray
+            if (inGray) {
+                Log.i(TAG, "gate: seek 到分离起点之前 (target=${playedFrames}f) → 灰区（永不填充）")
+            }
+        }
         if (_gate.value is Gate.Finished || _gate.value is Gate.Idle) return
         val avail = availableFrames
         when {
@@ -246,16 +256,6 @@ class EdgeSeparationSession private constructor() {
                 }
             }
             else -> Unit
-        }
-        // ★灰区（2026-10-20）：目标落在 [0, startFrame) —— 本次分离**从未处理过**这段，
-        //   文件里它是预分配静音，且**永远不会**被填。
-        //   不暂停（等也等不到），但必须告诉用户“为什么没声”。
-        val inGray = playedFrames < 0
-        if (seekInGrayZone != inGray) {
-            seekInGrayZone = inGray
-            if (inGray) {
-                Log.i(TAG, "gate: seek 到分离起点之前 (target=${playedFrames}f) → 灰区（永不填充）")
-            }
         }
     }
 
@@ -550,6 +550,7 @@ class EdgeSeparationSession private constructor() {
         // ★闸门：中止 → Idle。
         _gate.value = Gate.Idle
         seekInGrayZone = false
+        pendingBackfillRange = null
         exitBackfill()
         // ★B3：**不要**清 sourceUri。AppShell 的 aborted 分支靠会话键比对
         //   （generation:sourceUri:startFrame）判断“这条会话是否已经切过”；
