@@ -242,9 +242,9 @@ fun SeparationScreen(
             if (useEdge) {
                 val posMs = currentPositionMs()
                 Log.i("SepScreen", "startOption: EDGE from=${posMs}ms")
-                vm.startEdgeOption(src, posMs)
+                vm.startEdgeOption(src, posMs, currentUri)
             } else {
-                vm.startOption(src, opt)
+                vm.startOption(src, opt, currentUri)
             }
         }
     }
@@ -271,7 +271,7 @@ fun SeparationScreen(
                 return@launch
             }
             Log.i("SepScreen", "backfillNow: 从头发起，让 startEdge 自动跳过已完成区间")
-            vm.startEdgeOption(src, 0L)
+            vm.startEdgeOption(src, 0L, currentUri)
         }
     }
 
@@ -285,7 +285,7 @@ fun SeparationScreen(
                 return@launch
             }
             Log.i("SepScreen", "startOption: ${opt.id}")
-            vm.startOption(src, opt)
+            vm.startOption(src, opt, currentUri)
         }
     }
 
@@ -345,7 +345,17 @@ fun SeparationScreen(
     //
     // 现改为读 VM 里“消费瞬间抄下来”的快照，与瞬态任务状态解耦。
     // 好处：2 轨（本输新增）与 4 轨（原就有但从未生效）一并修好。
-    val exportableFiles by vm.lastExportable.collectAsState()
+    // ★B3：导出快照必须属于当前曲；换曲后 owner 不匹配 → 按钮置灰。
+    val lastExportable by vm.lastExportable.collectAsState()
+    val exportableFiles = if (vm.exportableOwnerMatches(currentUri)) lastExportable else null
+    // ★B3 诊断：导出快照是否属于当前曲（换曲后应为 false，按钮置灰）。
+    LaunchedEffect(currentUri, lastExportable) {
+        EdgeProbe.log(
+            "SepUI",
+            "export ownerMatch=${vm.exportableOwnerMatches(currentUri)} " +
+                "files=${exportableFiles?.size ?: 0}",
+        )
+    }
 
     // ★⑬：档位区（横屏在右栏 / 竖屏在中间）—— 抽成 lambda 复用。
     val tierSection: @Composable () -> Unit = {

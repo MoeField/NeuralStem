@@ -551,7 +551,10 @@ class EdgeSeparationSession private constructor() {
         _gate.value = Gate.Idle
         seekInGrayZone = false
         exitBackfill()
-        sourceUri = null
+        // ★B3：**不要**清 sourceUri。AppShell 的 aborted 分支靠会话键比对
+        //   （generation:sourceUri:startFrame）判断“这条会话是否已经切过”；
+        //   清掉后键变化 → aborted && edgeSwitched 永不成立 → 取消后不回原曲。
+        //   新会话 beginFiles 会覆盖 sourceUri；保留旧值不会串台。
         // ★诊断：buffer 置 null —— 若播放器此时仍持 stem:// uri，下一次 open 会抛 IOException。
         Log.i(TAG, "abort: buffers→null (had=$had) fileMode=${vocalsFile != null} state=${_state.value}")
         if (had) {

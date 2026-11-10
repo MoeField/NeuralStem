@@ -273,6 +273,12 @@ class MainActivity : ComponentActivity() {
             }
             "eq" -> playerVm.setEqEnabled(a0?.toBooleanStrictOrNull() ?: false)
             // ★speed / pitch：变速变调（多轨与单轨走同一 UI 方法；测试用）
+            "edgecancel" -> {
+                // ★B3 自动化：等价于分离页「取消分离」的 repo.cancel()，
+                //   用于验证 AppShell 的 aborted 分支（切过多轨后取消要回原曲）。
+                Log.i("TestCmd", "edgecancel: repo.cancel()")
+                SeparationRepository.get(application).cancel()
+            }
             "speed" -> a0?.toFloatOrNull()?.let { playerVm.setSpeed(it) }
             "pitch" -> a0?.toFloatOrNull()?.let { playerVm.setPitchSemitones(it) }
             "resetsp" -> playerVm.resetSpeedPitch()

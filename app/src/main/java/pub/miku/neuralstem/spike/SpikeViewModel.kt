@@ -108,6 +108,15 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
     val lastExportable: StateFlow<List<File>?> = _lastExportable.asStateFlow()
 
     /**
+     * ★2026-11-10（B3）：导出快照属于哪首曲（起分离时页面记录的 currentUri）。
+     * 换曲后 `exportableOwnerMatches=false` → 导出按钮置灰，避免把上一首的 stem
+     * 写成当前曲名。
+     */
+    private var exportableOwnerUri: String? = null
+
+    fun exportableOwnerMatches(uri: String?): Boolean = exportableOwnerUri == uri
+
+    /**
      * ★2026-11-07：边播完成后的**短时完成态**（UI 显示 5 秒后自动消失）。
      *
      * 解决“分离完了页面像没跑过”：`EdgeDone` 会把任务态置回 `Idle`，
@@ -550,8 +559,10 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
      * Spleeter4 → [SeparationRepository.start4]；Demucs → [SeparationRepository.startDemucs]。
      * 均先驱动状态机（[SessionStateMachine.onSeparationPreparing]）。
      */
-    fun startOption(source: File, opt: SepOption) {
+    fun startOption(source: File, opt: SepOption, ownerUri: String? = null) {
         _lastEdgeDone.value = null   // 新一轮开始，清掉上一次的完成提示
+        _lastExportable.value = null // ★B3：新一轮开始，旧导出快照作废
+        exportableOwnerUri = ownerUri
         when (opt) {
             is SepOption.Sherpa -> {
                 engineOverride = true
@@ -587,8 +598,10 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
      * ★G-3：开始“边分离边播”（从 [fromPositionMs] 当前播放位置起，仅 Spleeter 2-stem）。
      * 与 [startOption] 同构（先驱动状态机），但走 [SeparationRepository.startEdge]。
      */
-    fun startEdgeOption(source: File, fromPositionMs: Long) {
+    fun startEdgeOption(source: File, fromPositionMs: Long, ownerUri: String? = null) {
         _lastEdgeDone.value = null   // 新一轮开始，清掉上一次的完成提示
+        _lastExportable.value = null // ★B3：新一轮开始，旧导出快照作废
+        exportableOwnerUri = ownerUri
         engineOverride = true
         engineMode = SherpaSourceSeparation.MODE_SPLEETER
         Log.i(TAG, "startEdgeOption: from=${fromPositionMs}ms")
@@ -610,7 +623,15 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
      * 分离进行中会被拒绝（返回 -1）—— 避免删掉正在写的目录。
      * @return 删除的缓存目录数；-1 = 拒绝
      */
-    fun clearCache(): Int = repo.clearCache()
+    fun clearCache(): Int {
+        val n = repo.clearCache()
+        if (n >= 0) {
+            // ★B3：缓存已清 → 导出快照也失效（否则按钮亮着但文件已删）
+            _lastExportable.value = null
+            exportableOwnerUri = null
+        }
+        return n
+    }
 
     /**
      * 应用内自驱动的完整 Spike 流程:加载外部音频 → 分离 → 写 stem WAV。
@@ -704,6 +725,8 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
         pendingFile = null
         _state.value = State.Idle
         _lastEdgeDone.value = null
+        _lastExportable.value = null
+        exportableOwnerUri = null
         // 清空分离任务态（页面重置；不影响 repo 任务）
         session.consumeSeparationDone()  // 若为完成态则消费掉
         pushSeparationTask()

@@ -1537,6 +1537,10 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun edgeGateTick(positionMs: Long) {
         val s = edgeSession
+        // ★B3：旧会话的 gate 不能暂停/恢复新歌。目标已记录且不匹配当前曲 → 跳过。
+        //   目标为 null（旧调用方/未标记）时保持旧行为。
+        val target = separationTargetUriOrNull()
+        if (target != null && !separationMatchesCurrent()) return
         val gate = s.gate.value
         if (gate is EdgeSeparationSession.Gate.Idle ||
             gate is EdgeSeparationSession.Gate.Buffering ||
@@ -1605,6 +1609,8 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     /** seek 后的闸门重算（同步，不等 tick）。 */
     private fun onSeekGate(positionMs: Long) {
         val s = edgeSession
+        val target = separationTargetUriOrNull()
+        if (target != null && !separationMatchesCurrent()) return
         val gate = s.gate.value
         if (gate is EdgeSeparationSession.Gate.Idle || gate is EdgeSeparationSession.Gate.Finished) return
         val sr = s.sampleRate.coerceAtLeast(1)
@@ -2107,6 +2113,11 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         originalUri = null
         originalName = ""
         lastStems = null
+        // ★B3：清空当前曲/歌单 → 旧 edge 会话必须停，分离目标也要清；
+        //   否则 AppShell 仍可能把旧会话当“属于当前曲”自动切回多轨。
+        separationTargetUri = null
+        runCatching { SeparationRepository.get(getApplication()).cancel() }
+        runCatching { edgeSession.abort() }
         stemExtractors = emptyList()
         _stemWaveforms.value = emptyList()
         // ★3b：`isMultiTrack` 由 [withDerived] 派生（不再手动 copy）。

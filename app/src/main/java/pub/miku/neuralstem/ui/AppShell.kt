@@ -209,10 +209,10 @@ fun AppShell(
         // 项目里已有 [PlayerViewModel.separationMatchesCurrent]：它在**点击分离时**
         // 记下**原始 uri**（markSeparationTarget），比的是 uri 而不是临时文件名。
         // 旧的文件名比较仅作兜底（两者都非空且相等时也算属于本曲）。
+        // ★B3：currentUri==null（清空歌单/未载入）绝不能算“属于当前曲”；
+        //   旧实现会让旧边播会话在清空后把用户切回多轨。
         val belongsToCurrent = playerVm.separationMatchesCurrent() ||
-            sessionSource == null ||
-            currentSource == null ||
-            sessionSource == currentSource
+            (sessionSource != null && currentSource != null && sessionSource == currentSource)
 
         if (ready && !edgeSwitched && !belongsToCurrent) {
             // 静默跳过（用户正在听新歌，不弹 snackbar 打扰）；只在日志里记一笔。
