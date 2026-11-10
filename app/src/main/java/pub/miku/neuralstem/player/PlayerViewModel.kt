@@ -820,7 +820,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         val cur = (session.queue as? QueueState.Active)?.current
         if (cur != null && cur.uri != failedUri) {
             Log.w(TAG, "T-6: 跳到下一首 ${cur.title}")
-            loadAndPlay(Uri.parse(cur.uri), cur.title)
+            loadAndPlay(Uri.parse(cur.uri), cur.title, clearQueue = false)
         } else {
             Log.w(TAG, "T-6: 队列已无有效曲，清空播放器")
             clearCurrent()
@@ -1064,7 +1064,21 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     /** F0.1 导入音频:SAF Uri 直接喂给 session 的 player(Media3 内置 Handler 支持 content://) */
     /** F0.1 导入音频:SAF Uri 直接喂给 session 的 player(Media3 内置 Handler 支持 content://)
      * @param startPositionMs ★T-5：载入后起始位置（>0 则 seek）；用于“续播”。 */
-    fun loadAndPlay(uri: Uri, displayName: String, startPositionMs: Long = 0L) {
+    fun loadAndPlay(
+        uri: Uri,
+        displayName: String,
+        startPositionMs: Long = 0L,
+        /**
+         * ★B5：单曲载入（导入/直接点播）默认清空“当前歌单队列”与 currentListId，
+         * 否则进度会写进上一个歌单、那个歌单的原续播位置被覆盖。
+         * 队列内部换曲（playQueue/next/T-6）传 false。
+         */
+        clearQueue: Boolean = true,
+    ) {
+        if (clearQueue) {
+            currentListId = null
+            session.clearQueue()
+        }
         Log.i(TAG, "loadAndPlay: $displayName ($uri) start=$startPositionMs")
 
         // ★AVS3（av3a）：先转换成「能播的 uri」再走原路径。
@@ -1380,7 +1394,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         session.setQueue(q, startIndex)
         val cur = (session.queue as? QueueState.Active)?.current ?: return
         Log.i(TAG, "playQueue: ${q.size} 首, start=$startIndex → ${cur.title} resume=$startPositionMs")
-        loadAndPlay(Uri.parse(cur.uri), cur.title, startPositionMs = startPositionMs)
+        loadAndPlay(Uri.parse(cur.uri), cur.title, startPositionMs = startPositionMs, clearQueue = false)
     }
 
     /**
@@ -1395,7 +1409,11 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun recordProgressThrottled(posMs: Long) {
         val listId = currentListId ?: return
-        val uri = _state.value.currentUri ?: return
+        // ★B5：NCM/AVS3 的 currentUri 是 ncm:// / avs3-pcm-cache 内部 uri，
+        //   写进歌单后冷启动匹配不到。队列来源优先用队列里的**原始** uri。
+        val uri = (session.queue as? QueueState.Active)?.current?.uri
+            ?: _state.value.currentUri
+            ?: return
         val now = SystemClock.elapsedRealtime()
         val uriChanged = uri != lastSavedUri
         if (!uriChanged && now - lastSavedAtMs < PROGRESS_SAVE_INTERVAL_MS) return
@@ -1404,6 +1422,25 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch(Dispatchers.IO) {
             runCatching { playlistStore.recordProgress(listId, uri, posMs) }
                 .onFailure { Log.w(TAG, "recordProgress failed", it) }
+        }
+    }
+
+    /** ★B5：当前队列曲的原始 uri（高亮/进度用）；非队列返回 null。 */
+    fun currentQueueTrackUriOrNull(): String? =
+        (session.queue as? QueueState.Active)?.current?.uri
+
+    /** ★B5：歌单删除一首 → 若正是当前队列，同步（当前曲由 removeFromQueue 维持合理）。 */
+    fun onPlaylistTrackRemoved(listId: String, uri: String) {
+        if (currentListId != listId) return
+        session.removeFromQueue(uri)
+        Log.i(TAG, "B5 queue remove: $uri (list=$listId, queue=${session.queue})")
+    }
+
+    /** ★B5：歌单排序 → 同步队列顺序，保持当前曲不变。 */
+    fun onPlaylistTrackMoved(listId: String, from: Int, to: Int) {
+        if (currentListId != listId) return
+        if (session.moveQueue(from, to)) {
+            Log.i(TAG, "B5 queue move: $from→$to (list=$listId)")
         }
     }
 
@@ -1438,7 +1475,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     /** 载入队列当前曲（不改变队列下标）。 */
     private fun loadCurrentQueueTrack() {
         val cur = (session.queue as? QueueState.Active)?.current ?: return
-        loadAndPlay(Uri.parse(cur.uri), cur.title)
+        loadAndPlay(Uri.parse(cur.uri), cur.title, clearQueue = false)
     }
 
     /** 自动下一首（曲目自然播完时由 STATE_ENDED 触发）。 */

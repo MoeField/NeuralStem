@@ -512,8 +512,13 @@ fun AppShell(
                 onPlaylistRemoved = { listId ->
                     if (listId == selectedListId) playerVm.clearCurrent()
                 },
-                // 当前播放曲 uri（高亮用；列表选中状态由 VM.selectedListId 派生）
-                currentUri = playerState.currentUri,
+                // ★B5：歌单删/排序 → 同步播放器队列。
+                onTrackRemoved = { listId, uri -> playerVm.onPlaylistTrackRemoved(listId, uri) },
+                onTrackMoved = { listId, from, to ->
+                    playerVm.onPlaylistTrackMoved(listId, from, to)
+                },
+                // ★B5：高亮用队列里的原始 uri（NCM/AVS3 的 currentUri 是内部 uri，会高亮不到）。
+                currentUri = playerVm.currentQueueTrackUriOrNull() ?: playerState.currentUri,
             )
 
             // Step 7 / 方案1：混音页（EQ + 分轨混音）

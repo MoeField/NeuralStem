@@ -230,6 +230,37 @@ class SessionStateMachineTest {
     }
 
     @Test
+    fun `队列：moveQueue 保持当前曲并按 uri 重定位下标`() {
+        val (_, sm) = newSm()
+        sm.setQueue(qt("a", "b", "c"), 1)   // current = b
+        assertTrue(sm.moveQueue(0, 2))       // a 移到末尾 → b,c,a
+        val active = sm.queue as QueueState.Active
+        assertEquals(listOf("b", "c", "a"), active.tracks.map { it.uri })
+        assertEquals(0, active.currentIndex)
+        assertEquals("b", active.current?.uri)
+    }
+
+    @Test
+    fun `队列：moveQueue 同位置与越界返回 false`() {
+        val (_, sm) = newSm()
+        sm.setQueue(qt("a", "b"), 0)
+        assertFalse(sm.moveQueue(0, 0))
+        assertFalse(sm.moveQueue(-1, 1))
+        assertFalse(sm.moveQueue(0, 9))
+    }
+
+    @Test
+    fun `队列：removeFromQueue 删除当前曲后指向下一条`() {
+        val (_, sm) = newSm()
+        sm.setQueue(qt("a", "b", "c"), 1)   // current = b
+        sm.removeFromQueue("b")
+        val active = sm.queue as QueueState.Active
+        assertEquals(listOf("a", "c"), active.tracks.map { it.uri })
+        assertEquals(1, active.currentIndex)
+        assertEquals("c", active.current?.uri)
+    }
+
+    @Test
     fun `队列：wrapQueueToStart 回开头（循环歌单用）`() {
         val (_, sm) = newSm()
         sm.setQueue(qt("a", "b", "c"), 2)

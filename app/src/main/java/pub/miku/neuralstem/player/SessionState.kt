@@ -285,6 +285,26 @@ class SessionStateMachine(private val effects: Effects) {
      * 移除队列中某曲（如失效曲）。会自动维持 [currentIndex] 合理性：
      * 移除当前曲时下标不变（指向“下一个”）；移除更前的曲则下标前移。
      */
+    /**
+     * ★B5：歌单排序 → 同步播放队列顺序，**保持当前曲不变**（按 uri 重新定位下标）。
+     * @return 是否真的移动了
+     */
+    fun moveQueue(from: Int, to: Int): Boolean {
+        val a = queue as? QueueState.Active ?: return false
+        if (from == to || from !in a.tracks.indices || to !in a.tracks.indices) return false
+        val currentUri = a.current?.uri
+        val list = a.tracks.toMutableList()
+        val item = list.removeAt(from)
+        list.add(to, item)
+        val newIndex = if (currentUri != null) {
+            list.indexOfFirst { it.uri == currentUri }.takeIf { it >= 0 } ?: a.currentIndex
+        } else {
+            a.currentIndex
+        }
+        queue = QueueState.Active(list, newIndex.coerceIn(0, list.lastIndex))
+        return true
+    }
+
     fun removeFromQueue(uri: String) {
         val a = queue as? QueueState.Active ?: return
         val removedIdx = a.tracks.indexOfFirst { it.uri == uri }
