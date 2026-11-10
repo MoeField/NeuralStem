@@ -2,6 +2,7 @@ package pub.miku.neuralstem.playlist
 
 import android.app.Application
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import android.util.Log
 import androidx.documentfile.provider.DocumentFile
@@ -104,6 +105,15 @@ class PlaylistViewModel(app: Application) : AndroidViewModel(app) {
         if (target.isDefault) {
             Log.w(TAG, "refuse deleting default list")
             return
+        }
+        // ★B6：文件夹歌单删除时释放 SAF tree 持久授权，避免授权槽位耗尽/旧 grant 残留。
+        target.folderUri?.let { fu ->
+            runCatching {
+                getApplication<Application>().contentResolver.releasePersistableUriPermission(
+                    Uri.parse(fu),
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                )
+            }.onFailure { Log.w(TAG, "release tree grant failed: $fu", it) }
         }
         _lists.value = _lists.value.filterNot { it.id == id }
         persist()

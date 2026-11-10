@@ -13,6 +13,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.media3.common.PlaybackException
@@ -78,6 +79,9 @@ class MainActivity : ComponentActivity() {
                 // 播放错误上浮到 Snackbar(F0.x 的兜底,避免静默失败)
                 val errorMsg = remember { mutableStateOf<String?>(null) }
                 val snackbar = remember { SnackbarHostState() }
+                // ★B6：自动化 intent 只消费一次；旋转/重建后 rememberSaveable 恢复 → 不重复 load。
+                val autoIntentConsumed = rememberSaveable { mutableStateOf(false) }
+                val mtIntentConsumed = rememberSaveable { mutableStateOf(false) }
 
                 // V2(N4):player 由 PlaybackService 持有,经 MediaController 异步连接。
                 // 开始时 player 可能还是 null —— 用 state 的变化驱动重挂,
@@ -107,8 +111,11 @@ class MainActivity : ComponentActivity() {
                     //   否则两个入口会同时 loadAndPlay + loadMultiTrack → **两首同时出声**。
                     val hasMt = intent.getStringExtra("mt_vocals") != null &&
                         intent.getStringExtra("mt_accomp") != null
-                    if (intent.getBooleanExtra("auto_play", false) && !hasMt) {
+                    if (intent.getBooleanExtra("auto_play", false) && !hasMt &&
+                        !autoIntentConsumed.value
+                    ) {
                         LaunchedEffect(uri) {
+                            autoIntentConsumed.value = true
                             playerVm.loadAndPlay(uri, uri.lastPathSegment ?: "auto")
                             // M3.5/T4 自动化：可选“N ms 后再载入第二首”（验证切歌时 EQ 重挂）
                             //   --es second_file <path> --ei second_after 5000
@@ -131,8 +138,9 @@ class MainActivity : ComponentActivity() {
                 //     --es mt_vocals <abs path> --es mt_accomp <abs path> --ez auto_play true
                 val mtVocals = intent?.getStringExtra("mt_vocals")
                 val mtAccomp = intent?.getStringExtra("mt_accomp")
-                if (mtVocals != null && mtAccomp != null) {
+                if (mtVocals != null && mtAccomp != null && !mtIntentConsumed.value) {
                     LaunchedEffect(mtVocals, mtAccomp) {
+                        mtIntentConsumed.value = true
                         playerVm.loadMultiTrack(
                             listOf(
                                 Triple("vocals", "人声", File(mtVocals)),

@@ -94,22 +94,72 @@ object StemExporter {
     }
 
     private fun copyViaMediaStore(context: Context, src: File, dirRel: String, outName: String): Boolean {
+        val resolver = context.contentResolver
+        // ★B6：同名覆盖（用户默认选择）：先删旧行，避免 MediaStore 自动生成 (1).wav。
+        //   只删本应用可见的同目录同名媒体；失败不影响后续 insert。
+        deleteExisting(resolver, dirRel, outName)
         val values = ContentValues().apply {
             put(MediaStore.Audio.Media.DISPLAY_NAME, outName)
             put(MediaStore.Audio.Media.MIME_TYPE, "audio/wav")
             put(MediaStore.Audio.Media.RELATIVE_PATH, dirRel)
             put(MediaStore.Audio.Media.IS_PENDING, 1)
         }
-        val resolver = context.contentResolver
         val uri: Uri = resolver.insert(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, values)
             ?: return false
-        resolver.openOutputStream(uri)?.use { out ->
-            src.inputStream().use { it.copyTo(out) }
-        } ?: return false
-        values.clear()
-        values.put(MediaStore.Audio.Media.IS_PENDING, 0)
-        resolver.update(uri, values, null, null)
-        return true
+        try {
+            val out = resolver.openOutputStream(uri)
+                ?: run {
+                    // ★B6：拿不到输出流 → 必须删掉 pending 行，否则隐藏残留。
+                    runCatching { resolver.delete(uri, null, null) }
+                    return false
+                }
+            out.use { o -> src.inputStream().use { it.copyTo(o) } }
+            values.clear()
+            values.put(MediaStore.Audio.Media.IS_PENDING, 0)
+            resolver.update(uri, values, null, null)
+            return true
+        } catch (t: Throwable) {
+            // ★B6：拷贝异常 → 删 pending 行后交给外层记录失败。
+            runCatching { resolver.delete(uri, null, null) }
+            throw t
+        }
+    }
+
+    /** 删除同 `RELATIVE_PATH + DISPLAY_NAME` 的旧导出（同名覆盖）。 */
+    private fun deleteExisting(
+        resolver: android.content.ContentResolver,
+        dirRel: String,
+        outName: String,
+    ) {
+        runCatching {
+            val sel = "${MediaStore.Audio.Media.RELATIVE_PATH}=? AND " +
+                "${MediaStore.Audio.Media.DISPLAY_NAME}=?"
+            // MediaStore 的 RELATIVE_PATH 通常带结尾 '/'；两者都试一次。
+            val args = arrayOf("$dirRel/", outName)
+            val ids = ArrayList<Long>()
+            resolver.query(
+                MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+                arrayOf(MediaStore.Audio.Media._ID),
+                sel,
+                args,
+                null,
+            )?.use { c ->
+                val idCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
+                while (c.moveToNext()) ids += c.getLong(idCol)
+            }
+            ids.forEach { id ->
+                runCatching {
+                    resolver.delete(
+                        android.content.ContentUris.withAppendedId(
+                            MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+                            id,
+                        ),
+                        null,
+                        null,
+                    )
+                }
+            }
+        }.onFailure { Log.w(TAG, "deleteExisting($outName) failed", it) }
     }
 
     @Suppress("DEPRECATION")

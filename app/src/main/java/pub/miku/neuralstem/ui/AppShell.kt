@@ -108,6 +108,8 @@ fun AppShell(
     val playlistVm: PlaylistViewModel = viewModel()
     // 播放器状态（供分离页传“当前曲”）
     val playerState by playerVm.state.collectAsState()
+    // ★B6：SAF 失效曲标记（保留在歌单，不自动删）
+    val brokenTracks by playerVm.brokenTracks.collectAsState()
     // ★R1/R2：当前选中歌单（单一真源；恒存在）；其类型决定播放页是否可导入。
     val playlistLists by playlistVm.lists.collectAsState()
     val selectedListId by playlistVm.selectedListId.collectAsState()
@@ -519,6 +521,7 @@ fun AppShell(
                 },
                 // ★B5：高亮用队列里的原始 uri（NCM/AVS3 的 currentUri 是内部 uri，会高亮不到）。
                 currentUri = playerVm.currentQueueTrackUriOrNull() ?: playerState.currentUri,
+                brokenTrackUris = brokenTracks,
             )
 
             // Step 7 / 方案1：混音页（EQ + 分轨混音）

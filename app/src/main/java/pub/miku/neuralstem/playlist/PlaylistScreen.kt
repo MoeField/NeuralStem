@@ -1,6 +1,7 @@
 package pub.miku.neuralstem.playlist
 
 import android.content.Intent
+import android.widget.Toast
 import android.content.res.Configuration
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -70,6 +71,8 @@ fun PlaylistScreen(
     currentTrackIndex: Int = -1,
     // ★ 当前播放曲的 uri —— **高亮按 uri（曲目身份）**，排序/删其它曲后仍正确。
     currentUri: String? = null,
+    // ★B6：播放失败/需重新授权的曲目（SAF 失效）——标记但不自动删。
+    brokenTrackUris: Set<String> = emptySet(),
 ) {
     /**
      * ★分段加载的页大小。
@@ -109,13 +112,23 @@ fun PlaylistScreen(
         ActivityResultContracts.OpenMultipleDocuments()
     ) { uris ->
         if (uris.isNullOrEmpty()) return@rememberLauncherForActivityResult
+        var failed = 0
         uris.forEach { u ->
-            runCatching {
+            val ok = runCatching {
                 context.contentResolver.takePersistableUriPermission(
                     u,
                     Intent.FLAG_GRANT_READ_URI_PERMISSION,
                 )
-            }
+            }.isSuccess
+            if (!ok) failed++
+        }
+        if (failed > 0) {
+            // ★B6：授权失败不再静默（重启后会 SecurityException）。
+            Toast.makeText(
+                context,
+                "$failed 首未能持久授权，重启后可能需重新选择",
+                Toast.LENGTH_LONG,
+            ).show()
         }
         scope.launch {
             vm.importFiles(uris, intoListId = selectedListId)
@@ -142,6 +155,13 @@ fun PlaylistScreen(
                 false
             }
             android.util.Log.i("PlaylistVm", "pickFolder: persist=$ok，开始 importFolder")
+            if (!ok) {
+                Toast.makeText(
+                    context,
+                    "文件夹持久授权失败，重启后可能需重新选择",
+                    Toast.LENGTH_LONG,
+                ).show()
+            }
             scope.launch {
                 // ★ 选文件夹导入 = **总是新建一个文件夹歌单**
                 vm.importFolder(uri, intoListId = null)
@@ -320,6 +340,14 @@ fun PlaylistScreen(
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                                 maxLines = 1,
                                                 overflow = TextOverflow.Ellipsis,
+                                            )
+                                        }
+                                        if (t.uri in brokenTrackUris) {
+                                            Text(
+                                                "⚠ 需重新授权",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.error,
+                                                maxLines = 1,
                                             )
                                         }
                                     }

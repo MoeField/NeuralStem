@@ -180,8 +180,14 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _state = MutableStateFlow(PlayerState())
 
+    /** ★B6：播放失败过的曲目（SAF 权限失效等）——保留在歌单里并标记，不自动删除。 */
+    private val _brokenTracks = MutableStateFlow<Set<String>>(emptySet())
+    val brokenTracks: StateFlow<Set<String>> = _brokenTracks.asStateFlow()
+
     /** ★B1：上一次应用的 tracks JSON；progress extras 每 200ms 触发，避免重复解析/刷日志。 */
     private var lastTracksJson: String? = null
+    /** ★B6：队列恢复每个 currentUri 只尝试一次，避免 progress extras 反复读歌单文件。 */
+    private var queueRestoreForUri: String? = null
     val state: StateFlow<PlayerState> = _state.asStateFlow()
 
     /**
@@ -476,6 +482,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                         _state.value = _state.value.copy(speed = sp, pitchSemitones = semis)
                         Log.i(TAG, "B1 extras: originalUri=$ou speed=$sp pitchRate=$pr")
                     }
+                    restoreQueueFromPlaylistIfIdle()
                     }   // tracksJson 变化时才应用
                     applyEqSnapshot(extras.getString(MultiTrackSession.KEY_EQ_JSON))
                     // ★2026-11-01：多轨真实位置来自 StemMixer（单 AudioTrack），
@@ -543,6 +550,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                 currentUri = originalUri?.toString(),
             )
             Log.i(TAG, "P3: restoreFromSession(multi) → original=$originalName uri=$originalUri")
+            restoreQueueFromPlaylistIfIdle()
             return
         }
         val item = c.currentMediaItem ?: return
@@ -555,6 +563,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             currentUri = uri?.toString() ?: _state.value.currentUri,
         )
         Log.i(TAG, "P3: restoreFromSession → fileName=$title, uri=$uri")
+        restoreQueueFromPlaylistIfIdle()
     }
 
     /**
@@ -619,6 +628,13 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                     isReady = playbackState == Player.STATE_READY,
                     durationMs = p.duration.coerceAtLeast(0L),
                 )
+                if (playbackState == Player.STATE_READY) {
+                    // ★B6：能播成功 → 从“需重新授权”集合移除。
+                    val okUri = currentQueueTrackUriOrNull() ?: _state.value.currentUri
+                    if (okUri != null && okUri in _brokenTracks.value) {
+                        _brokenTracks.value = _brokenTracks.value - okUri
+                    }
+                }
                 // ★G-3：边分离边播切轨后，READY 时 seek 到 carry-over 位置并开始播放。
                 //
                 // ★2026-11-01 修正：**多轨时不能在这里 seek**。
@@ -792,9 +808,12 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
      * 单曲导入（无歌单）不可播时仅清当前曲（不做“下一首”）。
      */
     private fun handleUnplayableTrack(error: PlaybackException) {
-        val failedUri = _state.value.currentUri
+        // ★B6：优先用队列里的原始 uri（NCM/AVS3 的 currentUri 是内部 uri，队列里找不到）。
+        val failedUri = currentQueueTrackUriOrNull() ?: _state.value.currentUri
         if (failedUri == null) return
-        Log.w(TAG, "T-6: 当前曲不可播（${error.errorCodeName}），尝试移除+下一首")
+        Log.w(TAG, "T-6: 当前曲不可播（${error.errorCodeName}），标记+跳过")
+        // ★B6：保留在歌单里并标记“需重新授权”，**不自动删除**（SAF 失效/临时拔卡很常见）。
+        _brokenTracks.value = _brokenTracks.value + failedUri
 
         val inQueue = session.queue is QueueState.Active
         if (!inQueue) {
@@ -804,17 +823,8 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
 
-        // 1) 队列移除该曲
+        // 1) 队列移除该曲（歌单持久层保留，UI 用 brokenTracks 标记）
         session.removeFromQueue(failedUri)
-
-        // 2) 歌单持久层移除失效曲（直写文件）
-        val listId = currentListId
-        if (listId != null) {
-            viewModelScope.launch(Dispatchers.IO) {
-                runCatching { playlistStore.removeTrackFromList(listId, failedUri) }
-                    .onFailure { Log.w(TAG, "T-6: 从歌单移除失效曲失败", it) }
-            }
-        }
 
         // 3) 续播下一首（若有），否则清空
         val cur = (session.queue as? QueueState.Active)?.current
@@ -1423,6 +1433,25 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             runCatching { playlistStore.recordProgress(listId, uri, posMs) }
                 .onFailure { Log.w(TAG, "recordProgress failed", it) }
         }
+    }
+
+    /**
+     * ★B6：Activity/VM 重建后，若当前曲在某个歌单里 → 恢复播放队列与 currentListId。
+     * 否则 next/prev 在重建后是空的（B5 只修了进度 uri）。
+     */
+    private fun restoreQueueFromPlaylistIfIdle() {
+        val uri = _state.value.currentUri ?: return
+        if (queueRestoreForUri == uri) return
+        queueRestoreForUri = uri
+        if (currentListId != null) return
+        if (session.queue is QueueState.Active) return
+        val lists = runCatching { playlistStore.load() }.getOrDefault(emptyList())
+        val list = lists.firstOrNull { p -> p.tracks.any { it.uri == uri } } ?: return
+        val idx = list.tracks.indexOfFirst { it.uri == uri }
+        if (idx < 0) return
+        currentListId = list.id
+        session.setQueue(list.tracks.map { QueueTrack(it.uri, it.title) }, idx)
+        Log.i(TAG, "B6 restore queue: list=${list.id} idx=$idx uri=$uri")
     }
 
     /** ★B5：当前队列曲的原始 uri（高亮/进度用）；非队列返回 null。 */
