@@ -1969,7 +1969,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             //
             // ★G-3fix（用户实报）：必须带上**当前位置**。loadMultiTrack 会给主轨换
             //   MediaItem（mp3 → vocals stem）→ 从 0 开始 → 进度条跳回 0。
-            val resumeMs = runCatching { mediaController?.currentPosition ?: 0L }.getOrDefault(0L)
+            val resumeMs = currentMixPositionMs()
             Log.i(TAG, "toggleSeparation(true): 用 lastStems(${alive.size}) 恢复多轨 @${resumeMs}ms")
             loadMultiTrack(alive, startPositionMs = resumeMs)
             mediaController?.play()
@@ -2009,13 +2009,46 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         mixEndedHandled = false
     }
 
+    /**
+     * ★2026-11-10（B2）：当前真实播放位置。
+     *
+     * 多轨用 mixer 位置 + 单调时钟外推（[MixClock]）；单轨/无 mixer 样本时用门面。
+     * 退出多轨/重开必须用它——门面是 1× 静音时钟，1.4× 下会越差越多。
+     */
+    private fun currentMixPositionMs(): Long {
+        val p = mediaController
+        val facade = runCatching { p?.currentPosition ?: 0L }.getOrDefault(0L)
+        if (!isMultiTrackLoaded || mixPosAtClock <= 0L) return facade
+        val dur = mixDurationMs.takeIf { it > 0L } ?: (p?.duration ?: 0L)
+        val pos = MixClock.positionMs(
+            baseMs = mixPosMs,
+            atRealtimeMs = mixPosAtClock,
+            nowRealtimeMs = android.os.SystemClock.elapsedRealtime(),
+            speed = _state.value.speed,
+            playing = _state.value.isPlaying,
+            durationMs = dur,
+        )
+        Log.i(
+            TAG,
+            "B2 position: mix=${mixPosMs}@${mixPosAtClock} " +
+                "speed=${_state.value.speed} playing=${_state.value.isPlaying} " +
+                "facade=$facade → $pos",
+        )
+        return pos
+    }
+
     fun exitMultiTrack() {
         if (!_state.value.isMultiTrack) return   // 幂等：非多轨时点「退出多轨」/发 exitsmt 不做任何事
-        val resumeMs = runCatching { mediaController?.currentPosition ?: 0L }.getOrDefault(0L)
+        val facadeMs = runCatching { mediaController?.currentPosition ?: 0L }.getOrDefault(0L)
+        val resumeMs = currentMixPositionMs()
         bareExitMultiTrack()
         val u = originalUri
         val p = mediaController
-        Log.i(TAG, "exitMultiTrack: 回原曲 @${resumeMs}ms (originalUri=${u ?: "无"})")
+        Log.i(
+            TAG,
+            "exitMultiTrack: 回原曲 @${resumeMs}ms " +
+                "(facade=$facadeMs originalUri=${u ?: "无"})",
+        )
         if (u != null && p != null) {
             runCatching {
                 doLoad(p, u, originalName, resetStems = false, startPositionMs = resumeMs)
