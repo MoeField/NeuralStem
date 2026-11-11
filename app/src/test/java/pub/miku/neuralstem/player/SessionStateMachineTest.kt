@@ -108,6 +108,7 @@ class SessionStateMachineTest {
     @Test
     fun `I3 分离 Done 只能被消费一次`() {
         val (_, sm) = newSm()
+        sm.beginSeparation()
         sm.startSeparation()
         val done = SeparationTask.Done2(
             vocalsFile = File("v.wav"),
@@ -130,6 +131,7 @@ class SessionStateMachineTest {
     @Test
     fun `I3 4-stem Done4 同样可被一次性消费`() {
         val (_, sm) = newSm()
+        sm.beginSeparation()
         sm.startSeparation()
         val done = SeparationTask.Done4(
             stemFiles = listOf(File("v.wav"), File("d.wav")),
@@ -143,7 +145,7 @@ class SessionStateMachineTest {
     @Test
     fun `I3 Preparing 不是 Done（消费为 null）`() {
         val (_, sm) = newSm()
-        sm.onSeparationPreparing()
+        sm.beginSeparation()
         assertTrue(sm.separation is SeparationTask.Preparing)
         assertNull(sm.consumeSeparationDone())
     }
@@ -151,6 +153,7 @@ class SessionStateMachineTest {
     @Test
     fun `I3 Cancelled 不是 Done 且不残留 Done`() {
         val (_, sm) = newSm()
+        sm.beginSeparation()
         sm.startSeparation()
         sm.onSeparationCancelled()
         assertTrue(sm.separation is SeparationTask.Cancelled)
@@ -158,8 +161,54 @@ class SessionStateMachineTest {
     }
 
     @Test
+    fun `I3 取消后迟到的 repo 事件不能复活任务`() {
+        val (_, sm) = newSm()
+        sm.beginSeparation()
+        sm.startSeparation()
+        sm.onSeparationProgress(40)
+        sm.onSeparationCancelled()
+
+        // 模拟旧 repo 任务在 cancel 之后仍到达的 Preparing/Running/Done
+        sm.onSeparationPreparing(SeparationTask.PrepPhase.DECODING)
+        sm.startSeparation()
+        sm.onSeparationProgress(80)
+        sm.onSeparationDone(
+            SeparationTask.Done2(
+                vocalsFile = File("v.wav"),
+                accompanimentFile = File("a.wav"),
+                modelLoadMs = 0,
+                inferTimeMs = 1,
+                peakPssMb = 2f,
+                audioDurationMs = 3,
+            ),
+        )
+
+        assertTrue("取消态不能被新的 repo 事件复活", sm.separation is SeparationTask.Cancelled)
+        assertNull(sm.consumeSeparationDone())
+    }
+
+    @Test
+    fun `I3 切歌 reset 清空分离任务态`() {
+        val (_, sm) = newSm()
+        sm.beginSeparation()
+        sm.startSeparation()
+        sm.onSeparationProgress(10)
+        sm.resetSeparation()
+        assertTrue(sm.separation is SeparationTask.Idle)
+        assertNull(sm.consumeSeparationDone())
+    }
+
+    @Test
+    fun `I3 Idle 时 startSeparation 不产生 Running`() {
+        val (_, sm) = newSm()
+        sm.startSeparation()
+        assertTrue(sm.separation is SeparationTask.Idle)
+    }
+
+    @Test
     fun `I3 无 Done 时消费返回 null`() {
         val (_, sm) = newSm()
+        sm.beginSeparation()
         sm.startSeparation()
         sm.onSeparationProgress(50)
         assertNull(sm.consumeSeparationDone())
@@ -168,6 +217,7 @@ class SessionStateMachineTest {
     @Test
     fun `I3 失败态不产生 Done`() {
         val (_, sm) = newSm()
+        sm.beginSeparation()
         sm.startSeparation()
         sm.onSeparationFailed("boom")
         assertNull(sm.consumeSeparationDone())

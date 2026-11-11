@@ -366,13 +366,29 @@ class SessionStateMachine(private val effects: Effects) {
 
     // ============================ I3：分离（一次性消费）============================
 
-    /** 进入准备态（源解析 / 模型加载）。 */
-    fun onSeparationPreparing(phase: SeparationTask.PrepPhase = SeparationTask.PrepPhase.START) {
-        separation = SeparationTask.Preparing(phase)
+    /**
+     * ★B7：**用户显式开始**一次新分离。
+     *
+     * 只有这个入口能从 Idle/Cancelled/Failed 进入 Preparing；repo 的
+     * [onSeparationPreparing] 只允许在已经 Preparing 时更新子阶段。
+     * 这样取消/切歌后迟到的 repo 事件不能把任务“复活”，UI 不会显示上一首的进度。
+     */
+    fun beginSeparation() {
+        separation = SeparationTask.Preparing(SeparationTask.PrepPhase.START)
     }
 
+    /** repo 准备子阶段：仅用于已有任务的阶段更新，不能从 Idle/Cancelled 启动任务。 */
+    fun onSeparationPreparing(phase: SeparationTask.PrepPhase = SeparationTask.PrepPhase.START) {
+        if (separation is SeparationTask.Preparing) {
+            separation = SeparationTask.Preparing(phase)
+        }
+    }
+
+    /** 首个 Running：只有显式开始后的 Preparing 才能进入 Running。 */
     fun startSeparation() {
-        separation = SeparationTask.Running(0)
+        if (separation is SeparationTask.Preparing) {
+            separation = SeparationTask.Running(0)
+        }
     }
 
     /** 进度：仅当处于 [SeparationTask.Running] 时推进（Preparing 不算）。 */
@@ -380,17 +396,29 @@ class SessionStateMachine(private val effects: Effects) {
         if (separation is SeparationTask.Running) separation = SeparationTask.Running(percent)
     }
 
-    /** 完成：接受 [SeparationTask.Done2] 或 [SeparationTask.Done4]。 */
+    /**
+     * 完成：只接受**当前任务**（Preparing/Running）。
+     * 取消/切歌后迟到的 Done 不得覆盖 Cancelled/Idle。
+     */
     fun onSeparationDone(done: SeparationTask.SeparationDone) {
-        separation = done
+        if (separation is SeparationTask.Preparing || separation is SeparationTask.Running) {
+            separation = done
+        }
     }
 
     fun onSeparationFailed(message: String, cause: Throwable? = null) {
-        separation = SeparationTask.Failed(message, cause)
+        if (separation is SeparationTask.Preparing || separation is SeparationTask.Running) {
+            separation = SeparationTask.Failed(message, cause)
+        }
     }
 
     fun onSeparationCancelled() {
         separation = SeparationTask.Cancelled
+    }
+
+    /** 切歌/离开页面/重新导入：清掉当前分离 UI 任务态（不动 repo 任务）。 */
+    fun resetSeparation() {
+        separation = SeparationTask.Idle
     }
 
     /**
@@ -403,7 +431,9 @@ class SessionStateMachine(private val effects: Effects) {
      * `Running(99)` → `busy=true` → UI 卡在“分离中 99%”且取消按钮不消失。
      */
     fun onSeparationEdgeDone() {
-        separation = SeparationTask.Idle
+        if (separation is SeparationTask.Preparing || separation is SeparationTask.Running) {
+            separation = SeparationTask.Idle
+        }
     }
 
     /**

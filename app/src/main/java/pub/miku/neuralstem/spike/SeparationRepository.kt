@@ -657,6 +657,9 @@ class SeparationRepository(private val app: Application) {
     fun cancel() {
         val j = job ?: return
         generation.incrementAndGet()
+        // ★B7：立即进入 Cancelled，UI 不依赖旧协程下一次调度（可能在 native 块里）。
+        //   旧任务的迟到写入由状态机的“显式开始”门禁 + generation 共同挡住。
+        _state.value = State.Cancelled
         job = null
         cancelledJob = j
         j.cancel()

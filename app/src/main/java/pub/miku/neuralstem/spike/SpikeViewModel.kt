@@ -354,6 +354,12 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
      * 采样率不必是 44.1k(分离时会自动重采样)。
      */
     private suspend fun loadLocalFileInternal(local: File): Boolean {
+        // ★B7：新歌载入 → 先清掉上一首的分离 UI 任务态；迟到的 repo 事件由状态机拒绝。
+        //   同一首歌重新加载不清，避免误伤正在跑的分离进度。
+        if (pendingFile?.absolutePath != local.absolutePath) {
+            session.resetSeparation()
+            pushSeparationTask()
+        }
         return try {
             val info = withContext(Dispatchers.IO) {
                 SeparationInput.probe(getApplication(), local)
@@ -420,8 +426,9 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
                             },
                         )
                     is SeparationRepository.State.Running -> {
-                        // 首个 Running 若还在 Preparing，先进入 Running(0)
-                        if (session.separation !is SeparationTask.Running) session.startSeparation()
+                        // ★B7：只有已显式开始、且仍 Preparing 的任务才能进入 Running。
+                        //   取消后迟到的 Running 不得把 Cancelled/Idle 重新变成进度。
+                        if (session.separation is SeparationTask.Preparing) session.startSeparation()
                         session.onSeparationProgress(s.percent)
                     }
                     is SeparationRepository.State.Done -> session.onSeparationDone(
@@ -529,7 +536,7 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
         // M2-F:若自动化未显式指定引擎,则每次按设置里的默认引擎刷新
         // (用户改了默认引擎无需重建 VM 即生效)
         if (!engineOverride) applyDefaultEngine()
-        session.onSeparationPreparing()
+        session.beginSeparation()
         pushSeparationTask()
         _state.value = State.Separating(0, 0f, 0)
         repo.start(
@@ -547,7 +554,7 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
      * 新路径：统一经此方法“先订阅（驱动 SM）再启动”，与 2-stem 同构。
      */
     fun start4Stem(source: File) {
-        session.onSeparationPreparing()
+        session.beginSeparation()
         pushSeparationTask()
         repo.start4(source)
     }
@@ -571,7 +578,7 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
                     uvrModelName = opt.spec.fileName
                 }
                 Log.i(TAG, "startOption(Sherpa): ${opt.spec.id} engine=${opt.spec.engine}")
-                session.onSeparationPreparing()
+                session.beginSeparation()
                 pushSeparationTask()
                 repo.start(
                     source = source,
@@ -587,7 +594,7 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
             }
             SepOption.Demucs -> {
                 Log.i(TAG, "startOption: Demucs")
-                session.onSeparationPreparing()
+                session.beginSeparation()
                 pushSeparationTask()
                 repo.startDemucs(source)
             }
@@ -605,7 +612,7 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
         engineOverride = true
         engineMode = SherpaSourceSeparation.MODE_SPLEETER
         Log.i(TAG, "startEdgeOption: from=${fromPositionMs}ms")
-        session.onSeparationPreparing()
+        session.beginSeparation()
         pushSeparationTask()
         repo.startEdge(source, fromPositionMs)
     }
@@ -728,7 +735,7 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
         _lastExportable.value = null
         exportableOwnerUri = null
         // 清空分离任务态（页面重置；不影响 repo 任务）
-        session.consumeSeparationDone()  // 若为完成态则消费掉
+        session.resetSeparation()
         pushSeparationTask()
     }
 
