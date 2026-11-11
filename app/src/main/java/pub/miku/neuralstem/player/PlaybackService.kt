@@ -463,6 +463,21 @@ class PlaybackService : MediaSessionService() {
 
     // ---------------- 多轨：命令处理 ----------------
 
+    /** 多轨 load 失败：确保不会留下“门面静音 + 无 mixer”的无声状态。 */
+    private fun abortMultiLoad(c: MultiTrackController): SessionResult {
+        Log.w(TAG, "multi load failed → restore single-track facade")
+        c.close()
+        multiTrack = null
+        if (inMultiTrack) {
+            inMultiTrack = false
+            exitMultiTrackFocus()
+            handler.removeCallbacks(progressRunnable)
+        }
+        singlePlayer?.volume = 1f
+        pushTracksSnapshot()
+        return err("多轨加载失败")
+    }
+
     private fun handleLoadMultiTrack(args: Bundle): SessionResult {
         val json = args.getString(MultiTrackSession.KEY_ITEMS) ?: return err("items 缺失")
         val items = parseItems(json) ?: return err("items 解析失败")
@@ -476,10 +491,11 @@ class PlaybackService : MediaSessionService() {
         //    所以保留“session 认真实 ExoPlayer”这条已验证的路径。）
         mtOriginalUri = singlePlayer?.currentMediaItem?.localConfiguration?.uri?.toString()
         mtOriginalTitle = singlePlayer?.currentMediaItem?.mediaMetadata?.title?.toString()
-        singlePlayer?.volume = 0f
         c.load(items, args.getString(MultiTrackSession.KEY_TITLE))
+        if (!c.isReady()) return abortMultiLoad(c)
         // ★把单轨期间/上次多轨的变速变调带给新混音器（否则会从 1.0× 开始，与 UI 不一致）。
         c.setSpeedPitch(lastSpeed, lastPitchRate)
+        singlePlayer?.volume = 0f
         inMultiTrack = true
         c.playWhenAllReady(args.getLong(MultiTrackSession.KEY_START_MS, 0L))
         // ★2026-11-06：门面也必须真的在播 —— 否则 MediaSession 停在 PAUSED，
@@ -526,10 +542,11 @@ class PlaybackService : MediaSessionService() {
 
         mtOriginalUri = singlePlayer?.currentMediaItem?.localConfiguration?.uri?.toString()
         mtOriginalTitle = singlePlayer?.currentMediaItem?.mediaMetadata?.title?.toString()
-        singlePlayer?.volume = 0f
         val c = ensureMultiTrack()
         c.loadStream(items, args.getString(MultiTrackSession.KEY_TITLE))
+        if (!c.isReady()) return abortMultiLoad(c)
         c.setSpeedPitch(lastSpeed, lastPitchRate)
+        singlePlayer?.volume = 0f
         inMultiTrack = true
         c.playWhenAllReady(args.getLong(MultiTrackSession.KEY_START_MS, 0L))
         singlePlayer?.play()   // 同上：门面必须与混音器同播
