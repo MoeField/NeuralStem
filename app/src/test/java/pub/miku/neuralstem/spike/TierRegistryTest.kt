@@ -15,7 +15,7 @@ import org.junit.Test
  */
 class TierRegistryTest {
 
-    /** BF00A 实测值（见 doc/model_speed_tiers.md）。 */
+    /** BF00A 实测值（见 docs/DEVELOP.md）。 */
     private val bf00aRtf = mapOf(
         "spleeter-2stems-fp16" to 8.562f,
         "uvr-Voc_FT" to 0.348f,

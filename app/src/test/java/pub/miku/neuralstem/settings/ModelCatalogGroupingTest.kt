@@ -9,7 +9,7 @@ import pub.miku.neuralstem.spike.ModelRegistry
  * ★Step4 模型库：体积分组单测。
  *
  * ## 为何按体积分组
- * 实测 RTF 与文件名无关、与**体积强相关**（`doc/model_speed_tiers.md`）：
+ * 实测 RTF 与文件名无关、与**体积强相关**（`docs/DEVELOP.md`）：
  * 28MB→1.0× / 39MB→8.6× / 50MB→0.52× / 56MB→0.41× / 64MB→0.35× / 172MB→0.06×。
  * 所以模型库按体积分节——这是速度簇的物理成因。
  */
@@ -70,7 +70,7 @@ class ModelCatalogGroupingTest {
      */
     @Test
     fun `实验模型的下载条目与 NCC 实证结论一一对应`() {
-        // ★因 NCC 证据不足而**明确排除**的模型（见 doc/stem_order_evidence.md）
+        // ★因 NCC 证据不足而**明确排除**的模型（见 docs/DEVELOP.md）
         val excluded = setOf("uvr-Crowd_HQ_1")
 
         assertEquals(

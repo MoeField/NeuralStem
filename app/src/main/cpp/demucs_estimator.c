@@ -1,6 +1,6 @@
 // 阶段 M4 / S2 落地：Demucs（htdemucs）**估计器**（句柄式 JNI，持有 ORT 会话）。
 //
-// 契约（已在桌面用 onnxruntime 验证；见 .memory.md §M4-S2）：
+// 契约（已在桌面用 onnxruntime 验证；见 docs/DEVELOP.md §M4-S2）：
 //   IN  input : [1, 2, 343980]        波形（固定 7.8s 窗）
 //   IN  x     : [1, 4, 2048, 336]     STFT(波形)（Hann 4096/1024/center，2048 bins）
 //   OUT output: [1, 4, 4, 2048, 336]  频谱分支（4 源 × 复数）

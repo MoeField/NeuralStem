@@ -8,7 +8,7 @@
 这些代码是「Spleeter→TFLite」回退路线的实现。选型演进链：
 1. Task 0a 初版计划：Spleeter → TFLite + Flex Delegate
 2. 调研发现全网无现成 `.tflite` 产物，本地转换链风险高 → 改走 ONNX/sherpa-onnx
-   （详见 `doc/research_separation.md` §5 选型变更）
+   （详见 `docs/STEP_HISTORY.md` §5 选型变更）
 3. Task 0d–0g 实测 sherpa 路线全胜（18–25× 实时、内存可控）
 4. TFLite 的 3 个 so（`libtensorflowlite_jni.so` 等）ELF 加载段仅 4KB 对齐，
    在 Android 15+（16KB 页设备）无法加载；sherpa 全家 + 本项目胶水均为 16KB 对齐
@@ -21,5 +21,5 @@
 - 依赖：`org.tensorflow:tensorflow-lite:2.14.0` + `tensorflow-lite-select-tf-ops`
   （build.gradle.kts 已删，恢复时加回，并需换 16KB 对齐的构建版本）
 - 模型：TFLite 路线需要本地跑 TF1 转换链产出 `.tflite`（当初弃坑的原因，见 0a）
-- 论证与实测数据：`doc/research_separation.md`、`doc/.memory.md` 附录一~七、
-  `doc/.critical_steps.md` 第 8 条
+- 论证与实测数据：`docs/STEP_HISTORY.md`、`docs/DEVELOP.md` 附录一~七、
+  `docs/DEVELOP.md` 第 8 条

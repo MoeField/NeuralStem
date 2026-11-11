@@ -30,7 +30,7 @@ import pub.miku.neuralstem.R
  * ## 为什么需要
  * 分离任务由 [SeparationRepository]（进程级单例 + 应用级协程作用域）执行，本就跨页面存活；
  * 但**没有前台服务** → 应用切后台被放入 `/background` cgroup → **降频 ~2×**
- * （实测 4 分钟歌 30.7s → 64.7s，超 60s 门槛，见 `.memory.md` V4）。
+ * （实测 4 分钟歌 30.7s → 64.7s，超 60s 门槛，见 `docs/DEVELOP.md` V4）。
  *
  * 本服务在分离窗口内把进程**提升为前台优先级**，从而后台也接近前台速度。
  *

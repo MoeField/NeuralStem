@@ -38,7 +38,7 @@ class SpeedTierTest {
         assertEquals(SpeedTier.VERY_SLOW, SpeedTier.of(null))
     }
 
-    /** 用 BF00A 实测值验证：每个模型的归属应与 doc/model_speed_tiers.md 一致。 */
+    /** 用 BF00A 实测值验证：每个模型的归属应与 docs/DEVELOP.md 一致。 */
     @Test
     fun `真实 benchmark 数据归属与实测表一致`() {
         val measured = mapOf(

@@ -21,7 +21,7 @@ import java.nio.FloatBuffer
  * ## 与单轨的区别
  * 单轨走 ExoPlayer 的 `PlaybackParameters`（原生 AudioTrack 拉伸）；
  * 多轨只有一个 AudioTrack 承载**混音结果**，只能自己做时间轴变换。
- * 三方案实证见 `doc/research_multitrack_timescale.md`（方案 2/3 已排除）。
+ * 三方案实证见 `docs/STEP_HISTORY.md`（方案 2/3 已排除）。
  *
  * ## 位置时钟（关键）
  * `StemMixer.framePos` 是**源读头**，不能再用 `write()/channels` 当媒体位置：

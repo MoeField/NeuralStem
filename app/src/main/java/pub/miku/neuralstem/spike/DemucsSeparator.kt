@@ -15,7 +15,7 @@ import java.util.concurrent.Executors
  *   → 三角窗 overlap-add → 4 × WavWriter
  * ```
  *
- * ## 关键约定（桌面已验证，见 .memory.md §M4-S2）
+ * ## 关键约定（桌面已验证，见 docs/DEVELOP.md §M4-S2）
  * - **窗固定 343980 样本**（模型硬约束，7.8s @44.1k）
  * - **overlap 25%**（实测 NCC vs 50% = 0.9966；Demucs 对窗口边缘不敏感）
  * - **最后一块向前对齐到末尾**（不是补零）

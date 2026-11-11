@@ -910,7 +910,7 @@ class SeparationRepository(private val app: Application) {
      * V4（技术债收口）：清理分离结果缓存（`filesDir/stems-cache/` 下的全部目录）。
      *
      * 背景：分离产物会随使用不断累积（每首/每引擎一份，实测 4 分钟歌 ~85MB），
-     * 但此前无任何 UI 管理入口（HANDOFF §十 已记为技术债）。
+     * 但此前无任何 UI 管理入口（docs/STEP_HISTORY.md 已记为技术债）。
      *
      * 安全约束：有任务在跑时**拒绝**清理（否则删掉正在写的目录）。
      *

@@ -5,7 +5,7 @@ import java.util.Arrays
 /**
  * 阶段 M4 / S2：htdemucs（Demucs）ONNX 所需的 **STFT / iSTFT** 实现。
  *
- * ## 契约（已在桌面用 onnxruntime 验证，见 `doc/.memory.md` §M4-S2）
+ * ## 契约（已在桌面用 onnxruntime 验证，见 `docs/DEVELOP.md` §M4-S2）
  *
  * htdemucs 的混合架构把「正向 STFT」拆到了图外，必须由调用方算好传入：
  * ```
@@ -30,7 +30,7 @@ import java.util.Arrays
  * 本类同时实现 [istft]，采用与 [stft] 完全对称的重叠相加（OLA）+ 窗平方归一。
  *
  * > ⚠️ 本类的正确性依赖「正/反变换严格互为逆」以及「与 demucs 约定一致」。
- * > 已在桌面 Python 上验证：4 源之和与原波形残差 1.335%（见 .memory.md）。
+ * > 已在桌面 Python 上验证：4 源之和与原波形残差 1.335%（见 docs/DEVELOP.md）。
  */
 object DemucsStft {
 

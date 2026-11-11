@@ -17,7 +17,7 @@ import java.io.File
  * OUT y : [2, num_splits, 512, 1024]   该 stem 的幅度估计
  * ```
  * 本探针固定 `num_splits=1`（8s 音频 = 348 帧 < 512），只验证「4 个模型能否依次跑通」。
- * 完整 mask/iSTFT 已在桌面 Python 验证（重建不变量 -163.5 dB，见 .memory.md §M4-S3）。
+ * 完整 mask/iSTFT 已在桌面 Python 验证（重建不变量 -163.5 dB，见 docs/DEVELOP.md §M4-S3）。
  */
 object Spleeter4Probe {
 

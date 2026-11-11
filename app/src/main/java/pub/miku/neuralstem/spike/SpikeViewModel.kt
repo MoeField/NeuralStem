@@ -31,7 +31,7 @@ import java.io.File
  *
  * 状态机:Idle → Ready → Separating → Done / Error
  * 全部推理在 Dispatchers.Default/IO,不阻塞 UI(guide F3.2/N2)。
- * 内存采样对应 guide Task 0.4:峰值 PSS 记录到 doc/.critical_steps.md。
+ * 内存采样对应 guide Task 0.4:峰值 PSS 记录到 docs/DEVELOP.md。
  *
  * 设计说明(Task 0c Phase A):
  * 加载与分离各自拆成"suspend 版(内部) + launch 版(公开,供按钮点击)"。

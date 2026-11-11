@@ -5,7 +5,7 @@ import android.util.Log
 /**
  * sherpa-onnx 音源分离 JNI 薄胶水(Task 0b,Spike)。
  *
- * 背景见 doc/research_separation.md §5 与 doc/.memory.md:
+ * 背景见 docs/STEP_HISTORY.md §5 与 docs/DEVELOP.md:
  * - 选型从 "Spleeter→TFLite+Flex" 切换到 "Spleeter→ONNX via sherpa-onnx"
  *   理由(guide §八.1):官方预转换 ONNX 模型可直接下载,免去本地 Python 转换链;
  *   sherpa-onnx AAR 自带 onnxruntime,STFT/mask 在框架 C++ 层,无需端上频谱代码

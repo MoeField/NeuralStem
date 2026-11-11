@@ -5,7 +5,7 @@
 // 两者共存会 dlopen 失败。自写 JNI 直接链接 sherpa 那份 .so（符号版本一致）。
 //
 // 本探针只验证一件事：**ORT 能否在本机加载并跑通 Demucs ONNX**。
-// 不做 STFT（那部分已在桌面用 Python 验证，见 doc/.memory.md §M4）。
+// 不做 STFT（那部分已在桌面用 Python 验证，见 docs/DEVELOP.md §M4）。
 #include <jni.h>
 #include <android/log.h>
 #include <time.h>

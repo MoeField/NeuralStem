@@ -4,7 +4,7 @@
 //   pub.miku.neuralstem.spike.SherpaSourceSeparation
 //
 // 链接目标:AAR 依赖带入的 libsherpa-onnx-c-api.so(符号已验证存在,
-// 见 doc/.memory.md 2026-02 记录),运行时无需再链 onnxruntime。
+// 见 docs/DEVELOP.md 2026-02 记录),运行时无需再链 onnxruntime。
 //
 // 数据流(Kotlin → C → Kotlin):
 //   Kotlin 交织 float[] → 拆 planar float** → SherpaOnnxOfflineSourceSeparationProcess

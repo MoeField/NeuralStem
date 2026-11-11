@@ -6,7 +6,7 @@
 // 4 个 stem 各自独立模型：vocals / drums / bass / other。
 //
 // 本探针只验证「4 个模型能否在本机 ORT 依次跑通 + 耗时/内存」。
-// 完整的 mask/iSTFT 合并已在桌面用 Python 验证（重建不变量 -163.5 dB，见 .memory.md §M4-S3）。
+// 完整的 mask/iSTFT 合并已在桌面用 Python 验证（重建不变量 -163.5 dB，见 docs/DEVELOP.md §M4-S3）。
 #include <jni.h>
 #include <android/log.h>
 #include <time.h>

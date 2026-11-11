@@ -11,7 +11,7 @@ import java.nio.channels.FileChannel
 /**
  * Spleeter TFLite 推理封装(Task 0b Spike)。
  *
- * 模型契约(见 doc/research_separation.md §2 路线 A):
+ * 模型契约(见 docs/STEP_HISTORY.md §2 路线 A):
  * - 输入:44100Hz 立体声交织 float 波形,dynamic shape(shape_signature 带 -1)
  * - 输出:stems 波形(2-stem: vocals, accompaniment),STFT/iSTFT/mask 全在图内
  * - 必须 TFLite + Flex Delegate(tensorflow-lite-select-tf-ops)

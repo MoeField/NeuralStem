@@ -1,4 +1,4 @@
-// 仓库来源说明(踩坑记录见 doc/.critical_steps.md):
+// 仓库来源说明(踩坑记录见 docs/DEVELOP.md):
 // - Gradle 依赖走公共镜像（阿里云 google 镜像直连），无需本机代理。
 // - 历史踩坑：某些“URL 前缀型”代理会对 gzip 二进制响应做文本消毒，
 //   导致 media3 的 AAR 损坏（invalid zip / U+FFFD）。故仓库地址不使用任何

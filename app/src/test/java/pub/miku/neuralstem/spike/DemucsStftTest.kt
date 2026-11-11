@@ -11,7 +11,7 @@ import kotlin.random.Random
  * 阶段 M4 / S2：验证 [DemucsStft] 的正/反变换自洽性。
  *
  * 这是 Demucs 路线 DSP 正确性的**单元级**证据：
- * 真实 STFT 已在真机上确认长度/排布正确（见 .memory.md §S2-f），
+ * 真实 STFT 已在真机上确认长度/排布正确（见 docs/DEVELOP.md §S2-f），
  * 这里再验证 **stft → istft 往返能重建原信号**（否则模型输出就接不上时域）。
  */
 class DemucsStftTest {

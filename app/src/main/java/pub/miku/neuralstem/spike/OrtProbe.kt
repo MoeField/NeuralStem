@@ -17,7 +17,7 @@ import java.io.File
  * 本版改为：读一段**真实 WAV** → 用 [DemucsStft] 算**真实 STFT** → 喂给模型。
  * 若仍崩，才说明 ORT 真有算子问题。
  *
- * 见 `app/src/main/cpp/ort_probe.c` 与 `doc/.memory.md` §阶段 M4-S2。
+ * 见 `app/src/main/cpp/ort_probe.c` 与 `docs/DEVELOP.md` §阶段 M4-S2。
  */
 object OrtProbe {
 

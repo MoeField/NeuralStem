@@ -54,7 +54,7 @@
  * 这也是 memory 里「前 60 帧碰巧能跑」的真实解释：那 60 帧是上一轮**没调
  * parse_header** 时直接瞎喂帧头字节产生的噪声输出，并非真解码。
  *
- * **结论：只有拿到能自编译的 AVS3 解码源码才能出音。**（详见 doc/.memory.md §八）
+ * **结论：只有拿到能自编译的 AVS3 解码源码才能出音。**（详见 docs/DEVELOP.md §八）
  */
 #include <jni.h>
 #include <stdint.h>

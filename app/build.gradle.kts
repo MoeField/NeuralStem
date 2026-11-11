@@ -17,7 +17,7 @@ plugins {
 // 优先读 `keystore.properties`（**不入库**）；缺失则回退环境变（CI）。
 // 两者都没有 → 回退 debug 签名（保证本地/CI 不因缺密钥而挂）。
 //
-// ## 生成密钥（一次性，详见 doc/release_signing.md）
+// ## 生成密钥（一次性，详见 docs/DEVELOP.md）
 //   keytool -genkeypair -keystore neuralstem.jks -alias neuralstem \
 //     -keyalg RSA -keysize 4096 -validity 10000
 val keystorePropsFile = rootProject.file("keystore.properties")
@@ -271,7 +271,7 @@ dependencies {
     implementation(libs.androidx.documentfile)
     implementation(libs.androidx.lifecycle.runtime.ktx)
 
-    // --- Task 0b Spike: sherpa-onnx ONNX 音轨分离(选型切换理由见 doc/research_separation.md §5) ---
+    // --- Task 0b Spike: sherpa-onnx ONNX 音轨分离(选型切换理由见 docs/STEP_HISTORY.md §5) ---
     // sherpa-onnx 未发布到 Maven Central;官方用法是直接引用 release 里的 AAR(已下载到 app/libs/,
     // 含 onnxruntime + c-api/cxx-api/jni 的 .so,覆盖 arm64-v8a/armeabi-v7a/x86/x86_64)
     implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar", "*.jar"))))
@@ -292,7 +292,7 @@ dependencies {
     implementation(libs.media3.session)
     // M4/S2: Demucs 4-stem —— **不用** Maven 的 onnxruntime-android（其 Java 绑定与 sherpa
     // 自带的 libonnxruntime.so(1.28.2) 符号版本冲突）；改为自写 JNI（cpp/ort_probe.c）
-    // 直接链接 sherpa 那份 .so。见 doc/.memory.md 阶段 M4 与 cpp/CMakeLists.txt
+    // 直接链接 sherpa 那份 .so。见 docs/DEVELOP.md 阶段 M4 与 cpp/CMakeLists.txt
 
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))

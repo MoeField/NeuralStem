@@ -3,7 +3,7 @@
 // 与 `spleeter4_probe.c`（一次性探针）的区别：这里**建 4 个 ORT 会话并持有**，
 // 供分块/多段音频反复调用，避免每块重建会话。
 //
-// 契约（一手核对自 ONNX 元数据；桌面已验证 -163.5 dB，见 .memory.md §M4-S3）：
+// 契约（一手核对自 ONNX 元数据；桌面已验证 -163.5 dB，见 docs/DEVELOP.md §M4-S3）：
 //   IN  x : [2, num_splits, 512, 1024]   幅度谱（1024 of 2049 bins）
 //   OUT y : [2, num_splits, 512, 1024]   该 stem 的幅度估计（ELU）
 //

@@ -9,7 +9,7 @@ package pub.miku.neuralstem.spike
  *
  * ## 口径（用户定）
  * **纯推理 RTF**（合成块/耗时；跨设备可比）。UI 展示时注明“≈端到端”。
- * 数据来源：本项目实测（`doc/benchmark_2026-10-04.md` + `doc/.memory.md` M4 节）。
+ * 数据来源：本项目实测（`docs/DEVELOP.md` + `docs/DEVELOP.md` M4 节）。
  *
  * ## 三源优先级（本类只负责“内置”这一源）
  * 1. **本机实测缓存**（`DeviceBenchmark.cached()`，最准，覆盖内置）

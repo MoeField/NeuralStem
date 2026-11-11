@@ -57,7 +57,7 @@ enum class ModelPack(val id: String) {
     //（用户选到就会听到对调的两轨，而且很难分辨是 bug 还是模型本身就这样）。
     //
     // 2026-10-20 用 `StemOrderProbe` 对 13 个全部做了 NCC 实证
-    //（见 `doc/stem_order_evidence.md`）：
+    //（见 `docs/DEVELOP.md`）：
     //   - 9 个 ACCOMP_FIRST（margin 0.44，铁证）→ 已修正【KARA_2 原名猜错】
     //   - 3 个 VOCALS_FIRST（margin 0.41，铁证）
     //   - **Crowd_HQ_1 判不了**（margin 0.096 < 0.10）→ **不收录**（见下方注释）
@@ -291,7 +291,7 @@ object ModelCatalog {
     // ==================== ★实验模型（2026-10-20 开放下载）====================
 
     /**
-     * 12 个已通过 NCC 实证的实验模型（见 `doc/stem_order_evidence.md`）。
+     * 12 个已通过 NCC 实证的实验模型（见 `docs/DEVELOP.md`）。
      *
      * ## 为何单独一个函数
      * 它们与“正式 5 个”的区别不在来源（同为 k2-fsa 转发），而在于：
@@ -393,7 +393,7 @@ object ModelCatalog {
      * 28MB → 最快   50MB → 第二   56MB → 第三   64MB → 最慢
      * ```
      * **关键证据**：这个簇边界在**三台不同设备**上**完全相同**（见
-     * `doc/benchmark_3devices_2026-10-25.md`）：
+     * `docs/DEVELOP.md`）：
      * ```
      *          28MB        50MB        56MB        64MB
      * BF00A   1.02×       0.52×       0.41×       0.35×   (Helio G100)

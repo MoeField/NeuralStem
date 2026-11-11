@@ -8,7 +8,7 @@ import kotlin.math.sin
 /**
  * S2 落地：验证 [DemucsStft.stftPacked] 的**排布与数值**与 numpy 参考一致。
  *
- * 参考值由桌面 Python 生成（同 .memory.md §S2-b 的契约）：
+ * 参考值由桌面 Python 生成（同 docs/DEVELOP.md §S2-b 的契约）：
  * ```python
  * N_FFT,HOP,BINS=4096,1024,2048; PAD=N_FFT//2; N=343980; FRAMES=1+N//HOP
  * W=np.hanning(N_FFT+1)[:-1]
