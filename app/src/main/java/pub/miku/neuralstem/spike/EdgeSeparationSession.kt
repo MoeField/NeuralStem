@@ -233,7 +233,7 @@ class EdgeSeparationSession private constructor() {
         // ★B4：灰区判定必须在 Finished/Idle 早退之前。
         //   cost-gated（complete=false）/全曲完成后用户仍可 seek 回 [0,startFrame)，
         //   那段永远是预分配静音，必须提示“未参与本次分离”。
-        val inGray = playedFrames < 0
+        val inGray = playedFrames < 0 && !frontCovered
         if (seekInGrayZone != inGray) {
             seekInGrayZone = inGray
             if (inGray) {
@@ -269,6 +269,9 @@ class EdgeSeparationSession private constructor() {
      */
     @Volatile
     var seekInGrayZone: Boolean = false
+
+    /** [0, startFrame) 是否已被补齐/从未缺失；用于灰区提示。 */
+    @Volatile var frontCovered: Boolean = false
         private set
 
     /** 分离起点（ms），供 UI 提示“从 X:XX 起”。 */
@@ -375,6 +378,7 @@ class EdgeSeparationSession private constructor() {
         this.sampleRate = sampleRate
         this.channels = channels
         this.totalFrames = totalFrames
+        frontCovered = startFrame == 0
         vocalsBuffer = StemPcmRingBuffer(channels, capacityFrames)
         accompBuffer = StemPcmRingBuffer(channels, capacityFrames)
         resetEnvelopes()
@@ -441,6 +445,7 @@ class EdgeSeparationSession private constructor() {
         this.sampleRate = sampleRate
         this.channels = channels
         this.totalFrames = totalFrames
+        frontCovered = startFrame == 0
         this.vocalsFile = vocalsFile
         this.accompFile = accompFile
         this.sourceUri = sourceUri
@@ -508,10 +513,11 @@ class EdgeSeparationSession private constructor() {
     }
 
     /** 分离完成（buffers 关闭 → 读端 EOF；但 buffer 引用保留供播放读到末尾）。 */
-    fun complete() {
+    fun complete(fullCoverage: Boolean = true) {
         vocalsBuffer?.close()
         accompBuffer?.close()
         exitBackfill()
+        frontCovered = fullCoverage
         // ★文件模式：水位线置满 → 全曲可播可 seek。
         if (vocalsFile != null && totalFrames > 0) writtenUpToFrame = totalFrames
         _state.value = State.Done
@@ -550,6 +556,7 @@ class EdgeSeparationSession private constructor() {
         // ★闸门：中止 → Idle。
         _gate.value = Gate.Idle
         seekInGrayZone = false
+        frontCovered = false
         pendingBackfillRange = null
         exitBackfill()
         // ★B3：**不要**清 sourceUri。AppShell 的 aborted 分支靠会话键比对

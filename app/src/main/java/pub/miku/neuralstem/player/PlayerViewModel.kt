@@ -869,6 +869,23 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             val s = EdgeSeparationSession.get()
             while (isActive) {
                 delay(200)
+                // ★P2：边分离 UI 状态必须属于当前曲；切歌后不能把上一首的
+                //   gray/pendingBackfill 带过来。
+                if (separationTargetUri != null && !separationMatchesCurrent()) {
+                    if (_state.value.edgeBeforeStart ||
+                        _state.value.edgeStartMs != 0L ||
+                        _state.value.backfillPercent != null ||
+                        _state.value.pendingBackfillMs != 0L
+                    ) {
+                        _state.value = _state.value.copy(
+                            edgeBeforeStart = false,
+                            edgeStartMs = 0L,
+                            backfillPercent = null,
+                            pendingBackfillMs = 0L,
+                        )
+                    }
+                    continue
+                }
                 val gray = s.seekInGrayZone
                 val startMs = s.startMs
                 val bf = if (s.inBackfill.value) s.backfillPercent.value else null

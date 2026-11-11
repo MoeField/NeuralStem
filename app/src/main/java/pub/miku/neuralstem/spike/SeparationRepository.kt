@@ -611,7 +611,7 @@ class SeparationRepository(private val app: Application) {
                             vRw.close()
                             aRw.close()
                             if (!stillCurrent()) return@launchSeparation
-                            session.complete()
+                            session.complete(manifest.complete)
                             val audioMs = totalFrames.toLong() * 1000L /
                                 frameSource.sampleRate.coerceAtLeast(1)
                             _state.value = State.EdgeDone(
