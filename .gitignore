@@ -77,3 +77,14 @@ app/src/main/jniLibs/arm64-v8a/libavs3self.so
 app/src/main/cpp/**/libavs3self.so
 app/src/main/cpp/**/libneuralstem_avs3.so
 
+# ---- 内部资料：不随公开仓库发布 ----
+cleanroom/
+report/
+.idea/
+.artifacts_shot/
+HANDOFF.md
+implementation_plan.artifact.md
+keystore.properties
+*.jks
+*.keystore
+

@@ -1,0 +1,77 @@
+# 改动历史 / 里程碑（STEP_HISTORY）
+
+> 记录“改了什么、为什么、怎么验证”，方便后来人理解代码演进。这里不记录内部设备流水号或个人环境信息。
+
+## 阶段 1–3：播放器、波形、变速变调
+
+- **基础播放**：Media3/ExoPlayer 单实例，`PlayerViewModel` + `PlaybackService`，MediaSession 通知/锁屏。
+- **波形**：Compose Canvas 自绘，50 包络点/秒；拖动 seek，与采样率无关。
+- **变速变调**：先接 Media3 内置 Sonic（单轨）；速度/音高参数经 150ms 防抖下发，播放中实时生效。
+
+## 阶段 4–5：分离接入与多轨
+
+- **本地分离**：sherpa-onnx/ONNX Runtime + Spleeter/UVR 模型，CPU 推理；分离结果缓存为 WAV，避免重复推理。
+- **多轨播放**：真实声音迁移到 `PlaybackService` 内的 `StemMixer`（单 AudioTrack）；门面 ExoPlayer 静音，MediaSession 仍可用。
+- **多轨混音**：每轨音量/静音/独奏，`gainProvider` 实时相乘；退出多轨回原曲。
+- **边分离边播（Edge Separation）**：预分配整曲 WAV，分离线程顺序写、播放器读已写区间；Gate 根据分离进度暂停/恢复混音器。
+- **4 轨**：Spleeter 4-stem / Demucs，导出 4 个 stem + 原曲。
+
+## 阶段 M2/M3：模型、导航、架构统一
+
+- 模型库分组、速度档位（极快/临界/慢/很慢）按真机实测 RTF 自动分簇。
+- EQ 接入平台 `android.media.audiofx.Equalizer`，多段数随设备。
+- 导航壳（AppShell）与页面拆分；播放器/多轨/EQ 统一到 `PlaybackService`，避免前台/后台两套状态。
+
+## v0.2.5：高采样率、旋转/显示、边界状态
+
+- **192k/24bit OOM**：分离输入不再整首解码成 float 数组，改为流式解码到临时 WAV + 重采样 `ResamplingFrameSource`；192k 分离通过。
+- **旋转/横屏**：布局与页面状态在旋转后保持；播放器、分离、混音页联动修复。
+- **显示状态**：分离进度/完成态/自动切多轨的展示与状态机对齐；修复完成后仍显示“等待”的边界。
+- **缓存/任务隔离**：分离任务切换时旧任务取消并 join；缓存目录按 sourceHash+engine 隔离，校验 WAV 长度。
+
+## v0.2.6：状态机收口 + Sonic 多轨变速
+
+这次是“正确性收尾”，重点不是新功能，而是把播放/分离/队列/导出/SAF 的边界状态补齐。
+
+### 播放与媒体会话
+
+- 媒体键/通知/耳机键命令在 Service 侧同步到 mixer；修复“通知暂停只停了静音门面、真实声音还在放”。
+- 多轨时 AudioFocus 由 Service 持有；退出多轨时恢复单轨焦点行为。
+- `MixClock`：退出多轨/继续分离时用 mixer 实际位置，而不是门面 1× position。
+- Service extras 快照 + `PlayerViewModel` 恢复：Activity 重建后 currentUri/stems/speed/pitch/多轨状态不丢。
+- 自动化 intent 用 `rememberSaveable` consumed 标记，旋转/重建不重复 load。
+
+### 分离、缓存、导出
+
+- 分离任务 generation/cancel+join：取消后立刻重试不会出现旧任务回调覆盖新状态。
+- 缓存目录改为 `stems-cache/<hash>-<engine>-full`；读缓存前校验 manifest + WAV 实际长度。
+- 边分离灰区：seek 到分离起点之前明确提示“此段未参与本次分离（从 xx 起）”，不再无声。
+- 边分离起始帧/水位线从 manifest 恢复，续播/切回不从头。
+- 导出 owner 绑定：换曲/重新分离后旧结果不可导出；歌单页/分离页按钮状态一致。
+- 导出 MediaStore `IS_PENDING` 回滚；同名覆盖（先删旧行再写），不生成 `(1)`。
+
+### 歌单、队列、续播
+
+- 歌单持久化改为 tmp + `fsync` + rename；损坏 JSON 保留 `.corrupt-<ts>`，绝不覆盖成空。
+- `lastPlayedUri` 改为队列里的原始 uri（不再写 NCM/AVS3 内部临时 uri），冷启动/高亮正确。
+- 歌单删除/排序通知播放器队列：`moveQueue`/`removeFromQueue`，当前曲按 uri 重定位。
+- Activity/VM 重建后从歌单反查恢复 `currentListId` 与队列，重建后 next/prev 可用。
+- `loadAndPlay` 单曲导入默认清 `currentListId`/队列，避免把进度写进上一个歌单。
+
+### SAF / 容错
+
+- 播放失败的曲目保留在歌单并标记「⚠ 需重新授权」，不再自动删除；队列跳过继续。
+- 单曲/文件夹 `takePersistableUriPermission` 失败会提示；删除文件夹歌单释放 tree grant。
+
+### 测试与发布
+
+- JVM 单测扩到 369 条：Sonic 时钟/位置、重采样、MixClock、状态机队列、波形/缓存命名等。
+- 设备验收：2/4 轨分离与导出、多轨音量/静音/独奏、边分离灰区、旋转/后台、歌单 move/remove、坏曲标记、Activity 重建恢复。
+- 发布 v0.2.6：versionCode 26 / versionName 0.2.6；release 签名；三个 APK 均确认不含 `libAVS3AudioDec.so` / `libVMFPlatForm.so`；CI 单测 + release 构建通过。
+
+## 已知限制 / 后续可做
+
+- AVS3 参考实现不在仓库；本地可选接入，不能随 release 分发。
+- 真实来电焦点丢失只做了焦点请求/丢失逻辑的自动验证，没有真实通话环境。
+- 非 1× 后台长播的 MediaSession 生命周期只有短时测试。
+- release 暂未开 R8、仍保留 devtools 入口；后续如收紧需单独处理反射和可选 native 库。

@@ -207,7 +207,7 @@ unset ANDROID_PREFS_ROOT          # AGP 9.x 若同时设 ANDROID_USER_HOME 会�
 
 ### 发布签名
 
-正式签名配置见 [`doc/release_signing.md`](doc/release_signing.md)。
+正式签名配置见 [`docs/DEVELOP.md`](docs/DEVELOP.md) 的「发布」一节。
 CI 用 Repository Secrets（`KEYSTORE_BASE64` / `KEYSTORE_PASSWORD` / `KEY_ALIAS` / `KEY_PASSWORD`）
 自动注入；本地无密钥时自动回退 debug 签名。
 
@@ -218,22 +218,12 @@ CI 用 Repository Secrets（`KEYSTORE_BASE64` / `KEYSTORE_PASSWORD` / `KEY_ALIAS
 > `-x lintVital*` 是因为 lint 需要额外下载 `lint-gradle`，网络受限时会失败；
 > CI 上可以不加（runner 能访问 dl.google.com）。
 
-### 项目文档
+### 开发文档
 
-更详细的过程记录、踩坑、实测数据在 `doc/` 下。
-**新接手请先读 [`doc/冷启动入口.md`](doc/冷启动入口.md)**（5 分钟自包含）。
+- [`docs/DEVELOP.md`](docs/DEVELOP.md)：构建、架构、关键不变量、常见坑、测试与发布。
+- [`docs/STEP_HISTORY.md`](docs/STEP_HISTORY.md)：阶段/版本改动历史与验证方式。
 
-| 文档 | 内容 |
-|---|---|
-| [`doc/冷启动入口.md`](doc/冷启动入口.md) | 接手入口（现状 / 断点 / 环境） |
-| [`doc/.memory.md`](doc/.memory.md) | 过程笔记 + 全部实测数据 |
-| [`doc/.critical_steps.md`](doc/.critical_steps.md) | 70 条踩坑记录（改代码前必看） |
-| [`doc/model_speed_tiers.md`](doc/model_speed_tiers.md) | 19 个模型速度分级实测 |
-| [`doc/stem_order_evidence.md`](doc/stem_order_evidence.md) | 实验模型 stem 顺序 NCC 实证 |
-| [`doc/release_signing.md`](doc/release_signing.md) | 签名 / CI / 备份 |
-| [`doc/.todo.md`](doc/.todo.md) | 待办总账 |
-
-### 性能（BF00A 真机实测）
+### 性能（参考设备实测）
 
 | 项 | 结果 |
 |---|---|
