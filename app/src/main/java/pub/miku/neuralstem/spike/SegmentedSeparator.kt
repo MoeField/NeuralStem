@@ -130,7 +130,7 @@ class SegmentedSeparator(
         // ## 修法
         // 尾块过短就**并入前一块**（把前一块延长到曲尾），而不是单独成块。
         // 合并后只多算几百帧，代价远小于崩溃。
-        val plan2 = normalizeTail(plan, totalFrames)
+        val plan2 = normalizeTail(plan, to)
 
         Log.i(
             TAG,
@@ -340,7 +340,8 @@ class SegmentedSeparator(
      * 把**前一块延长到曲尾**（`len` 变大），而不是删除尾块 ——
      * 否则会丢掉最后那几百帧音频。
      */
-    private fun normalizeTail(plan: List<Plan>, totalFrames: Int): List<Plan> {
+    /** @param to 本轮实际结束帧（阶段 2 是 gap 的 to，不是曲尾）。 */
+    private fun normalizeTail(plan: List<Plan>, to: Int): List<Plan> {
         if (plan.isEmpty()) return plan
 
         // ★只有一块且它就很小（真机正是这种情况：chunks=1 lens=[312]）
@@ -351,21 +352,25 @@ class SegmentedSeparator(
         if (plan.size == 1) {
             val only = plan.first()
             if (only.len >= MIN_CHUNK_FRAMES) return plan
-            val newStart = (only.start + only.len - MIN_CHUNK_FRAMES)
+            var newStart = (only.start + only.len - MIN_CHUNK_FRAMES)
                 .coerceAtLeast(0)
-            // 仍不够（整首就短于 MIN）→ 只能报错，绝不送进去崩进程。
-            val newLen = totalFrames - newStart
+            // ★P2：只扩到本轮实际结束帧 to，绝不能扩到曲尾（阶段 2 补小缺口会重算整首）。
+            var newLen = to - newStart
+            if (newLen < MIN_CHUNK_FRAMES) {
+                newStart = (to - MIN_CHUNK_FRAMES).coerceAtLeast(0)
+                newLen = to - newStart
+            }
             if (newLen < MIN_CHUNK_FRAMES) {
                 throw IllegalArgumentException(
                     "单块只有 ${only.len} 帧（< MIN_CHUNK_FRAMES=$MIN_CHUNK_FRAMES）：" +
                         "sherpa 会因切不出频谱帧而 std::length_error 闪退。" +
-                        "start=${only.start} total=$totalFrames",
+                        "start=${only.start} to=$to",
                 )
             }
             Log.i(
                 TAG,
                 "normalizeTail: 单块只有 ${only.len} 帧（< $MIN_CHUNK_FRAMES）" +
-                    "→ 向前扩张 start=${only.start}→$newStart，len→$newLen",
+                    "→ 向前扩张 start=${only.start}→$newStart，len→$newLen（to=$to）",
             )
             return listOf(Plan(newStart, newLen, newLen - overlapFrames))
         }
@@ -373,9 +378,9 @@ class SegmentedSeparator(
         val last = plan.last()
         if (last.len >= MIN_CHUNK_FRAMES) return plan
 
-        // 多块：把最后两块合并（保留前一块的 start，长度延伸到曲尾）。
+        // 多块：把最后两块合并（保留前一块的 start，长度延伸到本轮结束帧）。
         val prev = plan[plan.size - 2]
-        val mergedLen = totalFrames - prev.start
+        val mergedLen = to - prev.start
         val merged = Plan(prev.start, mergedLen, mergedLen - overlapFrames)
         Log.i(
             TAG,

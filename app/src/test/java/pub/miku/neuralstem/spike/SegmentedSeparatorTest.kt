@@ -55,6 +55,7 @@ class SegmentedSeparatorTest {
         channels: Int,
         sampleRate: Int = 44_100,
         startFrame: Int = 0,
+        endFrame: Int = -1,
         overlap: Int = 4096,
         schedule: List<Int>? = null,
         chunkFrames: Int = 20_000,
@@ -79,6 +80,7 @@ class SegmentedSeparatorTest {
                 expectedAbs += frames
             },
             startFrame = startFrame,
+            endFrame = endFrame,
             overlapFrames = overlap,
             chunkSchedule = schedule,
             chunkFrames = chunkFrames,
@@ -239,6 +241,28 @@ class SegmentedSeparatorTest {
         rbV.close(); rbA.close()
 
         assertTrue("绝不该把 <512 帧的块送给分离器（否则真机闪退）", !sawTooSmall)
+    }
+
+    @Test
+    fun `endFrame 限制时尾块合并不会扩到曲尾`() {
+        val sr = 44_100
+        val to = sr * 4 + 312          // 末尾 312 帧小尾块
+        val frames = sr * 10           // 源曲远长于本轮 endFrame
+        val input = ramp(frames, 1)
+        val (stats, _, _) = runSeg(
+            input = input,
+            channels = 1,
+            startFrame = 0,
+            endFrame = to,
+            overlap = 4096,
+            schedule = listOf(sr * 4, sr * 8),
+        )
+        // 修复前 normalizeTail(plan,totalFrames) 会把尾块扩到整曲 10s；
+        // 现在必须以 endFrame=to 为界，最多到 to（允许重叠的少量尾部）。
+        assertTrue(
+            "本轮分离不应越过 endFrame：vocalsFrames=${stats.vocalsFrames} to=$to",
+            stats.vocalsFrames <= to.toLong(),
+        )
     }
 
     /**
