@@ -184,15 +184,21 @@ class PlaylistStore internal constructor(private val dir: File) {
 
     /** 记某歌单“最后播放的曲目 + 位置”(ms)。（播放器直接调用，不经 PlaylistViewModel。） */
     fun recordProgress(listId: String, trackUri: String?, positionMs: Long) {
-        val cur = load()
-        var changed = false
-        val next = cur.map {
-            if (it.id == listId && (it.lastPlayedUri != trackUri || it.lastPositionMs != positionMs)) {
-                changed = true
-                it.copy(lastPlayedUri = trackUri, lastPositionMs = positionMs)
-            } else it
+        // ★P1：load→modify→save 必须整体串行，否则 PlaylistViewModel 的整份快照
+        //   可以插在中间，把刚编辑的歌单/进度覆盖掉（save 内部的锁不够）。
+        synchronized(IO_LOCK) {
+            val cur = load()
+            var changed = false
+            val next = cur.map {
+                if (it.id == listId &&
+                    (it.lastPlayedUri != trackUri || it.lastPositionMs != positionMs)
+                ) {
+                    changed = true
+                    it.copy(lastPlayedUri = trackUri, lastPositionMs = positionMs)
+                } else it
+            }
+            if (changed) save(next)
         }
-        if (changed) save(next)
     }
 
     /**
@@ -201,20 +207,22 @@ class PlaylistStore internal constructor(private val dir: File) {
      * @return 是否发生了变更（供调用方决定是否刷新）。
      */
     fun removeTrackFromList(listId: String, trackUri: String): Boolean {
-        val cur = load()
-        var changed = false
-        val next = cur.map { p ->
-            if (p.id == listId && p.tracks.any { it.uri == trackUri }) {
-                changed = true
-                p.copy(
-                    tracks = p.tracks.filterNot { it.uri == trackUri },
-                    lastPlayedUri = if (p.lastPlayedUri == trackUri) null else p.lastPlayedUri,
-                    lastPositionMs = if (p.lastPlayedUri == trackUri) 0L else p.lastPositionMs,
-                )
-            } else p
+        synchronized(IO_LOCK) {
+            val cur = load()
+            var changed = false
+            val next = cur.map { p ->
+                if (p.id == listId && p.tracks.any { it.uri == trackUri }) {
+                    changed = true
+                    p.copy(
+                        tracks = p.tracks.filterNot { it.uri == trackUri },
+                        lastPlayedUri = if (p.lastPlayedUri == trackUri) null else p.lastPlayedUri,
+                        lastPositionMs = if (p.lastPlayedUri == trackUri) 0L else p.lastPositionMs,
+                    )
+                } else p
+            }
+            if (changed) save(next)
+            return changed
         }
-        if (changed) save(next)
-        return changed
     }
 
     fun save(list: List<Playlist>) {

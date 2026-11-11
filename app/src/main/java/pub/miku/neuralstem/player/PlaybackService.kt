@@ -59,6 +59,8 @@ class PlaybackService : MediaSessionService() {
 
     /** 主线程 handler（用于快照推送去抖）。 */
     private val handler = Handler(Looper.getMainLooper())
+    /** multi-track EQ 会话未就绪的延迟重试（退出/销毁时必须取消）。 */
+    private var eqRetry: Runnable? = null
 
     /**
      * ★2026-11-06：多轨变速变调参数缓存。
@@ -274,8 +276,21 @@ class PlaybackService : MediaSessionService() {
             requestSnapshotPush()
         } else {
             Log.w(TAG, "multi-track EQ: mixer session 尚未就绪，稍后重试")
-            handler.postDelayed({ attachMultiTrackEq(c) }, 200)
+            eqRetry?.let { handler.removeCallbacks(it) }
+            val retry = object : Runnable {
+                override fun run() {
+                    eqRetry = null
+                    if (inMultiTrack && multiTrack === c) attachMultiTrackEq(c)
+                }
+            }
+            eqRetry = retry
+            handler.postDelayed(retry, 200)
         }
+    }
+
+    private fun cancelEqRetry() {
+        eqRetry?.let { handler.removeCallbacks(it) }
+        eqRetry = null
     }
 
     /** EQ 状态 JSON（供 UI 渲染面板）。 */
@@ -566,6 +581,7 @@ class PlaybackService : MediaSessionService() {
         mtOriginalTitle = null
         exitMultiTrackFocus()
         handler.removeCallbacks(progressRunnable)   // ★停止 mix 进度推送
+        cancelEqRetry()
         // 混音器释放（它不再持有任何 ExoPlayer；singlePlayer 不受影响）
         multiTrack?.close()
         multiTrack = null
@@ -741,6 +757,8 @@ class PlaybackService : MediaSessionService() {
 
     override fun onDestroy() {
         Log.i(TAG, "service destroyed")
+        handler.removeCallbacksAndMessages(null)
+        eqRetry = null
         eqController.detachAll()   // M3-P3：EQ 随 Service 释放
         exitMultiTrackFocus()
         multiTrack?.close()

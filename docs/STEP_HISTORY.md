@@ -86,6 +86,22 @@
 - R8/资源压缩仍未开启；作为后续独立维护分支处理（注意反射与 native/JNI）。
 - 验证：release merged manifest/APK 无这三个组件；debug manifest 仍有；安装/启动正常。
 
+## 2026-11-11 逻辑审查修复（v0.2.8 后）
+
+三路只读审查（播放/分离/歌单）后修复的高优先级逻辑：
+
+- 播放：移除残留 `edgeSeekMs`（多轨 carry-over 不再污染下一次单曲 seek）；
+  多轨 LOOP_ONE 在 `mixEnded` 时用 `play()` 重启当前曲；`clearCurrent`
+  同时清队列/currentListId/lastSaved。
+- 分离：VM 重建时从活跃 repo 状态种子（Preparing/Running/Done），避免卡 Idle；
+  supersede 时旧任务的 Cancelled/Failed 写入按 generation 丢弃；
+  边分离取消发生在解码阶段时关闭 writer/abort，避免 phantom session；
+  导出/清缓存移到 IO 线程。
+- 歌单：删除当前曲后立即切到新的 current 或清空；播放队列所属歌单通过
+  `currentListIdFlow` 同步到歌单选中态；`recordProgress` 的
+  load-modify-save 整体加锁；one-shot 自动分离/模型库 token 在离开目标页时清零；
+  切换 tab 在旋转后保留。
+
 ## 已知限制 / 后续可做
 
 - AVS3 参考实现不在仓库；本地可选接入，不能随 release 分发。

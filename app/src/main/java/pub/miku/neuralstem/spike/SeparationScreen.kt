@@ -38,8 +38,10 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import pub.miku.neuralstem.R
 import pub.miku.neuralstem.devtools.EdgeProbe
 import pub.miku.neuralstem.export.StemExporter
@@ -679,16 +681,24 @@ fun SeparationScreen(
             // ★⑬：导出——常在位；有 4 轨**或 2 轨**结果时可用（否则禁用置灰）。
             Button(
                 onClick = {
-                    exportableFiles?.let {
-                        exportMsg = StemExporter.export(app, fileName.ifBlank { "song" }, it)
+                    exportableFiles?.let { files ->
+                        val song = fileName.ifBlank { "song" }
+                        scope.launch(Dispatchers.IO) {
+                            val msg = StemExporter.export(app, song, files)
+                            withContext(Dispatchers.Main) { exportMsg = msg }
+                        }
                     }
                 },
                 enabled = exportableFiles != null,
             ) { Text(stringResource(R.string.sep_export)) }
             Button(onClick = {
-                val n = vm.clearCache()
-                cacheMsg = if (n < 0) app.getString(R.string.sep_cache_busy)
-                else app.getString(R.string.sep_cache_cleared, n)
+                scope.launch(Dispatchers.IO) {
+                    val n = vm.clearCache()
+                    withContext(Dispatchers.Main) {
+                        cacheMsg = if (n < 0) app.getString(R.string.sep_cache_busy)
+                        else app.getString(R.string.sep_cache_cleared, n)
+                    }
+                }
             }) { Text(stringResource(R.string.sep_clear_cache)) }
             cacheMsg?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
         }

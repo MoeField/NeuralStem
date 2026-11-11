@@ -166,6 +166,58 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
         // ★3a-2：常驻订阅 repo → 驱动状态机（不再只在“开始时订阅”）。
         //   否则：页面重入 / VM 重建时 SM 停在 Idle，即使 repo 正在跑/已完成。
         subscribeRepo()
+        // ★B9：Activity/VM 重建时，进程级 repo 可能仍在 Preparing/Running。
+        //   v0.2.8 的显式 begin 门禁会拒绝这些“迟到”的 repo 事件 → UI 卡 Idle。
+        //   这里在首次订阅后把**当前活跃任务**种入状态机；取消/切换后的迟到事件仍由门禁挡住。
+        viewModelScope.launch {
+            when (val s = repo.state.value) {
+                is SeparationRepository.State.Preparing -> {
+                    session.beginSeparation()
+                    session.onSeparationPreparing(toPrepPhase(s.phase))
+                    pushSeparationTask()
+                    Log.i(TAG, "B9 restore separation: preparing=${s.phase}")
+                }
+                is SeparationRepository.State.Running -> {
+                    session.beginSeparation()
+                    session.startSeparation()
+                    session.onSeparationProgress(s.percent)
+                    pushSeparationTask()
+                    Log.i(TAG, "B9 restore separation: running=${s.percent}%")
+                }
+                is SeparationRepository.State.Done -> {
+                    // 任务在 Activity 死亡期间完成：把完成态种回去，UI 消费后仍能自动切轨/导出。
+                    session.beginSeparation()
+                    session.onSeparationDone(
+                        SeparationTask.Done2(
+                            vocalsFile = s.vocalsFile,
+                            accompanimentFile = s.accompanimentFile,
+                            modelLoadMs = s.modelLoadMs,
+                            inferTimeMs = s.inferTimeMs,
+                            peakPssMb = s.peakPssMb,
+                            audioDurationMs = s.audioDurationMs,
+                            fromCache = s.fromCache,
+                        ),
+                    )
+                    pushSeparationTask()
+                    Log.i(TAG, "B9 restore separation: done2")
+                }
+                is SeparationRepository.State.Done4 -> {
+                    session.beginSeparation()
+                    session.onSeparationDone(
+                        SeparationTask.Done4(
+                            stemFiles = s.stemFiles,
+                            inferTimeMs = s.inferTimeMs,
+                            peakPssMb = s.peakPssMb,
+                            audioDurationMs = s.audioDurationMs,
+                            fromCache = s.fromCache,
+                        ),
+                    )
+                    pushSeparationTask()
+                    Log.i(TAG, "B9 restore separation: done4")
+                }
+                else -> Unit
+            }
+        }
         // ★2026-11-06 诊断：分离期间每秒把「实际状态」落文件（vivo 吞 logcat 时取证用）。
         //   与分离页的「显示状态」日志（SepUI）对照，验证 UI 是否如实反映工作进度。
         //   仅 debug：release 不跑这个 1s 轮询。
@@ -405,6 +457,15 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
      * 不订阅,导致缓存命中/完成时 UI 停在「分离中 0%」。
      * 现改为「一次性订阅到终态」,按钮路径与自动路径共用。
      */
+    /** repo 准备子阶段 → 状态机阶段。 */
+    private fun toPrepPhase(p: SeparationRepository.State.PrepPhase): SeparationTask.PrepPhase =
+        when (p) {
+            SeparationRepository.State.PrepPhase.START -> SeparationTask.PrepPhase.START
+            SeparationRepository.State.PrepPhase.DECODING -> SeparationTask.PrepPhase.DECODING
+            SeparationRepository.State.PrepPhase.LOADING_MODEL -> SeparationTask.PrepPhase.LOADING_MODEL
+            SeparationRepository.State.PrepPhase.MODEL_READY -> SeparationTask.PrepPhase.MODEL_READY
+        }
+
     private fun subscribeRepo() {
         if (repoSubscription != null) return
         repoSubscription = viewModelScope.launch {

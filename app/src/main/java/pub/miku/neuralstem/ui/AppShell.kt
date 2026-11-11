@@ -96,12 +96,18 @@ fun AppShell(
     snackbarHostState: SnackbarHostState = remember { SnackbarHostState() },
     initial: AppDestination = AppDestination.PLAYER,
 ) {
-    var current by remember { mutableStateOf(initial) }
+    var current by rememberSaveable { mutableStateOf(initial) }
     // ★G-3ux：用户在播放页点开分离开关但**无缓存** → 跳分离页时**自动开始分离**，
     //   不用用户再手动点一次「快速」。传一个递增的 token 而非布尔（可重复触发）。
     var autoStartSeparate by remember { mutableStateOf(0) }
     // ★分离页“无可用模型 → 去模型库”：递增 token，既跳设置页又直接打开模型库。
     var openModelLibToken by remember { mutableStateOf(0) }
+    // ★P1：one-shot token 的生命周期只到“离开目标页”；否则 SeparationScreen/SettingsScreen
+    //   重新进入组合时会拿旧 token 再次触发自动分离/自动开模型库。
+    LaunchedEffect(current) {
+        if (current != AppDestination.SEPARATE) autoStartSeparate = 0
+        if (current != AppDestination.SETTINGS) openModelLibToken = 0
+    }
     // ★⑭b：用于“分离完成但已切歌”→ snackbar 提示。
     val scope = rememberCoroutineScope()
     // 歌单 VM（供歌单页显示 + 点曲时解析 uri）
@@ -115,6 +121,12 @@ fun AppShell(
     val selectedListId by playlistVm.selectedListId.collectAsState()
     val selectedList = playlistLists.firstOrNull { it.id == selectedListId }
     val importEnabled = selectedList?.type == PlaylistStore.ListType.FILE
+    // ★B9：播放队列所属歌单（PlayerViewModel 单一真源）→ 同步歌单页选中态，
+    //   避免“展开 B 点歌播放，但选中/导入仍指向 A”的分叉。
+    val playerListId by playerVm.currentListIdFlow.collectAsState()
+    LaunchedEffect(playerListId) {
+        if (playerListId != null) playlistVm.selectList(playerListId!!)
+    }
 
     // ★⑨④：横屏时隐藏 App 顶部标题栏（太占地方）；竖屏保留。
     val isLandscape =
@@ -482,6 +494,7 @@ fun AppShell(
                 vm = playlistVm,
                 // ★R-a：点曲 → **以整个歌单为队列**、从该下标开始播（传 listId 供 T-5 进度记忆）。
                 onPlayTrack = { listId, idx ->
+                    playlistVm.selectList(listId)
                     playlistVm.listById(listId)?.tracks?.let { tracks ->
                         playerVm.playQueue(tracks.map { Uri.parse(it.uri) to it.title }, idx, listId)
                         current = AppDestination.PLAYER
@@ -489,6 +502,7 @@ fun AppShell(
                 },
                 // 选中歌单（点卡片头）→ 空歌单则清播放器（R4）；否则从“上次/首曲”开始播队列
                 onSelectPlaylist = { listId ->
+                    playlistVm.selectList(listId)
                     val tracks = playlistVm.listById(listId)?.tracks
                     if (tracks.isNullOrEmpty()) {
                         // ★R4：选中的歌单没曲 → 播放器清空 + 提示导入

@@ -309,8 +309,16 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
 
     // ============================ ★T-5：进度记忆（歌单“回到上次位置继续播”）============================
     /** 当前队列所属歌单 id（null = 非歌单来源，如单曲导入 → 不记进度）。playQueue 设置。 */
-    @Volatile
-    private var currentListId: String? = null
+    private val _currentListId = MutableStateFlow<String?>(null)
+
+    /** 供 UI 同步“播放队列所属歌单”；null = 非队列/单曲。 */
+    val currentListIdFlow: StateFlow<String?> = _currentListId.asStateFlow()
+
+    private var currentListId: String?
+        get() = _currentListId.value
+        set(value) {
+            _currentListId.value = value
+        }
     /** 上次落库的时间戳（单调时钟）+ 曲目 uri，用于**节流写盘**。 */
     @Volatile
     private var lastSavedAtMs: Long = 0L
@@ -1434,11 +1442,24 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     fun currentQueueTrackUriOrNull(): String? =
         (session.queue as? QueueState.Active)?.current?.uri
 
-    /** ★B5：歌单删除一首 → 若正是当前队列，同步（当前曲由 removeFromQueue 维持合理）。 */
+    /** ★B5：歌单删除一首 → 若正是当前队列，同步。 */
     fun onPlaylistTrackRemoved(listId: String, uri: String) {
         if (currentListId != listId) return
+        val wasCurrent = currentQueueTrackUriOrNull() == uri
         session.removeFromQueue(uri)
-        Log.i(TAG, "B5 queue remove: $uri (list=$listId, queue=${session.queue})")
+        Log.i(TAG, "B5 queue remove: $uri (list=$listId, current=$wasCurrent, queue=${session.queue})")
+        if (wasCurrent) {
+            // 删掉的正是正在播的曲：音频还停在已删除条目上，队列 current 已变成下一条。
+            // 与 T-6 一致，立刻切到新的 current；队列空则彻底清空。
+            val cur = (session.queue as? QueueState.Active)?.current
+            if (cur != null) {
+                Log.i(TAG, "B5 removed current → load ${cur.title}")
+                loadCurrentQueueTrack()
+            } else {
+                Log.i(TAG, "B5 removed current → queue empty, clearCurrent")
+                clearCurrent()
+            }
+        }
     }
 
     /** ★B5：歌单排序 → 同步队列顺序，保持当前曲不变。 */

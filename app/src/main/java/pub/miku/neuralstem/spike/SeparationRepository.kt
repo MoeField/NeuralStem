@@ -201,9 +201,9 @@ class SeparationRepository(private val app: Application) {
         }
         // ★G-4：升前台（分离窗口跑在 dataSync 前台服务里，避免后台被 /background cgroup 降频 ~2×）。
         SeparationService.start(app)
-        job = launchSeparation { _ ->
+        job = launchSeparation { myGen ->
             try {
-                _state.value = State.Preparing(State.PrepPhase.START)
+                if (generation.get() == myGen) _state.value = State.Preparing(State.PrepPhase.START)
 
                 val engineTag = engineLabel(engine, uvrModelName)
                 // ★B4：普通完整分离用独立目录（-full），不与边播的 -spleeter 共用。
@@ -216,20 +216,20 @@ class SeparationRepository(private val app: Application) {
                 val cached = readCache(outDir)
                 if (cached != null) {
                     Log.i(TAG, "cache HIT: ${outDir.absolutePath}")
-                    _state.value = cached
+                    if (generation.get() == myGen) _state.value = cached
                     return@launchSeparation
                 }
 
                 val result = separate(source, engine, uvrModelName, chunkOverrideFrames, outDir)
                 writeCacheManifest(outDir, result)
-                _state.value = result
+                if (generation.get() == myGen) _state.value = result
             } catch (ce: CancellationException) {
                 Log.i(TAG, "separation cancelled")
-                _state.value = State.Cancelled
+                if (generation.get() == myGen) _state.value = State.Cancelled
                 throw ce
             } catch (t: Throwable) {
                 Log.e(TAG, "separation failed", t)
-                _state.value = State.Failed("分离失败: ${t.message}", t)
+                if (generation.get() == myGen) _state.value = State.Failed("分离失败: ${t.message}", t)
             }
         }
     }
@@ -335,6 +335,14 @@ class SeparationRepository(private val app: Application) {
                         frameSource.totalFrames, reuseExisting = resumable,
                     )
 
+                    // ★P1：cancel 可能发生在不可中断的解码期间；进入会话前必须再确认，
+                    //   否则会在取消后仍 beginFiles（Gate 卡 Buffering）并泄漏 writer。
+                    if (!stillCurrent()) {
+                        vRw.close()
+                        aRw.close()
+                        return@launchSeparation
+                    }
+
                     // 会话进入文件模式（播放器据此读文件 + 看水位线）。
                     session.beginFiles(
                         startFrame = startFrame,
@@ -368,7 +376,12 @@ class SeparationRepository(private val app: Application) {
                     //   为何要这一个提前返回：否则会白跑一遍完整分离（18 秒 CPU），
                     //   而且如果没有 reuseExisting 就会把数据抹掉。
                     if (alreadyComplete) {
-                        if (!stillCurrent()) return@launchSeparation
+                        if (!stillCurrent()) {
+                            vRw.close()
+                            aRw.close()
+                            session.abort()
+                            return@launchSeparation
+                        }
                         vRw.close(); aRw.close()
                         session.complete()
                         // 让 Gate 直接进 Playable，AppShell 会立即切多轨。
@@ -687,28 +700,28 @@ class SeparationRepository(private val app: Application) {
             Log.i(TAG, "start4: cancelling running job (concurrent request wins)")
         }
         SeparationService.start(app)   // ★G-4 升前台
-        job = launchSeparation { _ ->
+        job = launchSeparation { myGen ->
             try {
-                _state.value = State.Preparing(State.PrepPhase.START)
+                if (generation.get() == myGen) _state.value = State.Preparing(State.PrepPhase.START)
                 val dir = modelDir ?: File(app.filesDir, "spleeter4")
                 val outDir = File(app.filesDir, "stems-cache/${contentHash(source)}-spleeter4")
 
                 readCache4(outDir)?.let {
                     Log.i(TAG, "cache HIT (4-stem): ${outDir.absolutePath}")
-                    _state.value = it
+                    if (generation.get() == myGen) _state.value = it
                     return@launchSeparation
                 }
 
                 val result = separate4(source, dir, outDir)
                 writeCacheManifest4(outDir, result)
-                _state.value = result
+                if (generation.get() == myGen) _state.value = result
             } catch (ce: CancellationException) {
                 Log.i(TAG, "4-stem separation cancelled")
-                _state.value = State.Cancelled
+                if (generation.get() == myGen) _state.value = State.Cancelled
                 throw ce
             } catch (t: Throwable) {
                 Log.e(TAG, "4-stem separation failed", t)
-                _state.value = State.Failed("4-stem 分离失败: ${t.message}", t)
+                if (generation.get() == myGen) _state.value = State.Failed("4-stem 分离失败: ${t.message}", t)
             }
         }
     }
@@ -805,27 +818,27 @@ class SeparationRepository(private val app: Application) {
     fun startDemucs(source: File, modelFile: File? = null, threads: Int = DEMUCS_THREADS, useNnapi: Boolean = false) {
         if (job?.isActive == true) Log.i(TAG, "startDemucs: cancelling running job")
         SeparationService.start(app)   // ★G-4 升前台
-        job = launchSeparation { _ ->
+        job = launchSeparation { myGen ->
             try {
-                _state.value = State.Preparing(State.PrepPhase.START)
+                if (generation.get() == myGen) _state.value = State.Preparing(State.PrepPhase.START)
                 val mdl = modelFile ?: File(app.filesDir, "demucs/htdemucs_embedded.onnx")
                 val outDir = File(app.filesDir, "stems-cache/${contentHash(source)}-demucs")
 
                 readCacheDemucs(outDir)?.let {
                     Log.i(TAG, "cache HIT (demucs): ${outDir.absolutePath}")
-                    _state.value = it
+                    if (generation.get() == myGen) _state.value = it
                     return@launchSeparation
                 }
                 val result = separateDemucs(source, mdl, outDir, threads, useNnapi)
                 writeCacheManifest4(outDir, result)
-                _state.value = result
+                if (generation.get() == myGen) _state.value = result
             } catch (ce: CancellationException) {
                 Log.i(TAG, "demucs separation cancelled")
-                _state.value = State.Cancelled
+                if (generation.get() == myGen) _state.value = State.Cancelled
                 throw ce
             } catch (t: Throwable) {
                 Log.e(TAG, "demucs separation failed", t)
-                _state.value = State.Failed("Demucs 分离失败: ${t.message}", t)
+                if (generation.get() == myGen) _state.value = State.Failed("Demucs 分离失败: ${t.message}", t)
             }
         }
     }
