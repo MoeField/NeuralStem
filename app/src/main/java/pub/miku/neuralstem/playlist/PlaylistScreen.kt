@@ -89,7 +89,6 @@ fun PlaylistScreen(
     val selectedListId by vm.selectedListId.collectAsState()
     val selectedIsFolder = lists.firstOrNull { it.id == selectedListId }?.type ==
         PlaylistStore.ListType.FOLDER
-    val scope = rememberCoroutineScope()
     val context = LocalContext.current
     // ★ 进入歌单页 / 当前曲目变化时**重新加载**：歌单可能被播放器侧（导入等）改过，
     //   而本 VM 的 _lists 是内存缓存 → 否则数量/曲目显示陈旧。
@@ -133,9 +132,7 @@ fun PlaylistScreen(
                 Toast.LENGTH_LONG,
             ).show()
         }
-        scope.launch {
-            vm.importFiles(uris, intoListId = selectedListId)
-        }
+        vm.importFilesAsync(uris, intoListId = selectedListId)
     }
 
     val pickFolder = rememberLauncherForActivityResult(
@@ -165,10 +162,8 @@ fun PlaylistScreen(
                     Toast.LENGTH_LONG,
                 ).show()
             }
-            scope.launch {
-                // ★ 选文件夹导入 = **总是新建一个文件夹歌单**
-                vm.importFolder(uri, intoListId = null)
-            }
+            // ★ 选文件夹导入 = **总是新建一个文件夹歌单**
+            vm.importFolderAsync(uri, intoListId = null)
         }
     }
 
@@ -389,7 +384,7 @@ fun PlaylistScreen(
                             }
 
                             if (p.folderUri != null) {
-                                TextButton(onClick = { scope.launch { vm.rescanFolder(p.id) } }) {
+                                TextButton(onClick = { vm.rescanFolderAsync(p.id) }) {
                                     Text(stringResource(R.string.pl_rescan))
                                 }
                             }

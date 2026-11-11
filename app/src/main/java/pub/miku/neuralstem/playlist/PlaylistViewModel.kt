@@ -7,7 +7,9 @@ import android.net.Uri
 import android.util.Log
 import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -222,6 +224,19 @@ class PlaylistViewModel(app: Application) : AndroidViewModel(app) {
      * 把 SAF Tree URI（文件夹）作为**文件夹歌单**导入：**递归扫描音频**。
      * 若 [intoListId] 为 null 则新建一个以文件夹名为名的歌单。
      */
+    /** ★P2：导入放到 VM scope，切 tab/离开歌单页不会取消长扫描。 */
+    fun importFilesAsync(uris: List<Uri>, intoListId: String? = null) {
+        viewModelScope.launch { importFiles(uris, intoListId) }
+    }
+
+    fun importFolderAsync(treeUri: Uri, intoListId: String? = null) {
+        viewModelScope.launch { importFolder(treeUri, intoListId) }
+    }
+
+    fun rescanFolderAsync(listId: String) {
+        viewModelScope.launch { rescanFolder(listId) }
+    }
+
     suspend fun importFolder(treeUri: Uri, intoListId: String? = null) {
         val ctx = getApplication<Application>()
         // ★诊断：确认能从 tree uri 拿到目录（拿不到通常是没授权）
