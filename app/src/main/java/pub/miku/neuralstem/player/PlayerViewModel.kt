@@ -268,14 +268,6 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     @Volatile private var mixEndedHandled = false
 
     /**
-     * ★G-3：边分离边播切轨后要恢复的位置（ms）。
-     * 独立于 [pendingSeekMs]，因为切轨会触发 `onMediaItemTransition`（它会清 pendingSeekMs），
-     * 本字段跨该回调保留，在播放器 READY 时消费（→ seek 到 T）。
-     */
-    @Volatile
-    private var edgeSeekMs: Long? = null
-
-    /**
      * ★闸门（2026-10-20）：边播闸门的本地镜像。
      *
      * ## 为何 VM 自己存一份
@@ -635,29 +627,6 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                         _brokenTracks.value = _brokenTracks.value - okUri
                     }
                 }
-                // ★G-3：边分离边播切轨后，READY 时 seek 到 carry-over 位置并开始播放。
-                //
-                // ★2026-11-01 修正：**多轨时不能在这里 seek**。
-                //   `p` 是 mediaController = singlePlayer = **只是主轨**；
-                //   在这里 seek 会把人声移动到 T，而伴奏跟随轨仍留在 0 → 错位几秒。
-                //   现由 Service 的 `playWhenAllReady(anchor)` 对**所有轨**统一下发。
-                if (playbackState == Player.STATE_READY) {
-                    val edge = edgeSeekMs
-                    if (edge != null) {
-                        edgeSeekMs = null
-                        pendingSeekMs = edge
-                        lastShownMs = edge
-                        _progress.value = _progress.value.copy(positionMs = edge)
-                        if (!isMultiTrackLoaded) {
-                            p.seekTo(edge)
-                            p.play()
-                            Log.i(TAG, "G-3: edge READY → seek ${edge}ms + play")
-                        } else {
-                            // 多轨：Service 已按 KEY_START_MS 对齐所有轨，这里只同步 UI
-                            Log.i(TAG, "G-3: 多轨 READY → 位置交给 Service 对齐（${edge}ms）")
-                        }
-                    }
-                }
                 // ★T-5：READY 后消费待恢复的续播位置（此处 seek 才有效；prepare 后立即 seek 会被丢弃）。
                 if (playbackState == Player.STATE_READY) {
                     val resume = pendingResumeMs
@@ -705,8 +674,8 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                 // ★R3：切歌清理：波形/封面重提取；进度/锚点重置（避免旧状态残留）。
                 lastShownMs = -1L
-                // ★G-3：边分离边播切轨：不要清 pendingSeekMs（承载 carry-over 位置）。
-                if (edgeSeekMs == null) pendingSeekMs = null
+                // 切换 media item（单曲/新歌）时清掉旧位置。
+                pendingSeekMs = null
                 _progress.value = Progress(0L, _progress.value.durationMs)
                 _anchor.value = null
                 // ★P2：多轨载入时，Service 会给主轨 setMediaItem(vocals) → 本回调触发。
@@ -1028,8 +997,15 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                     //   会白等半首歌。Service 每 200ms 把 mixEnded 推来，这里触发队列前进。
                     if (isMultiTrackLoaded && mixEnded && !mixEndedHandled) {
                         mixEndedHandled = true
-                        Log.i(TAG, "mix ended → autoAdvanceOnEnded（不再等门面 STATE_ENDED）")
-                        autoAdvanceOnEnded()
+                        if (_state.value.repeatMode == SettingsRepository.RepeatMode.LOOP_ONE) {
+                            // ★单曲循环：多轨的真实终点在 mixer，media3 的 REPEAT_MODE_ONE
+                            //   只循环静音门面，必须自己重启 mixer。
+                            Log.i(TAG, "mix ended → LOOP_ONE 重启当前曲")
+                            play()
+                        } else {
+                            Log.i(TAG, "mix ended → autoAdvanceOnEnded（不再等门面 STATE_ENDED）")
+                            autoAdvanceOnEnded()
+                        }
                     }
                     // ★T-5：进度记忆——**节流落库**（每 ≥PROGRESS_SAVE_INTERVAL_MS 或曲目变化）。
                     //   仅在队列来自歌单（currentListId!=null）且有当前曲时记。
@@ -1507,9 +1483,9 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         loadAndPlay(Uri.parse(cur.uri), cur.title, clearQueue = false)
     }
 
-    /** 自动下一首（曲目自然播完时由 STATE_ENDED 触发）。 */
+    /** 自动下一首（单轨 STATE_ENDED / 多轨 mixEnded，且非 LOOP_ONE 时）。 */
     private fun autoAdvanceOnEnded() {
-        // 单曲循环由 media3 自处理（REPEAT_MODE_ONE，不会 STATE_ENDED）——通常不会进这里。
+        // 单曲循环：单轨由 media3 REPEAT_MODE_ONE 处理；多轨在 mixEnded 分支单独走 play()。
         if (session.queue is QueueState.Active) {
             playNext()
         }
@@ -1853,7 +1829,8 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         // ★G-3fix：优先带位置的多轨载入（edge 完成后切文件播放入口）；
         //   seek 在 READY 时消费（prepare 后立即 seek 会被丢弃）。
         if (startPositionMs > 0L) {
-            edgeSeekMs = startPositionMs
+            // Service 已按 KEY_START_MS 对齐混音器；静音门面不再做 edge seek，
+            // 否则这个位置会残留到下一次单曲 load 的 READY。
             pendingSeekMs = startPositionMs
         }
         // ★R-b：记住本次 stems（供分离开关“关→再开”恢复）；并标记可用。
@@ -1936,8 +1913,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         // 变速变调由 Service 在 CMD_LOAD_STREAM 时传给 StemMixer（不写门面，理由同上）。
         mixEnded = false
         mixEndedHandled = false
-        // 位置 carry-over：用 edgeSeekMs（跨 onMediaItemTransition 保留），在 READY 消费。
-        edgeSeekMs = startPositionMs
+        // 位置 carry-over 由 Service 按 KEY_START_MS 对齐；门面只保留 UI 位置。
         pendingSeekMs = startPositionMs
         Log.i(TAG, "loadEdgeMultiTrack → Service: streaming stems, seek→${startPositionMs}ms")
         // playWhenReady=true：多轨下 onPlayWhenReadyChanged 不更新 UI（由主轨驱动），
@@ -2178,6 +2154,12 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         val p = mediaController
         p?.stop()
         p?.clearMediaItems()
+        // ★清空当前曲/歌单：队列与 currentListId 必须一起清，否则 next 会播已删除曲，
+        //   且进度轮询会把旧队列 uri 的进度写成 0，覆盖该歌单的续播点。
+        currentListId = null
+        lastSavedUri = null
+        lastSavedAtMs = 0L
+        session.clearQueue()
         originalUri = null
         originalName = ""
         lastStems = null
