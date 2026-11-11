@@ -69,6 +69,16 @@
 - 设备验收：2/4 轨分离与导出、多轨音量/静音/独奏、边分离灰区、旋转/后台、歌单 move/remove、坏曲标记、Activity 重建恢复。
 - 发布 v0.2.6：versionCode 26 / versionName 0.2.6；release 签名；三个 APK 均确认不含 `libAVS3AudioDec.so` / `libVMFPlatForm.so`；CI 单测 + release 构建通过。
 
+## v0.2.7：分离任务状态收口
+
+- 修复「取消当前分离 → 切歌 → 再点分离/取消」后仍显示上一首分离进度的问题。
+- 状态机新增 `beginSeparation()`（只有用户显式开始才能从 Idle/Cancelled/Failed 进入 Preparing），
+  `onSeparationPreparing()` 只更新阶段，`startSeparation()` 只允许 Preparing→Running，
+  Done/Failed/EdgeDone 只接受当前任务；新增 `resetSeparation()` 供切歌清理。
+- `SpikeViewModel` 所有开始入口统一走 `beginSeparation()`；collector 只有在 Preparing 时才进入 Running；
+  换歌 reset 分离任务态；`SeparationRepository.cancel()` 立即写 Cancelled。
+- JVM 单测 372/0（新增取消后迟到事件、切歌 reset、Idle start 不产生 Running 三条）。
+
 ## 已知限制 / 后续可做
 
 - AVS3 参考实现不在仓库；本地可选接入，不能随 release 分发。
