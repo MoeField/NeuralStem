@@ -124,6 +124,14 @@
 - 歌单内容变化同步播放队列；长导入移入 VM scope
 - 多轨中再次边分离允许切到新结果；流式 seek 按整曲时长 clamp
 
+## v0.2.11：edge 缓存快路径 + 音频线程收口
+
+- edge 完整缓存命中只读 manifest + WAV 头，不再先解码整首源；真机 sep_probe
+  命中耗时 ~58ms（01:22:40.043 → .101），直接进入文件模式播放。
+- StemMixer 增加线程代际；stopThread join 超时后保留旧线程引用，play 不再启动
+  第二个 writer，旧线程卡在 AudioTrack.write 也不会复活。
+- 真机验证：缓存命中自动切多轨、StemMixer heartbeat 推进正常。
+
 ## 已知限制 / 后续可做
 
 - AVS3 参考实现不在仓库；本地可选接入，不能随 release 分发。
