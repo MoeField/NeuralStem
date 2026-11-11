@@ -102,6 +102,19 @@
   load-modify-save 整体加锁；one-shot 自动分离/模型库 token 在离开目标页时清零；
   切换 tab 在旋转后保留。
 
+## v0.2.9：逻辑审查修复
+
+- 播放：移除残留 `edgeSeekMs`；多轨 LOOP_ONE 在 `mixEnded` 时重启当前曲；
+  `clearCurrent` 清队列/currentListId/lastSaved；Service 进度/EQ retry 清理。
+- 分离：VM 重建从活跃 repo 状态种子（Preparing/Running/Done）；
+  supersede 旧任务终态按 generation 丢弃；边分离解码阶段取消关闭 writer/abort；
+  导出/清缓存移出主线程；补齐进度 Running→Preparing 可见；edge 仅 Spleeter。
+- 歌单：删除当前曲后立即切新 current；`currentListIdFlow` 同步选中态；
+  `recordProgress`/`removeTrackFromList` 的 load-modify-save 整体加锁；
+  损坏 JSON 备份去重/限量；文件夹歌单禁止导入单曲；SAF tree 共享 grant 引用计数；
+  one-shot token 离开页面清零；旋转保留 tab/展开/设置子页。
+- JVM 373/0；release 构建通过。
+
 ## 已知限制 / 后续可做
 
 - AVS3 参考实现不在仓库；本地可选接入，不能随 release 分发。
