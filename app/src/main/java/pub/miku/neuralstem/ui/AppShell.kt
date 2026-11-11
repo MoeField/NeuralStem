@@ -248,13 +248,9 @@ fun AppShell(
             return@LaunchedEffect
         }
 
-        // ★2026-11-06：旋转/重建后若**已经在播这次分离的结果**，绝不能再切一次。
-        //   rememberSaveable 已覆盖大部分场景；这里是第二道闸（状态来自 VM/Service）。
-        if (ready && !edgeSwitched && playerState.isMultiTrack && playerState.separationOn) {
-            switchedSessionKey = sessionKey
-            Log.i("AppShell", "edge gate=$gate 但已在多轨（重建/旋转）→ 跳过重复切轨")
-            return@LaunchedEffect
-        }
+        // ★P2：不能只凭“已在多轨”跳过——那会把**新一次边分离**的结果也丢掉。
+        //   旋转/重建由上面的 switchedSessionKey（rememberSaveable）去重；
+        //   这里只有在同一个 sessionKey 已切过时才跳过（由 edgeSwitched 判）。
 
         if (ready && !edgeSwitched) {
             switchedSessionKey = sessionKey
