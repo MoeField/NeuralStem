@@ -79,6 +79,13 @@
   换歌 reset 分离任务态；`SeparationRepository.cancel()` 立即写 Cancelled。
 - JVM 单测 372/0（新增取消后迟到事件、切歌 reset、Idle start 不产生 Running 三条）。
 
+## v0.2.8：release 调试入口清理
+
+- `SpikeActivity` / `TestCommandService` / `TestPanelActivity` 从 `src/main` 移到
+  `src/debug/AndroidManifest.xml`；release 不再导出这三个组件，debug 构建仍保留。
+- R8/资源压缩仍未开启；作为后续独立维护分支处理（注意反射与 native/JNI）。
+- 验证：release merged manifest/APK 无这三个组件；debug manifest 仍有；安装/启动正常。
+
 ## 已知限制 / 后续可做
 
 - AVS3 参考实现不在仓库；本地可选接入，不能随 release 分发。
