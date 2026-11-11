@@ -240,7 +240,8 @@ fun SeparationScreen(
             }
             Log.i("SepScreen", "startOption: ${opt.id} (${opt.displayName})")
             // ★G-3：边分离边播（仅 2-stem + 极快簇 + 开关开）→ 从当前位置起。
-            val useEdge = settingsRepo.edgeSeparationEnabled && isTwoFast
+            val useEdge = settingsRepo.edgeSeparationEnabled && isTwoFast &&
+                opt.spec.engine == SherpaSourceSeparation.MODE_SPLEETER
             if (useEdge) {
                 val posMs = currentPositionMs()
                 Log.i("SepScreen", "startOption: EDGE from=${posMs}ms")

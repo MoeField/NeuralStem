@@ -377,9 +377,12 @@ class SessionStateMachine(private val effects: Effects) {
         separation = SeparationTask.Preparing(SeparationTask.PrepPhase.START)
     }
 
-    /** repo 准备子阶段：仅用于已有任务的阶段更新，不能从 Idle/Cancelled 启动任务。 */
+    /**
+     * repo 准备子阶段：仅用于已有任务的阶段更新，不能从 Idle/Cancelled 启动任务。
+     * Running 也允许回到 Preparing：边分离阶段 2 补齐时 repo 会重新发 Preparing。
+     */
     fun onSeparationPreparing(phase: SeparationTask.PrepPhase = SeparationTask.PrepPhase.START) {
-        if (separation is SeparationTask.Preparing) {
+        if (separation is SeparationTask.Preparing || separation is SeparationTask.Running) {
             separation = SeparationTask.Preparing(phase)
         }
     }

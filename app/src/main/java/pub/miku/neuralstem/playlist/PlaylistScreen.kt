@@ -31,6 +31,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -86,13 +87,15 @@ fun PlaylistScreen(
     val lists by vm.lists.collectAsState()
     // ★R1：当前选中歌单（单一真源，来自 VM；恒存在）。
     val selectedListId by vm.selectedListId.collectAsState()
+    val selectedIsFolder = lists.firstOrNull { it.id == selectedListId }?.type ==
+        PlaylistStore.ListType.FOLDER
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     // ★ 进入歌单页 / 当前曲目变化时**重新加载**：歌单可能被播放器侧（导入等）改过，
     //   而本 VM 的 _lists 是内存缓存 → 否则数量/曲目显示陈旧。
     LaunchedEffect(selectedListId) { vm.reload() }
-    var newName by remember { mutableStateOf("") }
-    var expandedId by remember { mutableStateOf<String?>(null) }
+    var newName by rememberSaveable { mutableStateOf("") }
+    var expandedId by rememberSaveable { mutableStateOf<String?>(null) }
     // ★2026-10-26：每个歌单当前展示多少首（分段加载）。
     //   实测默认歌单有 1002 首，全部组合会卡好几秒 —— 先显示 100，可点「再加载」。
     val trackLimit = remember { mutableStateMapOf<String, Int>() }
@@ -202,7 +205,9 @@ fun PlaylistScreen(
         }
         // ★2026-10-26：单曲/多选导入（追加到**当前选中**歌单）
         val importFilesBtn: @Composable () -> Unit = {
-            OutlinedButton(onClick = {
+            OutlinedButton(
+                enabled = !selectedIsFolder,
+                onClick = {
                 // MIME 里包含 ncm：系统选择器默认不认，得显式列出
                 pickFiles.launch(
                     arrayOf(

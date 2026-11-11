@@ -151,6 +151,16 @@ class SessionStateMachineTest {
     }
 
     @Test
+    fun `I3 Running 可回到 Preparing（边分离阶段 2 补齐）`() {
+        val (_, sm) = newSm()
+        sm.beginSeparation()
+        sm.startSeparation()
+        sm.onSeparationProgress(99)
+        sm.onSeparationPreparing(SeparationTask.PrepPhase.START)
+        assertTrue("补齐应回到 Preparing", sm.separation is SeparationTask.Preparing)
+    }
+
+    @Test
     fun `I3 Cancelled 不是 Done 且不残留 Done`() {
         val (_, sm) = newSm()
         sm.beginSeparation()

@@ -107,13 +107,20 @@ class PlaylistViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         // ★B6：文件夹歌单删除时释放 SAF tree 持久授权，避免授权槽位耗尽/旧 grant 残留。
-        target.folderUri?.let { fu ->
-            runCatching {
-                getApplication<Application>().contentResolver.releasePersistableUriPermission(
-                    Uri.parse(fu),
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION,
-                )
-            }.onFailure { Log.w(TAG, "release tree grant failed: $fu", it) }
+        // ★P2：同一个 tree 可能被多个文件夹歌单引用；只在最后一个引用删除时释放，
+        //   并按 take 时的 READ|WRITE 一并释放。
+        val folderUri = target.folderUri
+        val shared = folderUri != null && _lists.value.any { it.id != id && it.folderUri == folderUri }
+        if (!shared) {
+            folderUri?.let { fu ->
+                runCatching {
+                    getApplication<Application>().contentResolver.releasePersistableUriPermission(
+                        Uri.parse(fu),
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                            Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+                    )
+                }.onFailure { Log.w(TAG, "release tree grant failed: $fu", it) }
+            }
         }
         _lists.value = _lists.value.filterNot { it.id == id }
         persist()
@@ -311,6 +318,12 @@ class PlaylistViewModel(app: Application) : AndroidViewModel(app) {
         if (found.isEmpty()) return
 
         val targetId = intoListId ?: selectedListId.value
+        val target = _lists.value.firstOrNull { it.id == targetId }
+        if (target?.type != PlaylistStore.ListType.FILE) {
+            // R2：单曲导入只能进 FILE 歌单；文件夹歌单是外部镜像，不应被塞入无法移除的曲目。
+            Log.w(TAG, "importFiles 拒绝目标 $targetId（type=${target?.type}）")
+            return
+        }
         _lists.value = _lists.value.map { p ->
             if (p.id == targetId) p.copy(tracks = mergeDistinct(p.tracks, found)) else p
         }

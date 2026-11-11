@@ -32,6 +32,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -91,7 +92,7 @@ fun SettingsScreen(
     openModelLibraryToken: Int = 0,
 ) {
     val st by vm.state.collectAsState()
-    var page by remember { mutableStateOf(SettingsPage.ROOT) }
+    var page by rememberSaveable { mutableStateOf(SettingsPage.ROOT) }
 
     // ★外部请求打开模型库 → 切到 MODELS 页
     LaunchedEffect(openModelLibraryToken) {

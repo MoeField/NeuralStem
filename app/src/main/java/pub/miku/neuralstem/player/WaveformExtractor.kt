@@ -71,6 +71,12 @@ class WaveformExtractor(
 
     private var job: Job? = null
 
+    /** 显式取消（多轨退出/清空/重新提取时调用；不只是下一次 extractAsync）。 */
+    fun cancel() {
+        job?.cancel()
+        job = null
+    }
+
     /** 取消上一次提取(切歌时),启动新的 */
     fun extractAsync(source: AudioSource) {
         job?.cancel()

@@ -77,8 +77,21 @@ class PlaylistStore internal constructor(private val dir: File) {
     /** 解析失败时保留现场：复制为 `playlists.json.corrupt-<ts>`，供用户/日志恢复。 */
     private fun backupCorrupt() {
         runCatching {
-            val backup = File(file.parentFile, "${file.name}.corrupt-${System.currentTimeMillis()}")
+            val parent = file.parentFile ?: return
+            val size = file.length()
+            // 同一个损坏文件会被 load() 反复读到（进度轮询/进歌单页）——同尺寸副本只留一份。
+            val already = parent.listFiles()?.any {
+                it.name.startsWith("${file.name}.corrupt-") && it.length() == size
+            } == true
+            if (already) return
+            val backup = File(parent, "${file.name}.corrupt-${System.currentTimeMillis()}")
             file.copyTo(backup, overwrite = false)
+            // 只保留最近 3 份，避免损坏文件长期存在时无限堆积。
+            parent.listFiles()
+                ?.filter { it.name.startsWith("${file.name}.corrupt-") }
+                ?.sortedBy { it.name }
+                ?.dropLast(3)
+                ?.forEach { runCatching { it.delete() } }
             Log.w(TAG, "playlists.json 解析失败 → 已保留损坏副本 ${backup.name}（不用空数据覆盖）")
         }.onFailure { Log.w(TAG, "backup corrupt playlists failed", it) }
     }

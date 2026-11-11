@@ -364,6 +364,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
      * stem 是本地 WAV → 走 [AudioSource.WavFile]（直读，不解码容器）并被 [WaveformCache] 缓存。
      */
     private var stemExtractors: List<WaveformExtractor> = emptyList()
+    private var stemWaveformJobs: List<Job> = emptyList()
     private val _stemWaveforms = MutableStateFlow<List<WaveformData?>>(emptyList())
 
     /**
@@ -1968,16 +1969,25 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
      * 每个 stem 一个 [WaveformExtractor]（本地 WAV → [AudioSource.WavFile]）；
      * 任一个就绪都更新 `stemWaveforms`；转盘外环据此画多色叠加。
      */
-    private fun extractStemWaveforms(stems: List<Triple<String, String, File>>) {
+    /** 取消上一次 stem 波形提取及其 collector，避免旧歌/旧多轨继续解码并写回 idx。 */
+    private fun cancelStemWaveforms() {
+        stemExtractors.forEach { it.cancel() }
         stemExtractors = emptyList()
+        stemWaveformJobs.forEach { it.cancel() }
+        stemWaveformJobs = emptyList()
+    }
+
+    private fun extractStemWaveforms(stems: List<Triple<String, String, File>>) {
+        cancelStemWaveforms()
         _stemWaveforms.value = List(stems.size) { null }
         _state.value = _state.value.copy(stemWaveforms = _stemWaveforms.value)
+        val jobs = ArrayList<Job>(stems.size)
         stemExtractors = stems.mapIndexed { idx, (_, _, file) ->
             val ex = WaveformExtractor(viewModelScope).apply {
                 contextProvider = { getApplication<Application>() }
             }
             // 收集：任一轨就绪即刷新列表（只重绘，不重组——由 DeckView 在 draw 阶段读）
-            viewModelScope.launch {
+            jobs += viewModelScope.launch {
                 ex.waveform.collect { wf ->
                     val cur = _stemWaveforms.value.toMutableList()
                     if (idx < cur.size && cur[idx] !== wf) {
@@ -1990,6 +2000,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             ex.extractAsync(AudioSource.WavFile(file))
             ex
         }
+        stemWaveformJobs = jobs
     }
 
     /** ★U3：标记“已有可用分离结果”（宿主传入分离产物后调用）。 */
@@ -2145,7 +2156,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         // ★3b：状态机同步回单轨（无副作用）——`isMultiTrack` 由 [withDerived] 派生，
         //   不再手动 copy（原写法：状态机仍停在 MultiTrack，仅 UI 布尔变了 → 双源分叉）。
         session.syncMode(SessionMode.Single)
-        stemExtractors = emptyList()
+        cancelStemWaveforms()
         _stemWaveforms.value = emptyList()
         _state.value = withDerived(
             _state.value.copy(
@@ -2189,7 +2200,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         separationTargetUri = null
         runCatching { SeparationRepository.get(getApplication()).cancel() }
         runCatching { edgeSession.abort() }
-        stemExtractors = emptyList()
+        cancelStemWaveforms()
         _stemWaveforms.value = emptyList()
         // ★3b：`isMultiTrack` 由 [withDerived] 派生（不再手动 copy）。
         _state.value = withDerived(
