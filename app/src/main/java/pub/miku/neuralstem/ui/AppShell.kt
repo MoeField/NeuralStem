@@ -127,6 +127,12 @@ fun AppShell(
     LaunchedEffect(playerListId) {
         if (playerListId != null) playlistVm.selectList(playerListId!!)
     }
+    // ★P2：歌单内容变化（导入单曲/文件夹重扫/增删）→ 同步播放队列。
+    LaunchedEffect(playlistLists, playerListId) {
+        val id = playerListId ?: return@LaunchedEffect
+        val tracks = playlistLists.firstOrNull { it.id == id }?.tracks ?: return@LaunchedEffect
+        playerVm.syncQueueFromPlaylist(id, tracks.map { Uri.parse(it.uri) to it.title })
+    }
 
     // ★⑨④：横屏时隐藏 App 顶部标题栏（太占地方）；竖屏保留。
     val isLandscape =

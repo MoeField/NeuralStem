@@ -1480,6 +1480,22 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * ★P2：歌单内容变化（导入/重扫/增删）→ 按当前曲 uri 重建播放队列。
+     * 与 onPlaylistTrackRemoved/Moved 不同，这个覆盖“新增曲目”和整表重扫。
+     */
+    fun syncQueueFromPlaylist(listId: String, tracks: List<Pair<Uri, String>>) {
+        if (currentListId != listId) return
+        if (tracks.isEmpty()) return
+        val q = tracks.map { QueueTrack(it.first.toString(), it.second) }
+        val cur = currentQueueTrackUriOrNull() ?: _state.value.currentUri ?: return
+        val idx = q.indexOfFirst { it.uri == cur }
+        if (idx < 0) return
+        if (session.queue == QueueState.Active(q, idx)) return
+        session.setQueue(q, idx)
+        Log.i(TAG, "P2 sync queue: list=$listId tracks=${q.size} current=$idx")
+    }
+
     /** ★B5：歌单排序 → 同步队列顺序，保持当前曲不变。 */
     fun onPlaylistTrackMoved(listId: String, from: Int, to: Int) {
         if (currentListId != listId) return
