@@ -651,28 +651,28 @@ class PlaybackService : MediaSessionService() {
             if (inMultiTrack) {
                 when (playerCommand) {
                     Player.COMMAND_PLAY_PAUSE -> {
-                        // ★媒体键是“切换”语义；用真源 mixer 的状态判断方向。
-                        //   默认命令随后还会操作门面，150ms 后 reconcile 纠正。
-                        val c = multiTrack
-                        if (c != null) {
-                            val wasPlaying = c.isPlaying()
-                            if (wasPlaying) {
-                                c.pause()
-                                singlePlayer?.pause()
-                                mtFocusWasPlaying = false
-                            } else {
+                        // 回调发生在默认命令执行之前，且这里拿不到“play 还是 pause”。
+                        // 先让默认命令更新门面的 playWhenReady，下一帧再按**目标意图**
+                        // 同步 mixer；不能按 mixer 当前状态 toggle（分叉时会反向）。
+                        handler.post {
+                            if (!inMultiTrack) return@post
+                            val c = multiTrack ?: return@post
+                            val wantPlay = singlePlayer?.playWhenReady == true
+                            if (wantPlay) {
                                 c.play()
-                                singlePlayer?.play()
+                                Log.i(TAG, "media PLAY_PAUSE → play (mirror facade intent)")
+                            } else {
+                                c.pause()
+                                mtFocusWasPlaying = false
+                                Log.i(TAG, "media PLAY_PAUSE → pause (mirror facade intent)")
                             }
-                            Log.i(TAG, "media PLAY_PAUSE → ${if (wasPlaying) "pause" else "play"}")
-                            handler.postDelayed({ reconcileFacadeToMixer() }, 150)
                         }
                     }
                     Player.COMMAND_SET_SPEED_AND_PITCH -> {
-                        // 系统级 setPlaybackParameters（如 Android Auto/通知扩展）：
-                        // 多轨真源是 StemMixer，门面参数也要同步（位置时钟）。
-                        val p = singlePlayer?.playbackParameters
-                        if (p != null) {
+                        // 回调时门面参数还是旧值；等默认命令应用后再读，同步给 mixer。
+                        handler.post {
+                            if (!inMultiTrack) return@post
+                            val p = singlePlayer?.playbackParameters ?: return@post
                             lastSpeed = p.speed
                             lastPitchRate = p.pitch
                             multiTrack?.setSpeedPitch(p.speed, p.pitch)
