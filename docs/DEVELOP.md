@@ -153,4 +153,4 @@ apksigner verify --print-certs app/build/outputs/apk/release/app-arm64-v8a-relea
 - AVS3/NCM 参考解码器不入库；没有它时相关格式跳过。
 - 真实来电的音频焦点丢失没有自动化模拟（代码路径已单独测过焦点请求/丢弃）。
 - 0.71× 等非 1× 速度的后台长播：门面 ExoPlayer 可能先到 ENDED，混音器还在收尾；前台播放正常，后台生命周期仍需观察。
-- Release 当前关闭 R8 且保留 devtools 入口；如需进一步收紧包体/入口，另开一轮处理（注意反射与 `Avs3Bridge`）。
+- Release 当前关闭 R8；`TestCommandService` / `TestPanelActivity` / `SpikeActivity` 已移入 `src/debug`，release manifest 不含这些入口。进一步收紧包体需另开 R8 分支（注意反射与 `Avs3Bridge`）。

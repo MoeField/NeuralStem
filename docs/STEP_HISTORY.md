@@ -84,4 +84,4 @@
 - AVS3 参考实现不在仓库；本地可选接入，不能随 release 分发。
 - 真实来电焦点丢失只做了焦点请求/丢失逻辑的自动验证，没有真实通话环境。
 - 非 1× 后台长播的 MediaSession 生命周期只有短时测试。
-- release 暂未开 R8、仍保留 devtools 入口；后续如收紧需单独处理反射和可选 native 库。
+- release 暂未开 R8；debug 测试入口已移入 `src/debug`，release 不含这些组件；后续如收紧包体需单独处理反射和可选 native 库。

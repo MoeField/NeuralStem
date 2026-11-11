@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!--
+      仅 debug 构建存在的测试入口。
+      release 不合并这些组件，避免 TestCommandService / TestPanelActivity / SpikeActivity
+      被外部 adb 启动。
+    -->
+    <application>
+        <activity
+            android:name=".spike.SpikeActivity"
+            android:exported="true"
+            android:label="Spike 分离验证" />
+
+        <service
+            android:name=".devtools.TestCommandService"
+            android:exported="true" />
+
+        <activity
+            android:name=".devtools.TestPanelActivity"
+            android:exported="true"
+            android:label="测试面板" />
+    </application>
+</manifest>

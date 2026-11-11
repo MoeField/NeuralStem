@@ -67,13 +67,6 @@
             </intent-filter>
         </activity>
 
-        <!-- Task 0b Spike: 音轨分离技术验证页(独立于主 UI,验证后可移除) -->
-        <activity
-            android:name=".spike.SpikeActivity"
-            android:exported="true"
-            android:label="Spike 分离验证">
-        </activity>
-
         <!-- V2(guide N4):后台播放前台服务(MediaSessionService)
              MediaSessionService 会在播放时自动升为前台服务并发布媒体通知,
              切后台/锁屏仍继续播放。foregroundServiceType=mediaPlayback 是 API 34+ 强制要求。 -->
@@ -93,21 +86,6 @@
                 <action android:name="android.media.browse.MediaBrowserService" />
             </intent-filter>
         </service>
-
-        <!-- ★T0:测试命令入口(仅 debug 生效;onStartCommand 以 BuildConfig.DEBUG 守卫)。
-             用 am start-service 而非 broadcast(vivo/Android16 静默丢弃 manifest 广播,
-             同类于已知坑52;service 不受广播限制且不重建 Activity)。
-             用法见 devtools/TestCommandBus.helpText -->
-        <service
-            android:name=".devtools.TestCommandService"
-            android:exported="true" />
-
-        <!-- ★测试面板（debug 工具）：按钮 + 屏上日志，避开 vivo 吞 logcat。
-             adb shell am start (component=pub.miku.neuralstem/.devtools.TestPanelActivity) -->
-        <activity
-            android:name=".devtools.TestPanelActivity"
-            android:exported="true"
-            android:label="测试面板" />
 
         <!--
           ★Shizuku Provider（NCM 导入用）。
