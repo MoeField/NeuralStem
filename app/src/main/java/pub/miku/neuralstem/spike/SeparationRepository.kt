@@ -244,6 +244,26 @@ class SeparationRepository(private val app: Application) {
      *
      * 仅 Spleeter 2-stem（快速档）支持；其他引擎仍走 [start]/[start4]/[startDemucs]。
      */
+    private data class EdgeCacheInfo(
+        val totalFrames: Int,
+        val channels: Int,
+        val sampleRate: Int,
+    )
+
+    /** 只读 manifest + 两个 WAV 头验证完整缓存；不触碰源音频解码。 */
+    private fun readCompleteEdgeInfo(outDir: File, vFile: File, aFile: File): EdgeCacheInfo? {
+        if (!vFile.exists() || !aFile.exists()) return null
+        val m = runCatching {
+            RangeManifest.load(outDir, expectModelId = ModelRegistry.SPLEETER.id)
+        }.getOrNull() ?: return null
+        if (!m.complete) return null
+        val v = runCatching { WavReader(vFile).use { it.info } }.getOrNull() ?: return null
+        val a = runCatching { WavReader(aFile).use { it.info } }.getOrNull() ?: return null
+        if (v.totalFrames != m.totalFrames || a.totalFrames != m.totalFrames) return null
+        if (v.channels != a.channels || v.sampleRate != a.sampleRate) return null
+        return EdgeCacheInfo(v.totalFrames, v.channels, v.sampleRate)
+    }
+
     fun startEdge(
         source: File,
         fromPositionMs: Long,
@@ -262,6 +282,45 @@ class SeparationRepository(private val app: Application) {
                 generation.get() == myGen && thisJob?.isActive != false
             try {
                 if (stillCurrent()) _state.value = State.Preparing(State.PrepPhase.DECODING)
+                // ★P2：完整 edge 缓存命中时**不要先解码整首源**（mp3 10~13s）。
+                //   manifest + 两个 WAV 头即可验证；验证通过直接把会话置为完成。
+                val fastOutDir = File(app.filesDir, "stems-cache/${contentHash(source)}-spleeter")
+                val fastV = File(fastOutDir, "vocals.wav")
+                val fastA = File(fastOutDir, "accompaniment.wav")
+                val fastInfo = readCompleteEdgeInfo(fastOutDir, fastV, fastA)
+                if (fastInfo != null) {
+                    val sr = fastInfo.sampleRate
+                    val startFrame = (fromPositionMs.coerceAtLeast(0) * sr / 1000L)
+                        .toInt().coerceIn(0, fastInfo.totalFrames)
+                    if (!stillCurrent()) return@launchSeparation
+                    session.beginFiles(
+                        startFrame = startFrame,
+                        sampleRate = sr,
+                        channels = fastInfo.channels,
+                        totalFrames = fastInfo.totalFrames,
+                        vocalsFile = fastV,
+                        accompFile = fastA,
+                        sourceUri = source.absolutePath,
+                    )
+                    mySessionGen = session.generation
+                    session.complete()
+                    session.markFirstSegmentReady(100)
+                    if (stillCurrent()) {
+                        _state.value = State.EdgeDone(
+                            inferTimeMs = 0L,
+                            peakPssMb = currentPssMb(),
+                            audioDurationMs = fastInfo.totalFrames.toLong() * 1000L /
+                                sr.coerceAtLeast(1),
+                            vocalsFile = fastV,
+                            accompanimentFile = fastA,
+                            startFrame = startFrame,
+                            sampleRate = sr,
+                            complete = true,
+                        )
+                    }
+                    Log.i(TAG, "edge 缓存命中（fast path，未解码源）：${fastOutDir.absolutePath}")
+                    return@launchSeparation
+                }
                 // 1) 解码/重采样输入
                 val frameSource = SeparationInput.open(app, source)
                 try {
