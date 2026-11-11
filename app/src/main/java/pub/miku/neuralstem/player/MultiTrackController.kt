@@ -126,6 +126,10 @@ class MultiTrackController(private val context: Context) : Closeable {
         // buffer 从边分离会话取（与 StemPcmDataSource 同一来源，保持单一真源）
         val session = pub.miku.neuralstem.spike.EdgeSeparationSession.get()
         val ringStart = session.startFrame.toLong()
+        // ★P2：流式源只知“已写水位线”，seek 应允许到整曲；闸门负责未分离区等待。
+        declaredDurationMs = if (session.totalFrames > 0 && session.sampleRate > 0) {
+            session.totalFrames.toLong() * 1000L / session.sampleRate
+        } else null
         val sources = ArrayList<Pair<String, StemSource>>(items.size)
         for (item in items) {
             val host = item.uri.host ?: item.id
@@ -208,7 +212,7 @@ class MultiTrackController(private val context: Context) : Closeable {
 
     fun currentPositionMs(): Long = mixer?.positionMs ?: 0L
 
-    fun durationMs(): Long = mixer?.durationMs ?: 0L
+    fun durationMs(): Long = declaredDurationMs ?: mixer?.durationMs ?: 0L
 
     fun isPlaying(): Boolean = mixer?.isPlaying ?: false
 
@@ -282,11 +286,15 @@ class MultiTrackController(private val context: Context) : Closeable {
 
     // ==================== 释放 ====================
 
+    /** 流式模式声明的整曲时长；null = 用 mixer 已写范围（文件模式）。 */
+    private var declaredDurationMs: Long? = null
+
     private fun releaseAll() {
         runCatching { mixer?.close() }
         mixer = null
         tracks.clear()
         soloTrackId = null
+        declaredDurationMs = null
     }
 
     override fun close() = releaseAll()
