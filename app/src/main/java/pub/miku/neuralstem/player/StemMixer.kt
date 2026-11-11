@@ -48,6 +48,8 @@ class StemMixer(
     private var thread: Thread? = null
 
     @Volatile private var running = false
+    /** 渲染线程代际：stop 后旧线程即使还卡在 write 也不能继续写/复活。 */
+    @Volatile private var renderGeneration: Long = 0L
 
     /**
      * **源读头**（绝对帧）。渲染线程推进；seek 时由外部改写。
@@ -166,7 +168,11 @@ class StemMixer(
         // ★2026-11-06：曲尾后线程已退出，但 `running` 可能还是 true（旧实现的遗留）→
         //   只按 running 判断会“按播放没反应”。改为看线程是否还活着。
         val aliveThread = thread
-        if (running && aliveThread != null && aliveThread.isAlive) return
+        if (aliveThread != null && aliveThread.isAlive) {
+            // 同一个渲染线程已在跑：让它继续；旧线程正在退出时也绝不启动第二个 writer。
+            if (!running) Log.w(TAG, "play: 旧渲染线程仍在退出，暂不启动新线程")
+            return
+        }
         // 在曲尾按播放：从 0 重来（否则读头在 totalFrames，启动即又结束）。
         if (totalFrames > 0 && framePos >= totalFrames) {
             framePos = 0L
@@ -183,7 +189,9 @@ class StemMixer(
             runCatching { t.play() }.onFailure { Log.w(TAG, "AudioTrack.play() 失败", it) }
         }
         running = true
-        thread = Thread({ renderLoop() }, "StemMixer").apply {
+        renderGeneration++
+        val gen = renderGeneration
+        thread = Thread({ renderLoop(gen) }, "StemMixer").apply {
             priority = Thread.MAX_PRIORITY      // 音频线程要高优先级，否则容易 underrun
             start()
         }
@@ -221,10 +229,17 @@ class StemMixer(
     private fun stopThread() {
         running = false
         playing = false
-        thread?.let { t ->
-            runCatching { t.join(800) }
-        }
+        renderGeneration++
+        val t = thread
         thread = null
+        t?.interrupt()
+        t?.let { runCatching { it.join(800) } }
+        if (t?.isAlive == true) {
+            // join 超时：旧线程可能还卡在 AudioTrack.write。保留引用，
+            // play() 看到 isAlive 会拒绝启动第二个 writer，等它退出后再启动。
+            thread = t
+            Log.w(TAG, "stopThread: 旧渲染线程未在 800ms 内退出，延迟复用")
+        }
         runCatching { track?.pause(); track?.flush() }
     }
 
@@ -268,12 +283,12 @@ class StemMixer(
      * 线程直接死亡，而 `running/playing` 还是 true → 上层以为在播。
      * 这类“线程静默死亡”极难从外部看出来，所以必须自己接住并设标志。
      */
-    private fun renderLoop() {
+    private fun renderLoop(gen: Long) {
         val mix = FloatArray(CHUNK_FRAMES * channels)
         val tmp = FloatArray(CHUNK_FRAMES * channels)
         var loopWarn = 0
 
-        while (running) {
+        while (running && gen == renderGeneration) {
             try {
                 // ★每轮重新取 track：write 失败重建后，旧的局部引用会指向已 release 的对象。
                 val t = track ?: break
