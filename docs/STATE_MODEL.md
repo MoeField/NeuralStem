@@ -1,8 +1,8 @@
 # 分离状态模型重构：需求与设计稿
 
-> 状态：**决策已确认，待实施**  
-> 基线：`v0.2.13`（`7d9f2ed`）  
-> 分支：`refactor/separation-state-model`  
+> 状态：**M1 已完成（纯模型/reducer/测试），待 M2 接入**
+> 基线：`v0.2.13`（`7d9f2ed`）
+> 分支：`refactor/separation-state-model`
 > 目标：先把需求和边界定清楚，再写代码；不在 `main` 上直接改。
 
 ---
@@ -45,10 +45,23 @@
 | 里程碑 | 内容 | 完成判据 |
 |---|---|---|
 | M0 | 本文档 | 决策/边界/迁移表定稿 |
-| M1 | 纯模型 + reducer + 测试 | 迁移矩阵、交错测试通过；不接 UI |
+| M1 | 纯模型 + reducer + 测试 | ✅ 已完成：`spike/state/` + 50 条 reducer 测试；全量 424/0 |
 | M2 | Controller + adapter | 现有行为在 fake/单测下对齐；不并发 worker |
 | M3 | UI/VM/PlayerState 迁移 | 重复字段删除；自动切轨走 Effect |
 | M4 | 验收 + 合并 | JVM/R8/真机场景全过；合 main 后发 v0.2.14 |
+
+### M1 实现记录（2026-11-13）
+
+- `app/src/main/java/pub/miku/neuralstem/spike/state/SeparationState.kt`
+  - `TrackKey`、`SeparationKind`、`Lifecycle`、`Operation`、`Coverage`、
+    `JobState`、`AttachmentState`、`SeparationSnapshot`、Event/Effect 定义。
+- `app/src/main/java/pub/miku/neuralstem/spike/state/SeparationReducer.kt`
+  - 纯函数 `reduce(Snapshot, Event) -> ReduceResult`；不依赖 Android。
+  - 覆盖启动/取消/让位、EDGE 自动 attach、FULL 手动、换曲/播放结束、
+    Service 丢失/进程恢复、加载竞态、超时、缓存/导出、终态栅栏。
+- `app/src/test/java/pub/miku/neuralstem/spike/state/SeparationReducerTest.kt`
+  - 50 条迁移/交错/不变量测试；全量 JVM 424/0。
+- 本阶段**未接** UI、Repository、PlaybackService；旧状态仍是线上真源。
 
 ### 本次“完成”的判据
 
