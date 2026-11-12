@@ -1,6 +1,6 @@
 # 分离状态模型重构：需求与设计稿
 
-> 状态：**M2 已完成（纯模型/reducer/controller/测试），待 M3 接入**
+> 状态：**M3a 已完成（Android 领域适配器 + 启动/当前曲接入），M3b 进行中**
 > 基线：`v0.2.13`（`7d9f2ed`）
 > 分支：`refactor/separation-state-model`
 > 目标：先把需求和边界定清楚，再写代码；不在 `main` 上直接改。
@@ -73,6 +73,18 @@
   - 7 条：事件串行、Effect 顺序、取消/JobStopped、旧 job 事件、
     换曲、100 条事件不丢、close 后 send 安全。
 - 本阶段仍未接 Repository/UI；M3 把真实 Effect executor 接进来。
+
+### M3a 实现记录（2026-11-13）
+
+- `app/src/main/java/pub/miku/neuralstem/spike/state/SeparationDomain.kt`
+  - 进程级单例；持有 Controller/repo/EdgeSession；
+  - StartRequest → 旧 Repository（EDGE/SPHERA/SPLEETER4/DEMUCS）；
+  - repo/EdgeSession 回调 → Domain SourceReady/Coverage/Finished/Failed/Stopped；
+  - PlayerBridge 接口（M3b 接播放侧）；
+  - 当前曲通过 AppShell `TrackChanged` 同步。
+- `SpikeViewModel` 的 start/startOption/startEdge/cancel 已改走 Domain；
+  旧 UI/自动切轨仍由旧 repo 状态驱动，行为保持不变（真机 edge 启动验证）。
+- 新增 M3a 后全量 JVM 仍 431/0（集成层由真机验证）。
 
 ### 本次“完成”的判据
 

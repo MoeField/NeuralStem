@@ -46,6 +46,13 @@ sealed interface Operation {
     ) : Operation
 }
 
+enum class SeparationBackend {
+    EDGE,
+    SHERPA_2STEM,
+    SPLEETER4,
+    DEMUCS,
+}
+
 data class StartRequest(
     val kind: SeparationKind,
     val trackKey: TrackKey,
@@ -53,6 +60,13 @@ data class StartRequest(
     val startFrame: Long = 0L,
     val fromPositionMs: Long = 0L,
     val trackTitle: String? = null,
+    /** 真实输入文件路径；M3 适配器用，纯模型只存字符串。 */
+    val sourcePath: String? = null,
+    val backend: SeparationBackend = SeparationBackend.SHERPA_2STEM,
+    /** Sherpa engine（MODE_SPLEETER/MODE_UVR）。 */
+    val engineMode: Int = -1,
+    val uvrModelName: String? = null,
+    val chunkOverrideFrames: Int? = null,
 )
 
 /** 已覆盖区间/水位线。五阶段文案由 source + coverage + operation 派生。 */

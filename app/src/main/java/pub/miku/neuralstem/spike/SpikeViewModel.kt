@@ -21,6 +21,11 @@ import pub.miku.neuralstem.player.SeparationTask
 import pub.miku.neuralstem.player.SessionStateMachine
 import pub.miku.neuralstem.settings.SettingsRepository
 import java.io.File
+import pub.miku.neuralstem.spike.state.SeparationBackend
+import pub.miku.neuralstem.spike.state.SeparationDomain
+import pub.miku.neuralstem.spike.state.SeparationKind
+import pub.miku.neuralstem.spike.state.StartRequest
+import pub.miku.neuralstem.spike.state.TrackKey
 
 /**
  * Spike 编排(Task 0b,sherpa-onnx 主路线)。
@@ -61,6 +66,8 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
         ) : State
         data class Error(val message: String, val cause: Throwable? = null) : State
     }
+
+    private val domain = SeparationDomain.get(app)
 
     private val _state = MutableStateFlow<State>(State.Idle)
     val state: StateFlow<State> = _state.asStateFlow()
@@ -600,11 +607,17 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
         session.beginSeparation()
         pushSeparationTask()
         _state.value = State.Separating(0, 0f, 0)
-        repo.start(
-            source = srcFile,
-            engine = engineMode,
-            uvrModelName = uvrModelName,
-            chunkOverrideFrames = chunkSecondsOverride?.let { it * SeparationInput.MODEL_SAMPLE_RATE },
+        domain.start(
+            StartRequest(
+                kind = SeparationKind.FULL_2,
+                trackKey = TrackKey("", 0L),
+                sourcePath = srcFile.absolutePath,
+                backend = SeparationBackend.SHERPA_2STEM,
+                engineMode = engineMode,
+                uvrModelName = uvrModelName,
+                chunkOverrideFrames = chunkSecondsOverride
+                    ?.let { it * SeparationInput.MODEL_SAMPLE_RATE },
+            ),
         )
     }
 
@@ -617,7 +630,14 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
     fun start4Stem(source: File) {
         session.beginSeparation()
         pushSeparationTask()
-        repo.start4(source)
+        domain.start(
+            StartRequest(
+                kind = SeparationKind.FULL_4,
+                trackKey = TrackKey("", 0L),
+                sourcePath = source.absolutePath,
+                backend = SeparationBackend.SPLEETER4,
+            ),
+        )
     }
 
     /**
@@ -641,12 +661,17 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
                 Log.i(TAG, "startOption(Sherpa): ${opt.spec.id} engine=${opt.spec.engine}")
                 session.beginSeparation()
                 pushSeparationTask()
-                repo.start(
-                    source = source,
-                    engine = engineMode,
-                    uvrModelName = uvrModelName,
-                    chunkOverrideFrames = chunkSecondsOverride
-                        ?.let { it * SeparationInput.MODEL_SAMPLE_RATE },
+                domain.start(
+                    StartRequest(
+                        kind = SeparationKind.FULL_2,
+                        trackKey = TrackKey(ownerUri ?: "", 0L),
+                        sourcePath = source.absolutePath,
+                        backend = SeparationBackend.SHERPA_2STEM,
+                        engineMode = engineMode,
+                        uvrModelName = uvrModelName,
+                        chunkOverrideFrames = chunkSecondsOverride
+                            ?.let { it * SeparationInput.MODEL_SAMPLE_RATE },
+                    ),
                 )
             }
             SepOption.Spleeter4 -> {
@@ -657,7 +682,14 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
                 Log.i(TAG, "startOption: Demucs")
                 session.beginSeparation()
                 pushSeparationTask()
-                repo.startDemucs(source)
+                domain.start(
+                    StartRequest(
+                        kind = SeparationKind.FULL_4,
+                        trackKey = TrackKey(ownerUri ?: "", 0L),
+                        sourcePath = source.absolutePath,
+                        backend = SeparationBackend.DEMUCS,
+                    ),
+                )
             }
         }
     }
@@ -675,12 +707,23 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
         Log.i(TAG, "startEdgeOption: from=${fromPositionMs}ms")
         session.beginSeparation()
         pushSeparationTask()
-        repo.startEdge(source, fromPositionMs)
+        domain.start(
+            StartRequest(
+                kind = SeparationKind.EDGE,
+                trackKey = TrackKey(ownerUri ?: "", 0L),
+                startFrame = (fromPositionMs.coerceAtLeast(0L) *
+                    SeparationInput.MODEL_SAMPLE_RATE / 1000L),
+                fromPositionMs = fromPositionMs,
+                trackTitle = source.name,
+                sourcePath = source.absolutePath,
+                backend = SeparationBackend.EDGE,
+            ),
+        )
     }
 
     /** guide N5:取消分离任务 */
     fun cancelSeparation() {
-        repo.cancel()
+        domain.cancel()
         _state.value = State.Error("分离已取消")
         session.onSeparationCancelled()
         pushSeparationTask()

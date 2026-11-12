@@ -62,6 +62,8 @@ import pub.miku.neuralstem.playlist.PlaylistViewModel
 import pub.miku.neuralstem.settings.SettingsScreen
 import pub.miku.neuralstem.spike.EdgeSeparationSession
 import pub.miku.neuralstem.spike.SeparationRepository
+import pub.miku.neuralstem.spike.state.SeparationDomain
+import pub.miku.neuralstem.spike.state.TrackKey
 import pub.miku.neuralstem.spike.SeparationScreen
 import pub.miku.neuralstem.spike.Spleeter4Dsp
 
@@ -167,6 +169,12 @@ fun AppShell(
     val appCtx = LocalContext.current.applicationContext as Application
     val repo = remember { SeparationRepository.get(appCtx) }
     val repoState by repo.state.collectAsState()
+    // ★M3a：先只把“当前曲”同步给新领域层；旧 UI/自动切轨仍由下面的旧 effect 驱动。
+    val separationDomain = remember { SeparationDomain.get(appCtx) }
+    LaunchedEffect(playerState.currentUri) {
+        val uri = playerState.currentUri ?: return@LaunchedEffect
+        separationDomain.onTrackChanged(TrackKey(uri, 0L))
+    }
     LaunchedEffect(repoState) {
         val rs = repoState as? SeparationRepository.State.EdgeDone ?: return@LaunchedEffect
         val vf = rs.vocalsFile
