@@ -96,6 +96,8 @@ AVS3-P3 参考实现受 UWA 政策限制，**不随仓库分发**，release APK 
 
 ## 5. 测试与调试
 
+当前基线：JVM **374** 条（v0.2.11）。
+
 ```bash
 # JVM
 ./gradlew :app:testDebugUnitTest --offline
@@ -154,3 +156,4 @@ apksigner verify --print-certs app/build/outputs/apk/release/app-arm64-v8a-relea
 - 真实来电的音频焦点丢失没有自动化模拟（代码路径已单独测过焦点请求/丢弃）。
 - 0.71× 等非 1× 速度的后台长播：门面 ExoPlayer 可能先到 ENDED，混音器还在收尾；前台播放正常，后台生命周期仍需观察。
 - Release 当前关闭 R8；`TestCommandService` / `TestPanelActivity` / `SpikeActivity` 已移入 `src/debug`，release manifest 不含这些入口。进一步收紧包体需另开 R8 分支（注意反射与 `Avs3Bridge`）。
+- `PlaylistStore` 的 VM 整份快照在极端时序下仍可能写回旧进度；已有锁避免数据丢失，只剩自愈式回退。
