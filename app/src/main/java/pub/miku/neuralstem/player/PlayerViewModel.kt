@@ -607,6 +607,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                         Log.i(TAG, "STATE_ENDED(门面) 在多轨下忽略 → 等 mixEnded")
                     } else {
                         Log.i(TAG, "STATE_ENDED → autoAdvanceOnEnded")
+                        separationDomain.onPlaybackEnded()
                         autoAdvanceOnEnded()
                     }
                 }
@@ -904,6 +905,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                             play()
                         } else {
                             Log.i(TAG, "mix ended → autoAdvanceOnEnded（不再等门面 STATE_ENDED）")
+                            separationDomain.onPlaybackEnded()
                             autoAdvanceOnEnded()
                         }
                     }
