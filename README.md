@@ -224,6 +224,8 @@ CI 用 Repository Secrets（`KEYSTORE_BASE64` / `KEYSTORE_PASSWORD` / `KEY_ALIAS
 - [`docs/STEP_HISTORY.md`](docs/STEP_HISTORY.md)：阶段/版本改动历史与验证方式。
 - [`docs/LICENSING.md`](docs/LICENSING.md)：MIT / NCM / AVS3 参考实现边界。
 - [`docs/STATE_MODEL.md`](docs/STATE_MODEL.md)：分离状态模型重构设计稿。
+- [`docs/PATH_AUDIT.md`](docs/PATH_AUDIT.md)：播放/分离/缓存/UI 全路径审计与待修 bug。
+- [`docs/REPAIR_PLAN.md`](docs/REPAIR_PLAN.md)：按级别排序的维修计划。
 
 ### 性能（参考设备实测）
 
