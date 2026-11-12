@@ -103,6 +103,21 @@
 - 修复：key 增加 repoState（fast path 的 EdgeDone 会变化）。
 - 真机验证：极快（缓存命中）→ 自动切多轨、开关显示多轨、导出可用。
 
+## v0.2.14：分离状态模型 Level 2
+
+- 新增纯领域层 `spike/state`：Snapshot/Event/Effect/Reducer/Controller；
+  分离状态单写者、事件串行、EDGE 自动 attach、FULL 手动、超时/终态栅栏。
+- 新增 Android `SeparationDomain`：Controller + 旧 Repository/EdgeSession 适配；
+  UI 启动/取消走 Domain；Domain 自动切轨经 PlayerBridge 落到播放器。
+- `PlayerState` 删除 edgePercent/edgeStarved/edgeBeforeStart/edgeStartMs/
+  edgeSeparatedFraction/backfillPercent/pendingBackfillMs/separationOn/stemsAvailable；
+  统一由 `SeparationEdgeUi` + `isMultiTrack` 派生。
+- `SpikeViewModel` 不再订阅 repo→UI；由 Domain snapshot 映射任务/导出/完成提示。
+- 4-stem ownerTrackKey 修复，避免新任务误 detach 当前 stems；播放结束/取消/换曲
+  接入 Domain 外部事件。
+- JVM **433/0**（M1 reducer 52 + M2 controller 7 + 原有 374）；
+  真机 edge fast path、4-stem cache/启动、开关 off/on 通过。
+
 ## 已知限制 / 后续可做
 
 - AVS3/NCM 参考解码器不入库；没有它时相关格式跳过，不能随 release 分发。
