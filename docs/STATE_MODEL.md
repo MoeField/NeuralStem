@@ -1,6 +1,6 @@
 # 分离状态模型重构：需求与设计稿
 
-> 状态：**M1 已完成（纯模型/reducer/测试），待 M2 接入**
+> 状态：**M2 已完成（纯模型/reducer/controller/测试），待 M3 接入**
 > 基线：`v0.2.13`（`7d9f2ed`）
 > 分支：`refactor/separation-state-model`
 > 目标：先把需求和边界定清楚，再写代码；不在 `main` 上直接改。
@@ -46,7 +46,7 @@
 |---|---|---|
 | M0 | 本文档 | 决策/边界/迁移表定稿 |
 | M1 | 纯模型 + reducer + 测试 | ✅ 已完成：`spike/state/` + 50 条 reducer 测试；全量 424/0 |
-| M2 | Controller + adapter | 现有行为在 fake/单测下对齐；不并发 worker |
+| M2 | Controller + adapter | ✅ 已完成：Channel actor + fake effects；全量 431/0 |
 | M3 | UI/VM/PlayerState 迁移 | 重复字段删除；自动切轨走 Effect |
 | M4 | 验收 + 合并 | JVM/R8/真机场景全过；合 main 后发 v0.2.14 |
 
@@ -62,6 +62,17 @@
 - `app/src/test/java/pub/miku/neuralstem/spike/state/SeparationReducerTest.kt`
   - 50 条迁移/交错/不变量测试；全量 JVM 424/0。
 - 本阶段**未接** UI、Repository、PlaybackService；旧状态仍是线上真源。
+
+### M2 实现记录（2026-11-13）
+
+- `app/src/main/java/pub/miku/neuralstem/spike/state/SeparationController.kt`
+  - `Channel<SeparationEvent>`（UNLIMITED）+ 单 actor；
+  - 只有 actor 写 `StateFlow<SeparationSnapshot>`；
+  - `onEffect` 执行 Effect，结果必须再以 Event 回来；Effect 失败不杀状态机。
+- `app/src/test/java/pub/miku/neuralstem/spike/state/SeparationControllerTest.kt`
+  - 7 条：事件串行、Effect 顺序、取消/JobStopped、旧 job 事件、
+    换曲、100 条事件不丢、close 后 send 安全。
+- 本阶段仍未接 Repository/UI；M3 把真实 Effect executor 接进来。
 
 ### 本次“完成”的判据
 
