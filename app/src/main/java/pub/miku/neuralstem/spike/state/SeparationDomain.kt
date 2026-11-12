@@ -326,10 +326,22 @@ class SeparationDomain private constructor(private val app: Application) {
                     ),
                 )
             }
-            is SeparationRepository.State.Failed ->
+            is SeparationRepository.State.Failed -> {
                 sendDomain(SeparationEvent.Domain.JobFailed(jobId, state.message))
-            is SeparationRepository.State.Cancelled ->
+                if (current.kind == SeparationKind.EDGE &&
+                    controller.snapshot.value.attachment is AttachmentState.Loaded
+                ) {
+                    controller.detach()
+                }
+            }
+            is SeparationRepository.State.Cancelled -> {
                 sendDomain(SeparationEvent.Domain.JobStopped(jobId))
+                if (current.kind == SeparationKind.EDGE &&
+                    controller.snapshot.value.attachment is AttachmentState.Loaded
+                ) {
+                    controller.detach()
+                }
+            }
             SeparationRepository.State.Idle -> Unit
         }
     }
