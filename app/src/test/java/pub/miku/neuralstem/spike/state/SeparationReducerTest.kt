@@ -845,6 +845,49 @@ class SeparationReducerTest {
     }
 
     @Test
+    fun coverage_frontGap_tracksOnlyTheFrontPrefix() {
+        val noCoverage = Coverage(totalFrames = 1_000L, startFrame = 100L)
+        assertEquals(100L, noCoverage.frontGapFrames)
+
+        val startsAtSeparationPoint = noCoverage.copy(
+            coveredRanges = listOf(100L..199L),
+        )
+        assertEquals(100L, startsAtSeparationPoint.frontGapFrames)
+
+        val frontCovered = noCoverage.copy(
+            coveredRanges = listOf(0L..99L, 100L..199L),
+        )
+        assertEquals(0L, frontCovered.frontGapFrames)
+
+        val noStart = Coverage(totalFrames = 1_000L, startFrame = 0L)
+        assertEquals(0L, noStart.frontGapFrames)
+    }
+
+    @Test
+    fun jobFinished_keepsMetricsInFinishedJobAndJob() {
+        val s = runningEdge()
+        val metrics = JobMetrics(
+            inferTimeMs = 1234L,
+            audioDurationMs = 5000L,
+            peakPssMb = 321f,
+            modelLoadMs = 12L,
+            fromCache = true,
+        )
+        val r = reduce(
+            s,
+            SeparationEvent.Domain.JobFinished(
+                1L,
+                vocalsAndAccomp,
+                s.job!!.coverage.copy(complete = true, watermarkFrame = 1_000L),
+                complete = true,
+                metrics = metrics,
+            ),
+        )
+        assertEquals(metrics, r.snapshot.job!!.metrics)
+        assertEquals(metrics, r.snapshot.lastFinished!!.metrics)
+    }
+
+    @Test
     fun attachment_track_mismatch_is_not_separation_on() {
         val loaded = AttachmentState.Loaded(1L, trackA, vocalsAndAccomp)
         val s = SeparationSnapshot(currentTrackKey = trackB, attachment = loaded)

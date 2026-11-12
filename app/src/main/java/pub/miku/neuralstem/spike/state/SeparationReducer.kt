@@ -293,6 +293,7 @@ object SeparationReducer {
             operation = null,
             coverage = coverage,
             files = e.files,
+            metrics = e.metrics,
         )
         val effects = mutableListOf<SeparationEffect>(SeparationEffect.StopForeground(job.jobId))
         var next = s.copy(
