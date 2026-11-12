@@ -193,7 +193,10 @@ fun AppShell(
         }
     }
 
-    LaunchedEffect(edgeState, edgeGate) {
+    // ★P0（v0.2.13）：edge fast path 可能在 <100ms 内从 Buffering 直接到 Finished，
+    //   edgeState/gate 的终值与上一次会话完全相同 → 只以它们为 key 会漏掉这次切换。
+    //   把 repoState 也纳入 key（fast path 的 EdgeDone 会变），确保新会话仍触发切轨。
+    LaunchedEffect(edgeState, edgeGate, repoState) {
         val st = edgeState
         val gate = edgeGate
         val sessionKey = currentEdgeSessionKey()
