@@ -92,7 +92,8 @@
 - keep：native 方法/类、`SherpaSourceSeparation$SeparationResult` 构造器、
   `Avs3Bridge` 反射桥、可选 NCM 包、Kotlin/Compose 注解属性。
 - 验证：R8 release 安装启动；4-stem native 分离完成（infer≈45s）；
-  multi heartbeat；签名、无 UWA、无 debug 组件；CI 双绿。
+  清缓存+关 edge 后 2-stem native 完成（infer≈18.7s / 7.92×）；2 轨导出；
+  EQ 挂到 mixer session；旋转；媒体键 pause/play；签名、无 UWA、无 debug 组件；CI 双绿。
 
 ## 已知限制 / 后续可做
 
