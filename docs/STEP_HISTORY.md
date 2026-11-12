@@ -86,6 +86,14 @@
   `play()` 不再启动第二个 writer。
 - JVM 374；真机验证缓存命中自动切多轨 + heartbeat 推进。
 
+## v0.2.12：R8 / 资源压缩
+
+- 开启 release R8 + resource shrinking；arm64 release **~23MB → 14MB**。
+- keep：native 方法/类、`SherpaSourceSeparation$SeparationResult` 构造器、
+  `Avs3Bridge` 反射桥、可选 NCM 包、Kotlin/Compose 注解属性。
+- 验证：R8 release 安装启动；4-stem native 分离完成（infer≈45s）；
+  multi heartbeat；签名、无 UWA、无 debug 组件；CI 双绿。
+
 ## 已知限制 / 后续可做
 
 - AVS3/NCM 参考解码器不入库；没有它时相关格式跳过，不能随 release 分发。
