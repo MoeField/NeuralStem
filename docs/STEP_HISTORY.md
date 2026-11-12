@@ -95,6 +95,14 @@
   清缓存+关 edge 后 2-stem native 完成（infer≈18.7s / 7.92×）；2 轨导出；
   EQ 挂到 mixer session；旋转；媒体键 pause/play；签名、无 UWA、无 debug 组件；CI 双绿。
 
+## v0.2.13：edge fast path 自动切轨修复
+
+- 问题：完整 edge 缓存 fast path 可能在 <100ms 内从 Buffering 到 Finished，
+  终态与上一次会话相同，AppShell 仅以 edgeState/edgeGate 为 LaunchedEffect key
+  时会漏掉新会话 → 不切多轨 → lastStems 为空 → 开关报“无分离结果”。
+- 修复：key 增加 repoState（fast path 的 EdgeDone 会变化）。
+- 真机验证：极快（缓存命中）→ 自动切多轨、开关显示多轨、导出可用。
+
 ## 已知限制 / 后续可做
 
 - AVS3/NCM 参考解码器不入库；没有它时相关格式跳过，不能随 release 分发。
