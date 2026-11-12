@@ -1,6 +1,6 @@
 # 分离状态模型重构：需求与设计稿
 
-> 状态：**M3 已完成（Domain 接管分离状态/UI/自动切轨），待 M4 验收合并**
+> 状态：**M0–M4 完成（v0.2.14 已合并/发布）**
 > 基线：`v0.2.13`（`7d9f2ed`）
 > 分支：`refactor/separation-state-model`
 > 目标：先把需求和边界定清楚，再写代码；不在 `main` 上直接改。
@@ -48,7 +48,7 @@
 | M1 | 纯模型 + reducer + 测试 | ✅ 已完成：`spike/state/` + 50 条 reducer 测试；全量 424/0 |
 | M2 | Controller + adapter | ✅ 已完成：Channel actor + fake effects；全量 431/0 |
 | M3 | UI/VM/PlayerState 迁移 | ✅ 已完成：Domain 接管；433/0；真机 edge/4-stem 通过 |
-| M4 | 验收 + 合并 | JVM/R8/真机场景全过；合 main 后发 v0.2.14 |
+| M4 | 验收 + 合并 | ✅ 已完成：CI 双绿；tag v0.2.14；设备 smoke 通过 |
 
 ### M1 实现记录（2026-11-13）
 
@@ -100,10 +100,11 @@
   - 删除 PlayerState 的 edgePercent/edgeStarved/edgeBeforeStart/edgeStartMs/
     edgeSeparatedFraction/backfillPercent/pendingBackfillMs/separationOn/stemsAvailable；
   - 统一读 `separationEdge` + `isMultiTrack`；旧自动切轨 effect disabled。
-- 真机：edge 缓存命中自动切多轨；4-stem 启动/缓存命中；取消/换曲路径待 M4 再全量验收。
+- 真机：edge 缓存命中自动切多轨；4-stem 启动/缓存命中；开关 off/on；
+  取消/播放结束/换曲事件已接 Domain（取消 detach）。
 - JVM 433/0（新增 coverage frontGap、JobMetrics 传播测试）。
 
-### 本次“完成”的判据### 本次“完成”的判据
+### 本次“完成”的判据
 
 - `SeparationController` 是分离状态的唯一写者；grep 不再出现多份分离 UI 字段。
 - reducer 覆盖 `State × Event` 迁移表；交错测试覆盖：
@@ -113,8 +114,17 @@
   - LoadStems 中切歌/关开关
   - FULL 后台继续
   - Stopping 超时/native 卡死
-- 现有 JVM 374 + 新增测试全过；R8 release 构建/安装/2/4 轨/edge/导出 smoke 通过。
+- JVM 433/0；R8 release 构建/安装/edge/4-stem/开关 smoke 通过。
 - 真机验收通过后才合 `main`；不通过则分支保留，`main` 继续 v0.2.13。
+
+### M4 验收记录（2026-11-13）
+
+- 合并：`87fc084 merge: separation state model Level 2 (M0-M3)`，已合入 `main`。
+- 发布：tag `v0.2.14`；CI `unit-test` + `build-apk` success；三个 APK 已上传。
+- 设备：v0.2.14 安装/启动；edge fast path 自动切多轨；4-stem cache/启动；
+  分离开关 off/on；无 FATAL。
+- 测试：433/0（M1 reducer 52 + M2 controller 7 + 原有 374）。
+- 分支 `refactor/separation-state-model` 保留作为历史；`main` 不再依赖旧 repo→UI 订阅。
 
 ### 不追求的目标
 
