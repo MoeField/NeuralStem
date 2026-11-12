@@ -26,6 +26,9 @@ import pub.miku.neuralstem.spike.state.SeparationDomain
 import pub.miku.neuralstem.spike.state.SeparationKind
 import pub.miku.neuralstem.spike.state.StartRequest
 import pub.miku.neuralstem.spike.state.TrackKey
+import pub.miku.neuralstem.spike.state.Lifecycle
+import pub.miku.neuralstem.spike.state.JobMetrics
+import pub.miku.neuralstem.spike.state.SeparationSnapshot
 
 /**
  * Spike 编排(Task 0b,sherpa-onnx 主路线)。
@@ -91,6 +94,12 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
 
     /** ★3a-2：常驻 repo 订阅（幂等，init 时建立一次）。 */
     private var repoSubscription: Job? = null
+
+    /** M3：Domain snapshot 订阅；旧 repo 订阅不再驱动 UI。 */
+    private var domainSubscription: Job? = null
+    private var lastMappedActiveJobId: Long? = null
+    private var lastMappedDoneJobId: Long? = null
+    private var lastMappedFailedJobId: Long? = null
 
     /** 把 SM 当前的分离态镜像到对外流（单一出口，避免双读）。 */
     private fun pushSeparationTask() {
@@ -172,7 +181,7 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
         applyDefaultEngine()
         // ★3a-2：常驻订阅 repo → 驱动状态机（不再只在“开始时订阅”）。
         //   否则：页面重入 / VM 重建时 SM 停在 Idle，即使 repo 正在跑/已完成。
-        subscribeRepo()
+        subscribeDomain()
         // ★B9：Activity/VM 重建时，进程级 repo 可能仍在 Preparing/Running。
         //   v0.2.8 的显式 begin 门禁会拒绝这些“迟到”的 repo 事件 → UI 卡 Idle。
         //   这里在首次订阅后把**当前活跃任务**种入状态机；取消/切换后的迟到事件仍由门禁挡住。
@@ -473,6 +482,120 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
             SeparationRepository.State.PrepPhase.MODEL_READY -> SeparationTask.PrepPhase.MODEL_READY
         }
 
+    private fun subscribeDomain() {
+        if (domainSubscription != null) return
+        domainSubscription = viewModelScope.launch {
+            domain.snapshot.collect { snapshot -> applyDomainSnapshot(snapshot) }
+        }
+    }
+
+    private fun applyDomainSnapshot(snapshot: SeparationSnapshot) {
+        val job = snapshot.job
+        if (job == null) {
+            if (lastMappedActiveJobId != null) {
+                session.onSeparationCancelled()
+                lastMappedActiveJobId = null
+            }
+            pushSeparationTask()
+            return
+        }
+
+        if (job.jobId != lastMappedActiveJobId) {
+            lastMappedActiveJobId = job.jobId
+            lastMappedDoneJobId = null
+            lastMappedFailedJobId = null
+        }
+
+        when (val lc = job.lifecycle) {
+            is Lifecycle.Preparing ->
+                session.onSeparationPreparing(SeparationTask.PrepPhase.DECODING)
+            is Lifecycle.Running -> {
+                if (session.separation is SeparationTask.Preparing) {
+                    session.startSeparation()
+                }
+                val total = job.coverage.totalFrames.coerceAtLeast(1L)
+                val done = job.coverage.coveredFrames.coerceIn(0L, total)
+                val percent = ((done * 100L) / total).toInt().coerceIn(0, 100)
+                session.onSeparationProgress(percent)
+                _state.value = State.Separating(0L, job.metrics?.peakPssMb ?: 0f, percent)
+            }
+            is Lifecycle.Finished -> {
+                if (lastMappedDoneJobId != job.jobId) {
+                    lastMappedDoneJobId = job.jobId
+                    val files = job.files?.paths?.map(::File).orEmpty()
+                    val metrics = job.metrics ?: JobMetrics()
+                    when (job.kind) {
+                        SeparationKind.EDGE -> {
+                            session.onSeparationEdgeDone()
+                            _lastEdgeDone.value = EdgeDoneUi(
+                                complete = job.coverage.complete,
+                                inferTimeMs = metrics.inferTimeMs,
+                                audioDurationMs = metrics.audioDurationMs,
+                            )
+                            edgeDoneFlashJob?.cancel()
+                            edgeDoneFlashJob = viewModelScope.launch {
+                                delay(5_000)
+                                _lastEdgeDone.value = null
+                            }
+                            if (job.coverage.complete && files.size >= 2) {
+                                _lastExportable.value = files.take(2)
+                            }
+                        }
+                        SeparationKind.FULL_2 -> {
+                            if (files.size >= 2) {
+                                session.onSeparationDone(
+                                    SeparationTask.Done2(
+                                        vocalsFile = files[0],
+                                        accompanimentFile = files[1],
+                                        modelLoadMs = metrics.modelLoadMs,
+                                        inferTimeMs = metrics.inferTimeMs,
+                                        peakPssMb = metrics.peakPssMb,
+                                        audioDurationMs = metrics.audioDurationMs,
+                                        fromCache = metrics.fromCache,
+                                    ),
+                                )
+                                _lastExportable.value = files.take(2)
+                                _state.value = State.Done(
+                                    vocalsFile = files[0],
+                                    accompanimentFile = files[1],
+                                    modelLoadMs = metrics.modelLoadMs,
+                                    inferTimeMs = metrics.inferTimeMs,
+                                    peakPssMb = metrics.peakPssMb,
+                                    audioDurationMs = metrics.audioDurationMs,
+                                    fromCache = metrics.fromCache,
+                                )
+                            }
+                        }
+                        SeparationKind.FULL_4 -> {
+                            if (files.size >= 4) {
+                                session.onSeparationDone(
+                                    SeparationTask.Done4(
+                                        stemFiles = files,
+                                        inferTimeMs = metrics.inferTimeMs,
+                                        peakPssMb = metrics.peakPssMb,
+                                        audioDurationMs = metrics.audioDurationMs,
+                                        fromCache = metrics.fromCache,
+                                    ),
+                                )
+                                _lastExportable.value = files
+                                _state.value = State.Idle
+                            }
+                        }
+                    }
+                }
+            }
+            is Lifecycle.Failed -> {
+                if (lastMappedFailedJobId != job.jobId) {
+                    lastMappedFailedJobId = job.jobId
+                    session.onSeparationFailed(lc.message)
+                    _state.value = State.Error(lc.message)
+                }
+            }
+            is Lifecycle.Stopping -> Unit
+        }
+        pushSeparationTask()
+    }
+
     private fun subscribeRepo() {
         if (repoSubscription != null) return
         repoSubscription = viewModelScope.launch {
@@ -627,13 +750,13 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
      * 旧路径：`SeparationScreen` 直接 `repo.start4(src)` → 状态机看不到 → 仍需 UI 双读 repo。
      * 新路径：统一经此方法“先订阅（驱动 SM）再启动”，与 2-stem 同构。
      */
-    fun start4Stem(source: File) {
+    fun start4Stem(source: File, ownerUri: String? = null) {
         session.beginSeparation()
         pushSeparationTask()
         domain.start(
             StartRequest(
                 kind = SeparationKind.FULL_4,
-                trackKey = TrackKey("", 0L),
+                trackKey = TrackKey(ownerUri ?: "", 0L),
                 sourcePath = source.absolutePath,
                 backend = SeparationBackend.SPLEETER4,
             ),
@@ -676,7 +799,7 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
             }
             SepOption.Spleeter4 -> {
                 Log.i(TAG, "startOption: Spleeter4")
-                start4Stem(source)
+                start4Stem(source, ownerUri)
             }
             SepOption.Demucs -> {
                 Log.i(TAG, "startOption: Demucs")

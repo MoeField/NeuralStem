@@ -33,6 +33,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -62,6 +63,7 @@ import pub.miku.neuralstem.playlist.PlaylistViewModel
 import pub.miku.neuralstem.settings.SettingsScreen
 import pub.miku.neuralstem.spike.EdgeSeparationSession
 import pub.miku.neuralstem.spike.SeparationRepository
+import java.io.File
 import pub.miku.neuralstem.spike.state.SeparationDomain
 import pub.miku.neuralstem.spike.state.TrackKey
 import pub.miku.neuralstem.spike.SeparationScreen
@@ -171,9 +173,50 @@ fun AppShell(
     val repoState by repo.state.collectAsState()
     // ★M3a：先只把“当前曲”同步给新领域层；旧 UI/自动切轨仍由下面的旧 effect 驱动。
     val separationDomain = remember { SeparationDomain.get(appCtx) }
+    val domainSnapshot by separationDomain.snapshot.collectAsState()
     LaunchedEffect(playerState.currentUri) {
         val uri = playerState.currentUri ?: return@LaunchedEffect
         separationDomain.onTrackChanged(TrackKey(uri, 0L))
+    }
+
+    // ★M3b：Domain 的 LoadStems/DetachStems 真正落到播放器。
+    val domainPlayerBridge = remember(playerVm) {
+        object : SeparationDomain.PlayerBridge {
+            override fun loadStems(jobId: Long, files: List<File>): Boolean {
+                if (files.isEmpty()) return false
+                val stems = if (files.size >= 4) {
+                    files.map { f ->
+                        val kind = f.nameWithoutExtension.lowercase()
+                        Triple(kind, stemLabel(kind), f)
+                    }
+                } else {
+                    listOf(
+                        Triple("vocals", "人声", files[0]),
+                        Triple("accompaniment", "伴奏", files.getOrNull(1) ?: files[0]),
+                    )
+                }
+                playerVm.loadMultiTrack(stems, startPositionMs = playerVm.progress.positionMs)
+                playerVm.markStemsAvailable()
+                playerVm.play()
+                return true
+            }
+
+            override fun detachStems() {
+                if (!playerVm.toggleSeparation(false)) {
+                    playerVm.exitMultiTrack()
+                    playerVm.play()
+                }
+            }
+        }
+    }
+    DisposableEffect(separationDomain, domainPlayerBridge) {
+        separationDomain.setPlayerBridge(domainPlayerBridge)
+        onDispose { separationDomain.setPlayerBridge(null) }
+    }
+    LaunchedEffect(separationDomain) {
+        separationDomain.notices.collect { msg ->
+            snackbarHostState.showSnackbar(msg)
+        }
     }
     LaunchedEffect(repoState) {
         val rs = repoState as? SeparationRepository.State.EdgeDone ?: return@LaunchedEffect
@@ -184,7 +227,7 @@ fun AppShell(
             return@LaunchedEffect
         }
         // 文件模式下，首段就绪时已经切到这些文件；这里只做一次幂等刷新（水位线置满后）。
-        if (playerVm.state.value.separationOn) {
+        if (playerVm.state.value.isMultiTrack) {
             Log.i("AppShell", "EdgeDone：已在多轨文件播放，水位线已置满（全曲可 seek）")
         }
     }
@@ -205,6 +248,9 @@ fun AppShell(
     //   edgeState/gate 的终值与上一次会话完全相同 → 只以它们为 key 会漏掉这次切换。
     //   把 repoState 也纳入 key（fast path 的 EdgeDone 会变），确保新会话仍触发切轨。
     LaunchedEffect(edgeState, edgeGate, repoState) {
+        // ★M3b：自动切轨/回原曲已由 SeparationDomain 的 Effect 驱动；
+        //   旧 effect 保留为 fallback（autoSwitchEnabled=false 时才会执行）。
+        if (separationDomain.autoSwitchEnabled) return@LaunchedEffect
         val st = edgeState
         val gate = edgeGate
         val sessionKey = currentEdgeSessionKey()
@@ -408,7 +454,7 @@ fun AppShell(
                 modifier = Modifier.fillMaxSize().padding(padding),
                 // 当前播放曲信息（由宿主注入, 避免平级 VM 相互引用）
                 fileName = playerState.fileName,
-                separationOn = playerState.separationOn,
+                separationOn = playerState.isMultiTrack, // M3b：先保持真实播放器状态，M3c 再派生
                 currentUri = playerState.currentUri,
                 // ★2026-11-01：**必须返回 Boolean**（是否已处理）。
                 //   以前这里是 `{ on -> playerVm.toggleSeparation(on) }`，
@@ -431,13 +477,13 @@ fun AppShell(
                 // ★G-3：当前播放位置（点击时才读）；供“从当前位置起分离”。
                 currentPositionMs = { playerVm.progress.positionMs },
                 // ★G-3ux：分离页进度文案区分“已可播/仍在跑”。
-                edgePercent = playerState.edgePercent,
+                edgePercent = edgePercentOf(domainSnapshot),
                 // ★闸门：分离跟不上播放时，分离页也说明“已暂停等待”。
-                edgeStarved = playerState.edgeStarved,
+                edgeStarved = playerState.separationEdge.edgeStarved,
                 // ★两阶段：补前段进度
-                backfillPercent = playerState.backfillPercent,
+                backfillPercent = playerState.separationEdge.backfillPercent,
                 // ★B4：成本门控跳过的缺口 → 分离页显示“补齐前段”入口。
-                pendingBackfillMs = playerState.pendingBackfillMs,
+                pendingBackfillMs = pendingBackfillMsOf(domainSnapshot),
                 // ★G-3ux：无缓存时跳过来 → 自动开始分离（不用用户再点一次）。
                 autoStartToken = autoStartSeparate,
                 // ★无可用模型时的出口：跳设置页并直接打开模型库
@@ -683,6 +729,23 @@ private val RAIL_BOTTOM_PAD = 6.dp
  * （Spleeter4 是 vocals 在前，Demucs 是 drums 在前），
  * 用索引贴标签会把 id/label 全部弄错位。
  */
+private fun edgePercentOf(snapshot: pub.miku.neuralstem.spike.state.SeparationSnapshot): Int? {
+    val job = snapshot.job ?: return null
+    if (job.kind != pub.miku.neuralstem.spike.state.SeparationKind.EDGE || job.isTerminal) return null
+    val total = job.coverage.totalFrames
+    if (total <= 0L) return null
+    return ((job.coverage.coveredFrames.coerceIn(0L, total) * 100L) / total).toInt()
+}
+
+private fun pendingBackfillMsOf(
+    snapshot: pub.miku.neuralstem.spike.state.SeparationSnapshot,
+): Long {
+    val job = snapshot.job ?: return 0L
+    val total = job.coverage.totalFrames
+    if (total <= 0L) return 0L
+    return job.coverage.frontGapFrames * 1000L / 44_100L
+}
+
 private fun stemLabel(kind: String): String = when (kind) {
     "vocals" -> "人声"
     "accompaniment" -> "伴奏"

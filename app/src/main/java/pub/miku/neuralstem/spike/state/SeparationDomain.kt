@@ -7,6 +7,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.isActive
@@ -15,6 +16,18 @@ import pub.miku.neuralstem.spike.EdgeSeparationSession
 import pub.miku.neuralstem.spike.SeparationRepository
 import pub.miku.neuralstem.spike.SherpaSourceSeparation
 import java.io.File
+
+/** 分离 UI 的派生视图；PlayerState/SeparationScreen 不再各自存这些字段。 */
+data class SeparationEdgeUi(
+    val separationOn: Boolean = false,
+    val edgePercent: Int? = null,
+    val edgeSeparatedFraction: Float? = null,
+    val edgeStarved: Boolean = false,
+    val edgeBeforeStart: Boolean = false,
+    val edgeStartMs: Long = 0L,
+    val backfillPercent: Int? = null,
+    val pendingBackfillMs: Long = 0L,
+)
 
 /**
  * Android 侧的分离领域适配层（M3a）。
@@ -48,8 +61,16 @@ class SeparationDomain private constructor(private val app: Application) {
     private val _notices = MutableSharedFlow<String>(extraBufferCapacity = 16)
     val notices: SharedFlow<String> = _notices
 
+    private val _edgeUi = MutableStateFlow(SeparationEdgeUi())
+    val edgeUi: StateFlow<SeparationEdgeUi> = _edgeUi
+
     @Volatile
     private var playerBridge: PlayerBridge? = null
+
+    /** 自动切轨是否由 Domain 接管；AppShell 的旧 effect 据此走 fallback。 */
+    @Volatile
+    var autoSwitchEnabled: Boolean = false
+        private set
 
     private var activeJobId: Long? = null
     private var sourceReady = false
@@ -62,12 +83,14 @@ class SeparationDomain private constructor(private val app: Application) {
             while (isActive) {
                 delay(200L)
                 tickEdge()
+                publishEdgeUi()
             }
         }
     }
 
     fun setPlayerBridge(bridge: PlayerBridge?) {
         playerBridge = bridge
+        autoSwitchEnabled = bridge != null
     }
 
     // ==================== Public events ====================
@@ -238,6 +261,13 @@ class SeparationDomain private constructor(private val app: Application) {
                         ),
                         coverage = coverage,
                         complete = true,
+                        metrics = JobMetrics(
+                            inferTimeMs = state.inferTimeMs,
+                            audioDurationMs = state.audioDurationMs,
+                            peakPssMb = state.peakPssMb,
+                            modelLoadMs = state.modelLoadMs,
+                            fromCache = state.fromCache,
+                        ),
                     ),
                 )
             }
@@ -257,6 +287,12 @@ class SeparationDomain private constructor(private val app: Application) {
                         files = StemFiles(state.stemFiles.map { it.absolutePath }),
                         coverage = coverage,
                         complete = true,
+                        metrics = JobMetrics(
+                            inferTimeMs = state.inferTimeMs,
+                            audioDurationMs = state.audioDurationMs,
+                            peakPssMb = state.peakPssMb,
+                            fromCache = state.fromCache,
+                        ),
                     ),
                 )
             }
@@ -282,6 +318,11 @@ class SeparationDomain private constructor(private val app: Application) {
                         files = StemFiles(listOf(vf.absolutePath, af.absolutePath)),
                         coverage = coverage,
                         complete = state.complete,
+                        metrics = JobMetrics(
+                            inferTimeMs = state.inferTimeMs,
+                            audioDurationMs = state.audioDurationMs,
+                            peakPssMb = state.peakPssMb,
+                        ),
                     ),
                 )
             }
@@ -325,6 +366,36 @@ class SeparationDomain private constructor(private val app: Application) {
                 edge.gate.value is EdgeSeparationSession.Gate.Finished
             sendDomain(SeparationEvent.Domain.CoverageUpdated(jobId, coverage, gateReady))
         }
+    }
+
+    private fun publishEdgeUi() {
+        val snap = controller.snapshot.value
+        val job = snap.job
+        if (job == null || job.kind != SeparationKind.EDGE) {
+            if (_edgeUi.value != SeparationEdgeUi()) _edgeUi.value = SeparationEdgeUi()
+            return
+        }
+        val pct = when (val st = edge.state.value) {
+            is EdgeSeparationSession.State.Preparing -> 0
+            is EdgeSeparationSession.State.FirstSegmentReady -> st.percent
+            is EdgeSeparationSession.State.Running -> st.percent
+            else -> null
+        }
+        val total = edge.totalFrames
+        val frac = if (total > 0 && edge.gate.value !is EdgeSeparationSession.Gate.Idle) {
+            (edge.writtenUpToFrame.toFloat() / total).coerceIn(0f, 1f)
+        } else null
+        val bf = if (edge.inBackfill.value) edge.backfillPercent.value else null
+        _edgeUi.value = SeparationEdgeUi(
+            separationOn = snap.separationOn,
+            edgePercent = pct,
+            edgeSeparatedFraction = frac,
+            edgeStarved = edge.gate.value is EdgeSeparationSession.Gate.Starved,
+            edgeBeforeStart = edge.seekInGrayZone,
+            edgeStartMs = edge.startMs,
+            backfillPercent = bf,
+            pendingBackfillMs = edge.pendingBackfillMs(),
+        )
     }
 
     private fun sendDomain(event: SeparationEvent.Domain) {

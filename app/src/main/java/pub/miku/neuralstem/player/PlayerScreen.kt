@@ -190,8 +190,8 @@ fun PlayerScreen(
                             if (dur > 0) vm.seekTo((f * dur).toLong())
                         },
                         // ★G-3 视觉引导：外环上标“分离已推进到哪”
-                        separatedFraction = state.edgeSeparatedFraction,
-                        isEdgeSeparating = state.edgePercent != null,
+                        separatedFraction = state.separationEdge.edgeSeparatedFraction,
+                        isEdgeSeparating = state.separationEdge.edgePercent != null,
                     )
                     ControlsArea(
                         modifier = Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()),
@@ -379,8 +379,8 @@ private fun DeckArea(
                     if (dur > 0) vm.seekTo((f * dur).toLong())
                 },
                 // ★G-3 视觉引导（竖屏路径）
-                separatedFraction = state.edgeSeparatedFraction,
-                isEdgeSeparating = state.edgePercent != null,
+                separatedFraction = state.separationEdge.edgeSeparatedFraction,
+                isEdgeSeparating = state.separationEdge.edgePercent != null,
             )
         }
     }
@@ -503,7 +503,7 @@ private fun ControlsArea(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     stringResource(
-                        if (state.separationOn) R.string.player_sep_on
+                        if (state.isMultiTrack) R.string.player_sep_on
                         else R.string.player_sep_off,
                     ),
                     style = MaterialTheme.typography.bodyMedium,
@@ -517,20 +517,20 @@ private fun ControlsArea(
                 // ★闸门（2026-10-20）：分离跟不上播放时优先显示 **Starved** 文案
                 //   （“已暂停等待”），否则用户只看到“暂停”而不知道是⾃在等分离。
                 //   慢模型（0.34×）会反复进这个态，必须解释清楚。
-                val pct = state.edgePercent
+                val pct = state.separationEdge.edgePercent
                 when {
                     // ★灰区优先：位置在分离起点之前 —— 那段永远不会填，需特别说明。
-                    state.edgeBeforeStart -> Text(
-                        stringResource(R.string.sep_edge_before_start, PlayerViewModel.formatTime(state.edgeStartMs)),
+                    state.separationEdge.edgeBeforeStart -> Text(
+                        stringResource(R.string.sep_edge_before_start, PlayerViewModel.formatTime(state.separationEdge.edgeStartMs)),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.error,
                     )
-                    state.edgeStarved && pct != null -> Text(
+                    state.separationEdge.edgeStarved && pct != null -> Text(
                         stringResource(R.string.sep_edge_starved_paused, pct),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.error,
                     )
-                    state.edgeStarved -> Text(
+                    state.separationEdge.edgeStarved -> Text(
                         stringResource(R.string.sep_edge_starved),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.error,
@@ -538,7 +538,7 @@ private fun ControlsArea(
                     pct != null -> Text(
                         // ★2026-11-07：切过去之前不要说“已可播放”（gate 可能还在 Buffering）。
                         stringResource(
-                            if (state.separationOn) R.string.sep_running_playable
+                            if (state.isMultiTrack) R.string.sep_running_playable
                             else R.string.sep_running_waiting,
                             pct,
                         ),
@@ -548,11 +548,11 @@ private fun ControlsArea(
                 }
             }
             Switch(
-                checked = state.separationOn,
+                checked = state.isMultiTrack,
                 onCheckedChange = { onSeparationToggle(it) },
                 // ★2026-11-09：分离进行中、还没切多轨时禁用（就绪后自动切），
                 //   避免点了只得到「无分离结果」；已切多轨后仍可关。
-                enabled = !(state.edgePercent != null && !state.separationOn),
+                enabled = !(state.separationEdge.edgePercent != null && !state.isMultiTrack),
             )
         }
         // ★⑬：横屏不显“去「分离」页处理 →”（底栏已有“分离”tab）；竖屏保留。

@@ -115,6 +115,14 @@ data class StemFiles(
     }
 }
 
+data class JobMetrics(
+    val inferTimeMs: Long = 0L,
+    val audioDurationMs: Long = 0L,
+    val peakPssMb: Float = 0f,
+    val modelLoadMs: Long = 0L,
+    val fromCache: Boolean = false,
+)
+
 data class JobState(
     val jobId: Long,
     val trackKey: TrackKey,
@@ -124,6 +132,7 @@ data class JobState(
     val coverage: Coverage = Coverage(startFrame = 0L),
     val files: StemFiles? = null,
     val trackTitle: String? = null,
+    val metrics: JobMetrics? = null,
 ) {
     val isTerminal: Boolean
         get() = lifecycle is Lifecycle.Finished || lifecycle is Lifecycle.Failed
@@ -144,6 +153,7 @@ data class FinishedJob(
     val kind: SeparationKind,
     val files: StemFiles,
     val coverage: Coverage,
+    val metrics: JobMetrics? = null,
 )
 
 data class SeparationSnapshot(
@@ -208,6 +218,7 @@ sealed interface SeparationEvent {
             val files: StemFiles,
             val coverage: Coverage,
             val complete: Boolean,
+            val metrics: JobMetrics? = null,
         ) : Domain
 
         data class JobFailed(val jobId: Long, val message: String) : Domain

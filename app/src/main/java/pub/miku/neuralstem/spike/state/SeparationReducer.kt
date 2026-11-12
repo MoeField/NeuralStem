@@ -297,7 +297,14 @@ object SeparationReducer {
         val effects = mutableListOf<SeparationEffect>(SeparationEffect.StopForeground(job.jobId))
         var next = s.copy(
             job = nextJob,
-            lastFinished = FinishedJob(job.jobId, job.trackKey, job.kind, e.files, coverage),
+            lastFinished = FinishedJob(
+                job.jobId,
+                job.trackKey,
+                job.kind,
+                e.files,
+                coverage,
+                e.metrics,
+            ),
             lastError = null,
         )
 
