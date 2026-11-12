@@ -37,6 +37,8 @@ import pub.miku.neuralstem.devtools.EdgeProbe
 import pub.miku.neuralstem.playlist.PlaylistStore
 import pub.miku.neuralstem.settings.SettingsRepository
 import pub.miku.neuralstem.spike.EdgeSeparationSession
+import pub.miku.neuralstem.spike.state.SeparationDomain
+import pub.miku.neuralstem.spike.state.SeparationEdgeUi
 import pub.miku.neuralstem.spike.SeparationRepository
 
 /**
@@ -51,6 +53,8 @@ import pub.miku.neuralstem.spike.SeparationRepository
  *   焦点归还时按 `playWhenReady` 恢复。Task 1 用最简方案,后续需要自定义行为再换手动管理。
  */
 class PlayerViewModel(app: Application) : AndroidViewModel(app) {
+
+    private val separationDomain = SeparationDomain.get(app)
 
     /** UI 观察的单一状态。用 data class 避免 N 个碎片 StateFlow 的组合样板。 */
     data class PlayerState(
@@ -99,64 +103,10 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         val repeatMode: SettingsRepository.RepeatMode = SettingsRepository.RepeatMode.SEQUENTIAL,
         /** ★R3：内嵌封面（黑胶内圈）；null = 无。 */
         val cover: ImageBitmap? = null,
-        /** ★U3：分离开关（true=播多轨；false=播原曲）。 */
-        val separationOn: Boolean = false,
-        /** ★U3：是否已有可用分离结果（无则开开关需先分离）。 */
-        val stemsAvailable: Boolean = false,
         /** ★Step10：当前播放曲的 uri（分离页用它作输入）。 */
         val currentUri: String? = null,
-        /**
-         * ★G-3ux：边分离边播**进行中**的进度百分比（0–100）；null = 无活动 edge 会话。
-         *
-         * 意义：用户点了「⚡ 快速」后，分离页/播放页都应能看到“还在分离”。
-         * 没有它时，切多轨后 UI 自相矛盾（开关说“已分离”，进度条说“分离中 58%”）。
-         */
-        val edgePercent: Int? = null,
-    /**
-     * ★闸门（2026-10-20）：边播时**播放被分离追上而暂停**。
-     *
-     * 与 [edgePercent] 分开是因为它俩含义不同：
-     * - [edgePercent] = “分离还在跑”（进度）
-     * - [edgeStarved] = “**现在没声，不是 bug**”（播放态）
-     * 没这一项时用户会以为播放坏了（慢模型 0.34× 会频繁进入此态）。
-     */
-    val edgeStarved: Boolean = false,
-    /**
-     * ★灰区（2026-10-20）：当前播放位置落在**本次分离起点之前**。
-     *
-     * 那段从未分离，文件里是预分配静音且**永远不会填** → 静音是正确结果。
-     * 不暂停（等不了），但必须告知用户“为什么没声”。
-     */
-    val edgeBeforeStart: Boolean = false,
-    /** 本次分离的起点（ms），供“此段未参与分离（从 X:XX 起）”文案。 */
-    val edgeStartMs: Long = 0L,
-    /**
-     * ★G-3 视觉引导（2026-10-20）：分离在外环上的**推进位置**（0..1 全曲比例）。
-     *
-     * 与 [edgePercent] 的区别：
-     * - [edgePercent] 是**分离任务自己的进度百分比**（已分离帧 / 待分离帧）
-     * - 本字段是**在全曲时间轴上的位置**（水位线 / 整曲帧数）
-     * 后者才能直接映射到转盘外环的角度（外环的角度轴 = 时间轴）。
-     *
-     * null = 非边播场景（不画标记）。
-     */
-    val edgeSeparatedFraction: Float? = null,
-    /**
-     * ★两阶段（2026-10-20）：阶段 1 已完成、正在回头补前段（0..100）；null = 没在补。
-     *
-     * 与 [edgePercent] 的区别：
-     * - [edgePercent] = 阶段 1（正向）的进度；为 null 表示阶段 1 已结束
-     * - [backfillPercent] = 阶段 2（补齐前段）的进度
-     * 两者互斥（不会同时非 null）。
-     */
-    val backfillPercent: Int? = null,
-    /**
-     * ★成本门控（2026-10-20）：本次会话**没自动补**的前段缺口（毫秒）。
-     *
-     * null / 0 = 无缺口。> 0 时分离页显示「前 N 分钟未分离 · 点击补齐」。
-     * 场景：一小时演唱会从 55 分开始分离 —— 补前段要 55 分钟，不值得自动跑。
-     */
-    val pendingBackfillMs: Long = 0L,
+        /** ★M3c：分离 UI 统一派生视图（由 SeparationDomain 更新）。 */
+        val separationEdge: SeparationEdgeUi = SeparationEdgeUi(),
 
     /**
      * ★AVS3 解码会话（2026-10-26）。
@@ -207,7 +157,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
      * **永远与状态机一致**（取代此前散落 ~8 处的手动 copy——任一漏写即 UI 与实际分叉）。
      *
      * 范围（A 方案，保守）：仅此三者（状态机已是精确真源）；
-     * `separationOn` 因与 `stemsAvailable`/`lastStems` 语义交织**暂不派生**（防回归）。
+     * `isMultiTrack` 由播放侧会话派生；分离结果文件由 `lastStems` 管理。
      */
     private fun withDerived(s: PlayerState): PlayerState = s.copy(
         isMultiTrack = session.isMultiTrack,
@@ -657,6 +607,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                         Log.i(TAG, "STATE_ENDED(门面) 在多轨下忽略 → 等 mixEnded")
                     } else {
                         Log.i(TAG, "STATE_ENDED → autoAdvanceOnEnded")
+                        separationDomain.onPlaybackEnded()
                         autoAdvanceOnEnded()
                     }
                 }
@@ -819,92 +770,16 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         Log.i(TAG, "VM init (instance=${hashCode()})")
         // V2(guide N4):连接 PlaybackService 的 session 拿 MediaController
         connectToService()
-        // ★G-3ux：把 edge 会话进度镜像进 PlayerState，
-        //   使播放页/分离页都能显示“边分离边播进行中 · N%”。
-        //   Idle/Cancelled/Failed → null；Preparing → 0；FirstSegmentReady/Running → 百分比；Done → null。
+        // ★M3c：分离 UI 统一从 Domain 派生，不再由 PlayerVM 各自轮询 edge session。
         viewModelScope.launch {
-            EdgeSeparationSession.get().state.collect { st ->
-                val pct: Int? = when (st) {
-                    is EdgeSeparationSession.State.Preparing -> 0
-                    is EdgeSeparationSession.State.FirstSegmentReady -> st.percent
-                    is EdgeSeparationSession.State.Running -> st.percent
-                    else -> null   // Idle / Done / Failed / Cancelled
-                }
-                if (_state.value.edgePercent != pct) {
-                    _state.value = _state.value.copy(edgePercent = pct)
+            separationDomain.edgeUi.collect { ui ->
+                if (_state.value.separationEdge != ui) {
+                    _state.value = _state.value.copy(separationEdge = ui)
                 }
             }
         }
-        // ★G-3 视觉引导（2026-10-20）：把**水位线占整曲的比例**镜像进 state，供转盘外环画标记。
-        //   为何单独一个协程而不在 state.collect 里算：水位线是普通 volatile，
-        //   在分离过程中**持续变化**但 state 只在阶段性事件才 emit（每块才一次）。
-        //   这里用 500ms 轮询跟踪，足够 UI（线移动 500ms 一次完全看不出顿）。
-        viewModelScope.launch {
-            val s = EdgeSeparationSession.get()
-            while (isActive) {
-                delay(500)
-                val total = s.totalFrames
-                val frac: Float? = if (total > 0 && s.gate.value !is EdgeSeparationSession.Gate.Idle) {
-                    (s.writtenUpToFrame.toFloat() / total).coerceIn(0f, 1f)
-                } else null
-                if (_state.value.edgeSeparatedFraction != frac) {
-                    _state.value = _state.value.copy(edgeSeparatedFraction = frac)
-                }
-            }
-        }
-        // ★闸门：把“分离跟不上播放”镜像进 PlayerState，供播放页显示提示。
-        //   否则用户只看到“暂停”而不知道为什么（慢模型会反复进这个态）。
-        viewModelScope.launch {
-            EdgeSeparationSession.get().gate.collect { g ->
-                val starved = g is EdgeSeparationSession.Gate.Starved
-                if (_state.value.edgeStarved != starved) {
-                    _state.value = _state.value.copy(edgeStarved = starved)
-                }
-            }
-        }
-        // ★灰区：位置在本次分离起点之前 → 显示“此段未参与分离”。
-        //   `seekInGrayZone` 是普通 volatile（不是 Flow），故用低频轮询镜像。
-        //   ★两阶段（2026-10-20）：把“补前段进度”也在这个轮询里带出来。
-        viewModelScope.launch {
-            val s = EdgeSeparationSession.get()
-            while (isActive) {
-                delay(200)
-                // ★P2：边分离 UI 状态必须属于当前曲；切歌后不能把上一首的
-                //   gray/pendingBackfill 带过来。
-                if (separationTargetUri != null && !separationMatchesCurrent()) {
-                    if (_state.value.edgeBeforeStart ||
-                        _state.value.edgeStartMs != 0L ||
-                        _state.value.backfillPercent != null ||
-                        _state.value.pendingBackfillMs != 0L
-                    ) {
-                        _state.value = _state.value.copy(
-                            edgeBeforeStart = false,
-                            edgeStartMs = 0L,
-                            backfillPercent = null,
-                            pendingBackfillMs = 0L,
-                        )
-                    }
-                    continue
-                }
-                val gray = s.seekInGrayZone
-                val startMs = s.startMs
-                val bf = if (s.inBackfill.value) s.backfillPercent.value else null
-                val pending = s.pendingBackfillMs()
-                if (_state.value.edgeBeforeStart != gray ||
-                    _state.value.edgeStartMs != startMs ||
-                    _state.value.backfillPercent != bf ||
-                    _state.value.pendingBackfillMs != pending
-                ) {
-                    _state.value = _state.value.copy(
-                        edgeBeforeStart = gray,
-                        edgeStartMs = startMs,
-                        backfillPercent = bf,
-                        pendingBackfillMs = pending,
-                    )
-                }
-            }
-        }
-        // ★G-3-ux2：边分离边播时，**实时**把分离器算出的包络接到 stemWaveforms。
+
+// ★G-3-ux2：边分离边播时，**实时**把分离器算出的包络接到 stemWaveforms。
         //   否则波形只会在 loadMultiTrack 那一刻提取一次（那时文件几乎全是 0）。
         viewModelScope.launch {
             val session = EdgeSeparationSession.get()
@@ -1030,6 +905,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                             play()
                         } else {
                             Log.i(TAG, "mix ended → autoAdvanceOnEnded（不再等门面 STATE_ENDED）")
+                            separationDomain.onPlaybackEnded()
                             autoAdvanceOnEnded()
                         }
                     }
@@ -1375,8 +1251,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         _state.value = withDerived(
             _state.value.copy(
                 fileName = displayName, hasMedia = true, playWhenReady = true,
-                separationOn = false, currentUri = uri.toString(),
-                stemsAvailable = if (resetStems) false else _state.value.stemsAvailable,
+                isMultiTrack = false, currentUri = uri.toString(),
             ),
         )
         // ★2026-11-06：把 UI 当前的变速变调重新下发给单轨播放器。
@@ -1777,8 +1652,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                 _state.value.copy(
                     tracks = tracks,
                     isReady = _state.value.isReady || inMt,
-                    separationOn = true,
-                    stemsAvailable = lastStems != null,
+                    isMultiTrack = true,
                 ),
             )
         } else {
@@ -1786,8 +1660,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             _state.value = withDerived(
                 _state.value.copy(
                     tracks = emptyList(),
-                    separationOn = false,
-                    stemsAvailable = lastStems != null,
+                    isMultiTrack = false,
                 ),
             )
         }
@@ -1877,7 +1750,6 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         }
         if (alive.isEmpty()) {
             lastStems = null
-            _state.value = _state.value.copy(stemsAvailable = false)
             Log.w(TAG, "loadMultiTrack: 无可用 stem，放弃进入多轨")
             return
         }
@@ -1890,7 +1762,6 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         }
         // ★R-b：记住本次 stems（供分离开关“关→再开”恢复）；并标记可用。
         lastStems = alive
-        _state.value = _state.value.copy(stemsAvailable = true)
         // ★P2 修复：多轨时转盘外环应显示**原曲波形**（外环=装饰化进度条）。
         //   Service 会给主轨(=session player) setMediaItem → onMediaItemTransition 触发，
         //   默认会把波形重提取为**主轨(vocals)的波形**。故：
@@ -1934,7 +1805,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         // ★一致性修复：多轨“已载入 = 有媒体”，否则 UI 会显示“尚未导入音频”而实际在响。
         //   fileName 若为空（如自动化直接载 stems）给一个回退名，避免标题空白。
         _state.value = _state.value.copy(
-            separationOn = true,
+            isMultiTrack = true,
             hasMedia = true,
             fileName = _state.value.fileName.ifBlank { "分离结果" },
         )
@@ -1974,7 +1845,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         // playWhenReady=true：多轨下 onPlayWhenReadyChanged 不更新 UI（由主轨驱动），
         // 故这里显式置位，避免按钮停在“播放”。
         _state.value = _state.value.copy(
-            separationOn = true,
+            isMultiTrack = true,
             hasMedia = true,
             playWhenReady = true,
             isPlaying = true,
@@ -2038,7 +1909,6 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
 
     /** ★U3：标记“已有可用分离结果”（宿主传入分离产物后调用）。 */
     fun markStemsAvailable() {
-        _state.value = _state.value.copy(stemsAvailable = true)
     }
 
     /**
@@ -2076,8 +1946,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                         "（缓存被清理？）→ 作废分离结果",
                 )
                 lastStems = null
-                _state.value = _state.value.copy(stemsAvailable = false)
-            }
+                }
             if (alive.isEmpty()) return false
 
             // ★R-b：已有结果 → 直接恢复多轨（不必重跑分离）
@@ -2195,7 +2064,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             _state.value.copy(
                 tracks = emptyList(),
                 stemWaveforms = emptyList(),
-                separationOn = false,
+                isMultiTrack = false,
                 durationMs = mediaController?.duration?.coerceAtLeast(0L) ?: 0L,
             ),
         )
@@ -2246,7 +2115,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                 durationMs = 0L,
                 tracks = emptyList(),
                 stemWaveforms = emptyList(),
-                separationOn = false,
+                isMultiTrack = false,
                 currentUri = null,
                 waveform = null,
                 cover = null,

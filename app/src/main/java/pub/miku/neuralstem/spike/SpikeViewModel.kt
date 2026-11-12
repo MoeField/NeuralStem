@@ -21,6 +21,14 @@ import pub.miku.neuralstem.player.SeparationTask
 import pub.miku.neuralstem.player.SessionStateMachine
 import pub.miku.neuralstem.settings.SettingsRepository
 import java.io.File
+import pub.miku.neuralstem.spike.state.SeparationBackend
+import pub.miku.neuralstem.spike.state.SeparationDomain
+import pub.miku.neuralstem.spike.state.SeparationKind
+import pub.miku.neuralstem.spike.state.StartRequest
+import pub.miku.neuralstem.spike.state.TrackKey
+import pub.miku.neuralstem.spike.state.Lifecycle
+import pub.miku.neuralstem.spike.state.JobMetrics
+import pub.miku.neuralstem.spike.state.SeparationSnapshot
 
 /**
  * Spike 编排(Task 0b,sherpa-onnx 主路线)。
@@ -62,6 +70,8 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
         data class Error(val message: String, val cause: Throwable? = null) : State
     }
 
+    private val domain = SeparationDomain.get(app)
+
     private val _state = MutableStateFlow<State>(State.Idle)
     val state: StateFlow<State> = _state.asStateFlow()
 
@@ -82,8 +92,11 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
     private val _separationTask = MutableStateFlow<SeparationTask>(SeparationTask.Idle)
     val separationTask: StateFlow<SeparationTask> = _separationTask.asStateFlow()
 
-    /** ★3a-2：常驻 repo 订阅（幂等，init 时建立一次）。 */
-    private var repoSubscription: Job? = null
+    /** M3：Domain snapshot 订阅；旧 repo 订阅不再驱动 UI。 */
+    private var domainSubscription: Job? = null
+    private var lastMappedActiveJobId: Long? = null
+    private var lastMappedDoneJobId: Long? = null
+    private var lastMappedFailedJobId: Long? = null
 
     /** 把 SM 当前的分离态镜像到对外流（单一出口，避免双读）。 */
     private fun pushSeparationTask() {
@@ -165,58 +178,14 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
         applyDefaultEngine()
         // ★3a-2：常驻订阅 repo → 驱动状态机（不再只在“开始时订阅”）。
         //   否则：页面重入 / VM 重建时 SM 停在 Idle，即使 repo 正在跑/已完成。
-        subscribeRepo()
-        // ★B9：Activity/VM 重建时，进程级 repo 可能仍在 Preparing/Running。
-        //   v0.2.8 的显式 begin 门禁会拒绝这些“迟到”的 repo 事件 → UI 卡 Idle。
-        //   这里在首次订阅后把**当前活跃任务**种入状态机；取消/切换后的迟到事件仍由门禁挡住。
-        viewModelScope.launch {
-            when (val s = repo.state.value) {
-                is SeparationRepository.State.Preparing -> {
-                    session.beginSeparation()
-                    session.onSeparationPreparing(toPrepPhase(s.phase))
-                    pushSeparationTask()
-                    Log.i(TAG, "B9 restore separation: preparing=${s.phase}")
-                }
-                is SeparationRepository.State.Running -> {
-                    session.beginSeparation()
-                    session.startSeparation()
-                    session.onSeparationProgress(s.percent)
-                    pushSeparationTask()
-                    Log.i(TAG, "B9 restore separation: running=${s.percent}%")
-                }
-                is SeparationRepository.State.Done -> {
-                    // 任务在 Activity 死亡期间完成：把完成态种回去，UI 消费后仍能自动切轨/导出。
-                    session.beginSeparation()
-                    session.onSeparationDone(
-                        SeparationTask.Done2(
-                            vocalsFile = s.vocalsFile,
-                            accompanimentFile = s.accompanimentFile,
-                            modelLoadMs = s.modelLoadMs,
-                            inferTimeMs = s.inferTimeMs,
-                            peakPssMb = s.peakPssMb,
-                            audioDurationMs = s.audioDurationMs,
-                            fromCache = s.fromCache,
-                        ),
-                    )
-                    pushSeparationTask()
-                    Log.i(TAG, "B9 restore separation: done2")
-                }
-                is SeparationRepository.State.Done4 -> {
-                    session.beginSeparation()
-                    session.onSeparationDone(
-                        SeparationTask.Done4(
-                            stemFiles = s.stemFiles,
-                            inferTimeMs = s.inferTimeMs,
-                            peakPssMb = s.peakPssMb,
-                            audioDurationMs = s.audioDurationMs,
-                            fromCache = s.fromCache,
-                        ),
-                    )
-                    pushSeparationTask()
-                    Log.i(TAG, "B9 restore separation: done4")
-                }
-                else -> Unit
-            }
+        subscribeDomain()
+        // ★M3：VM 重建时从 Domain snapshot 恢复，而不是再从 repo 镜像一份。
+        val seeded = domain.snapshot.value
+        if (seeded.job != null) {
+            session.beginSeparation()
+            applyDomainSnapshot(seeded)
+            pushSeparationTask()
+            Log.i(TAG, "restore separation from domain: ${seeded.job!!.lifecycle}")
         }
         // ★2026-11-06 诊断：分离期间每秒把「实际状态」落文件（vivo 吞 logcat 时取证用）。
         //   与分离页的「显示状态」日志（SepUI）对照，验证 UI 是否如实反映工作进度。
@@ -457,130 +426,120 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
      * 不订阅,导致缓存命中/完成时 UI 停在「分离中 0%」。
      * 现改为「一次性订阅到终态」,按钮路径与自动路径共用。
      */
-    /** repo 准备子阶段 → 状态机阶段。 */
-    private fun toPrepPhase(p: SeparationRepository.State.PrepPhase): SeparationTask.PrepPhase =
-        when (p) {
-            SeparationRepository.State.PrepPhase.START -> SeparationTask.PrepPhase.START
-            SeparationRepository.State.PrepPhase.DECODING -> SeparationTask.PrepPhase.DECODING
-            SeparationRepository.State.PrepPhase.LOADING_MODEL -> SeparationTask.PrepPhase.LOADING_MODEL
-            SeparationRepository.State.PrepPhase.MODEL_READY -> SeparationTask.PrepPhase.MODEL_READY
+    private fun subscribeDomain() {
+        if (domainSubscription != null) return
+        domainSubscription = viewModelScope.launch {
+            domain.snapshot.collect { snapshot -> applyDomainSnapshot(snapshot) }
+        }
+    }
+
+    private fun applyDomainSnapshot(snapshot: SeparationSnapshot) {
+        val job = snapshot.job
+        if (job == null) {
+            if (lastMappedActiveJobId != null) {
+                session.onSeparationCancelled()
+                lastMappedActiveJobId = null
+            }
+            pushSeparationTask()
+            return
         }
 
-    private fun subscribeRepo() {
-        if (repoSubscription != null) return
-        repoSubscription = viewModelScope.launch {
-            repo.state.collect { s ->
-                // ★3a-2：把 repo 态驱动进状态机（单一真源），再镜像到 [separationTask]。
-                when (s) {
-                    is SeparationRepository.State.Preparing ->
-                        // ★准备子阶段：把 repo 的 PrepPhase 映射到状态机，供 UI 显示具体步骤。
-                        session.onSeparationPreparing(
-                            when (s.phase) {
-                                SeparationRepository.State.PrepPhase.START ->
-                                    SeparationTask.PrepPhase.START
-                                SeparationRepository.State.PrepPhase.DECODING ->
-                                    SeparationTask.PrepPhase.DECODING
-                                SeparationRepository.State.PrepPhase.LOADING_MODEL ->
-                                    SeparationTask.PrepPhase.LOADING_MODEL
-                                SeparationRepository.State.PrepPhase.MODEL_READY ->
-                                    SeparationTask.PrepPhase.MODEL_READY
-                            },
-                        )
-                    is SeparationRepository.State.Running -> {
-                        // ★B7：只有已显式开始、且仍 Preparing 的任务才能进入 Running。
-                        //   取消后迟到的 Running 不得把 Cancelled/Idle 重新变成进度。
-                        if (session.separation is SeparationTask.Preparing) session.startSeparation()
-                        session.onSeparationProgress(s.percent)
-                    }
-                    is SeparationRepository.State.Done -> session.onSeparationDone(
-                        SeparationTask.Done2(
-                            vocalsFile = s.vocalsFile,
-                            accompanimentFile = s.accompanimentFile,
-                            modelLoadMs = s.modelLoadMs,
-                            inferTimeMs = s.inferTimeMs,
-                            peakPssMb = s.peakPssMb,
-                            audioDurationMs = s.audioDurationMs,
-                            fromCache = s.fromCache,
-                        ),
-                    )
-                    is SeparationRepository.State.Done4 -> session.onSeparationDone(
-                        SeparationTask.Done4(
-                            stemFiles = s.stemFiles,
-                            inferTimeMs = s.inferTimeMs,
-                            peakPssMb = s.peakPssMb,
-                            audioDurationMs = s.audioDurationMs,
-                            fromCache = s.fromCache,
-                        ),
-                    )
-                    is SeparationRepository.State.Failed ->
-                        session.onSeparationFailed(s.message, s.cause)
-                    // ★G-3fix：edge 完成（无落盘文件）→ 必须退出 Running，否则 UI 永卡 99%。
-                    //   用 Cancelled 语义不合适（会弹“已取消”），故回到 Idle（“无进行中任务”）。
-                    is SeparationRepository.State.EdgeDone -> {
-                        session.onSeparationEdgeDone()
-                        // ★2026-11-07：留一个 5 秒的完成提示，否则页面立刻回到初始态。
-                        _lastEdgeDone.value = EdgeDoneUi(
-                            complete = s.complete,
-                            inferTimeMs = s.inferTimeMs,
-                            audioDurationMs = s.audioDurationMs,
-                        )
-                        edgeDoneFlashJob?.cancel()
-                        edgeDoneFlashJob = viewModelScope.launch {
-                            delay(5_000)
-                            _lastEdgeDone.value = null
-                        }
-                        // ★全曲已覆盖才允许导出（缺口时导出会得到前半段静音）。
-                        if (s.complete && s.vocalsFile != null && s.accompanimentFile != null) {
-                            _lastExportable.value = listOf(s.vocalsFile, s.accompanimentFile)
-                        }
-                    }
-                    SeparationRepository.State.Cancelled -> session.onSeparationCancelled()
-                    SeparationRepository.State.Idle -> Unit
-                }
-                pushSeparationTask()
-                // ★2026-11-06 诊断：repo 状态 → 页面任务态 的映射逐次落文件。
-                EdgeProbe.log(
-                    "SepState",
-                    "repo=${describeRepo(s)} -> task=${describeTask(session.separation)}",
-                )
+        if (job.jobId != lastMappedActiveJobId) {
+            lastMappedActiveJobId = job.jobId
+            lastMappedDoneJobId = null
+            lastMappedFailedJobId = null
+        }
 
-                // 既有镜像（供页面本地 State 消费者；逐步收起）
-                when (s) {
-                    is SeparationRepository.State.Preparing ->
-                        _state.value = State.Separating(0, 0f, 0)
-                    is SeparationRepository.State.Running ->
-                        _state.value = State.Separating(s.elapsedMs, s.peakPssMb, s.percent)
-                    is SeparationRepository.State.Done ->
-                        _state.value = State.Done(
-                            vocalsFile = s.vocalsFile,
-                            accompanimentFile = s.accompanimentFile,
-                            modelLoadMs = s.modelLoadMs,
-                            inferTimeMs = s.inferTimeMs,
-                            peakPssMb = s.peakPssMb,
-                            audioDurationMs = s.audioDurationMs,
-                            fromCache = s.fromCache,
-                        )
-                    is SeparationRepository.State.Failed ->
-                        _state.value = State.Error(s.message, s.cause)
-                    SeparationRepository.State.Cancelled ->
-                        _state.value = State.Error("分离已取消")
-                    SeparationRepository.State.Idle -> Unit
-                    // ★G-3fix：edge 完成——不产生 stem 文件，旧 State 仅回到 Idle（不再 busy）。
-                    is SeparationRepository.State.EdgeDone ->
-                        _state.value = State.Idle
-                    is SeparationRepository.State.Done4 -> {
-                        // M4/S3：4-stem 结果不驱 2-stem 的 spike State；只记录。
-                        // 正式四轨 UX 走 [separationTask]（Done4）。
-                        Log.i(
-                            TAG,
-                            "OUT(4-stem) ${s.stemFiles.joinToString { "${it.name}(${it.length()}B)" }}",
-                        )
-                        _state.value = State.Idle
+        when (val lc = job.lifecycle) {
+            is Lifecycle.Preparing ->
+                session.onSeparationPreparing(SeparationTask.PrepPhase.DECODING)
+            is Lifecycle.Running -> {
+                if (session.separation is SeparationTask.Preparing) {
+                    session.startSeparation()
+                }
+                val total = job.coverage.totalFrames.coerceAtLeast(1L)
+                val done = job.coverage.coveredFrames.coerceIn(0L, total)
+                val percent = ((done * 100L) / total).toInt().coerceIn(0, 100)
+                session.onSeparationProgress(percent)
+                _state.value = State.Separating(0L, job.metrics?.peakPssMb ?: 0f, percent)
+            }
+            is Lifecycle.Finished -> {
+                if (lastMappedDoneJobId != job.jobId) {
+                    lastMappedDoneJobId = job.jobId
+                    val files = job.files?.paths?.map(::File).orEmpty()
+                    val metrics = job.metrics ?: JobMetrics()
+                    when (job.kind) {
+                        SeparationKind.EDGE -> {
+                            session.onSeparationEdgeDone()
+                            _lastEdgeDone.value = EdgeDoneUi(
+                                complete = job.coverage.complete,
+                                inferTimeMs = metrics.inferTimeMs,
+                                audioDurationMs = metrics.audioDurationMs,
+                            )
+                            edgeDoneFlashJob?.cancel()
+                            edgeDoneFlashJob = viewModelScope.launch {
+                                delay(5_000)
+                                _lastEdgeDone.value = null
+                            }
+                            if (job.coverage.complete && files.size >= 2) {
+                                _lastExportable.value = files.take(2)
+                            }
+                        }
+                        SeparationKind.FULL_2 -> {
+                            if (files.size >= 2) {
+                                session.onSeparationDone(
+                                    SeparationTask.Done2(
+                                        vocalsFile = files[0],
+                                        accompanimentFile = files[1],
+                                        modelLoadMs = metrics.modelLoadMs,
+                                        inferTimeMs = metrics.inferTimeMs,
+                                        peakPssMb = metrics.peakPssMb,
+                                        audioDurationMs = metrics.audioDurationMs,
+                                        fromCache = metrics.fromCache,
+                                    ),
+                                )
+                                _lastExportable.value = files.take(2)
+                                _state.value = State.Done(
+                                    vocalsFile = files[0],
+                                    accompanimentFile = files[1],
+                                    modelLoadMs = metrics.modelLoadMs,
+                                    inferTimeMs = metrics.inferTimeMs,
+                                    peakPssMb = metrics.peakPssMb,
+                                    audioDurationMs = metrics.audioDurationMs,
+                                    fromCache = metrics.fromCache,
+                                )
+                            }
+                        }
+                        SeparationKind.FULL_4 -> {
+                            if (files.size >= 4) {
+                                session.onSeparationDone(
+                                    SeparationTask.Done4(
+                                        stemFiles = files,
+                                        inferTimeMs = metrics.inferTimeMs,
+                                        peakPssMb = metrics.peakPssMb,
+                                        audioDurationMs = metrics.audioDurationMs,
+                                        fromCache = metrics.fromCache,
+                                    ),
+                                )
+                                _lastExportable.value = files
+                                _state.value = State.Idle
+                            }
+                        }
                     }
                 }
             }
+            is Lifecycle.Failed -> {
+                if (lastMappedFailedJobId != job.jobId) {
+                    lastMappedFailedJobId = job.jobId
+                    session.onSeparationFailed(lc.message)
+                    _state.value = State.Error(lc.message)
+                }
+            }
+            is Lifecycle.Stopping -> Unit
         }
+        pushSeparationTask()
     }
+
 
     /**
      * 启动分离(按钮路径)。
@@ -600,11 +559,17 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
         session.beginSeparation()
         pushSeparationTask()
         _state.value = State.Separating(0, 0f, 0)
-        repo.start(
-            source = srcFile,
-            engine = engineMode,
-            uvrModelName = uvrModelName,
-            chunkOverrideFrames = chunkSecondsOverride?.let { it * SeparationInput.MODEL_SAMPLE_RATE },
+        domain.start(
+            StartRequest(
+                kind = SeparationKind.FULL_2,
+                trackKey = TrackKey("", 0L),
+                sourcePath = srcFile.absolutePath,
+                backend = SeparationBackend.SHERPA_2STEM,
+                engineMode = engineMode,
+                uvrModelName = uvrModelName,
+                chunkOverrideFrames = chunkSecondsOverride
+                    ?.let { it * SeparationInput.MODEL_SAMPLE_RATE },
+            ),
         )
     }
 
@@ -614,10 +579,17 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
      * 旧路径：`SeparationScreen` 直接 `repo.start4(src)` → 状态机看不到 → 仍需 UI 双读 repo。
      * 新路径：统一经此方法“先订阅（驱动 SM）再启动”，与 2-stem 同构。
      */
-    fun start4Stem(source: File) {
+    fun start4Stem(source: File, ownerUri: String? = null) {
         session.beginSeparation()
         pushSeparationTask()
-        repo.start4(source)
+        domain.start(
+            StartRequest(
+                kind = SeparationKind.FULL_4,
+                trackKey = TrackKey(ownerUri ?: "", 0L),
+                sourcePath = source.absolutePath,
+                backend = SeparationBackend.SPLEETER4,
+            ),
+        )
     }
 
     /**
@@ -641,23 +613,35 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
                 Log.i(TAG, "startOption(Sherpa): ${opt.spec.id} engine=${opt.spec.engine}")
                 session.beginSeparation()
                 pushSeparationTask()
-                repo.start(
-                    source = source,
-                    engine = engineMode,
-                    uvrModelName = uvrModelName,
-                    chunkOverrideFrames = chunkSecondsOverride
-                        ?.let { it * SeparationInput.MODEL_SAMPLE_RATE },
+                domain.start(
+                    StartRequest(
+                        kind = SeparationKind.FULL_2,
+                        trackKey = TrackKey(ownerUri ?: "", 0L),
+                        sourcePath = source.absolutePath,
+                        backend = SeparationBackend.SHERPA_2STEM,
+                        engineMode = engineMode,
+                        uvrModelName = uvrModelName,
+                        chunkOverrideFrames = chunkSecondsOverride
+                            ?.let { it * SeparationInput.MODEL_SAMPLE_RATE },
+                    ),
                 )
             }
             SepOption.Spleeter4 -> {
                 Log.i(TAG, "startOption: Spleeter4")
-                start4Stem(source)
+                start4Stem(source, ownerUri)
             }
             SepOption.Demucs -> {
                 Log.i(TAG, "startOption: Demucs")
                 session.beginSeparation()
                 pushSeparationTask()
-                repo.startDemucs(source)
+                domain.start(
+                    StartRequest(
+                        kind = SeparationKind.FULL_4,
+                        trackKey = TrackKey(ownerUri ?: "", 0L),
+                        sourcePath = source.absolutePath,
+                        backend = SeparationBackend.DEMUCS,
+                    ),
+                )
             }
         }
     }
@@ -675,12 +659,23 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
         Log.i(TAG, "startEdgeOption: from=${fromPositionMs}ms")
         session.beginSeparation()
         pushSeparationTask()
-        repo.startEdge(source, fromPositionMs)
+        domain.start(
+            StartRequest(
+                kind = SeparationKind.EDGE,
+                trackKey = TrackKey(ownerUri ?: "", 0L),
+                startFrame = (fromPositionMs.coerceAtLeast(0L) *
+                    SeparationInput.MODEL_SAMPLE_RATE / 1000L),
+                fromPositionMs = fromPositionMs,
+                trackTitle = source.name,
+                sourcePath = source.absolutePath,
+                backend = SeparationBackend.EDGE,
+            ),
+        )
     }
 
     /** guide N5:取消分离任务 */
     fun cancelSeparation() {
-        repo.cancel()
+        domain.cancel()
         _state.value = State.Error("分离已取消")
         session.onSeparationCancelled()
         pushSeparationTask()
