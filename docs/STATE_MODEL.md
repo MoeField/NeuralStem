@@ -17,6 +17,66 @@
 
 ---
 
+## 0.1 本次目标（2026-11-13 定稿）
+
+### 目标级别：Level 2（领域收口，不重写播放器）
+
+本次做到：
+
+1. 分离领域有**唯一 Snapshot + 唯一写者**（Controller/reducer）。
+2. 中间态（Decoding/Cancelling/LoadingStems/Backfilling）成为正式 Operation。
+3. 换曲、播放结束、Service 丢失、进程恢复等外部事件进入迁移表。
+4. UI 只读派生 View；`PlayerState`/`SpikeViewModel`/`SeparationScreen` 不再各自保存
+   `edgePercent`/`backfillPercent`/`pendingBackfillMs`/`separationOn`/`lastStems` 等副本。
+5. 自动切轨改由 Effect 触发，fast path/cancel/next 等场景可重复验证。
+6. 保留现有音频、分离算法、R8、播放器 UI 行为；只实现已确认的 D1（FULL 后台继续、
+   EDGE 取消）这一项行为变化。
+
+**明确不做（Level 3）**：
+
+- 不重写 `PlaybackService`/`SessionStateMachine` 的播放状态机。
+- 不做分离独立进程/可强杀 native worker。
+- 不做进程死亡的 active job 恢复；只做 Idle + cache fast path。
+- 不重做 UI 视觉；不新增 NCM/AVS3/AGP/R8 工作。
+- 不追求“删除所有旧类”；`EdgeSeparationSession` 可以保留为引擎/闸门内部实现。
+
+### 里程碑
+
+| 里程碑 | 内容 | 完成判据 |
+|---|---|---|
+| M0 | 本文档 | 决策/边界/迁移表定稿 |
+| M1 | 纯模型 + reducer + 测试 | 迁移矩阵、交错测试通过；不接 UI |
+| M2 | Controller + adapter | 现有行为在 fake/单测下对齐；不并发 worker |
+| M3 | UI/VM/PlayerState 迁移 | 重复字段删除；自动切轨走 Effect |
+| M4 | 验收 + 合并 | JVM/R8/真机场景全过；合 main 后发 v0.2.14 |
+
+### 本次“完成”的判据
+
+- `SeparationController` 是分离状态的唯一写者；grep 不再出现多份分离 UI 字段。
+- reducer 覆盖 `State × Event` 迁移表；交错测试覆盖：
+  - fast path 一帧完成
+  - Cancel → TrackChanged → JobStopped → Start
+  - PlaybackEnded → 自动下一首
+  - LoadStems 中切歌/关开关
+  - FULL 后台继续
+  - Stopping 超时/native 卡死
+- 现有 JVM 374 + 新增测试全过；R8 release 构建/安装/2/4 轨/edge/导出 smoke 通过。
+- 真机验收通过后才合 `main`；不通过则分支保留，`main` 继续 v0.2.13。
+
+### 不追求的目标
+
+- 不追求“状态数量最少”或引入通用状态图框架。
+- 不为了抽象而抽象；每个 Operation/字段必须对应一个真实的外部事件或用户可见行为。
+
+### 停止/回退条件
+
+- 如果 M2 的 adapter 无法在两次迭代内做到行为对齐，停止并保留分支，不硬合。
+- 如果 M3 发现需要改播放主状态机才能继续，缩小到 M2 + 局部字段派生，
+  不强行完成全量迁移。
+- 任何一步导致 fast path/cancel/next 场景回归且 24h 内无法定位，回退该步。
+
+---
+
 ## 1. 背景
 
 ### 1.1 现状盘点
