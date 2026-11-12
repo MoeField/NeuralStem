@@ -91,7 +91,11 @@ android {
     buildTypes {
         release {
             optimization {
-                enable = false
+                enable = true
+                keepRules {
+                    includeDefault = true
+                    files.add(file("proguard-rules.pro"))
+                }
             }
             /**
              * 有正式密钥 → 用正式签名（可跨机覆盖安装、可自动更新）。
