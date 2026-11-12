@@ -54,6 +54,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Check license boundary
+        run: bash scripts/check-license-boundary.sh
+
       - name: Set up JDK 21
         uses: actions/setup-java@v5
         with:
@@ -147,6 +150,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
+
+      - name: Check license boundary
+        run: bash scripts/check-license-boundary.sh
 
       - name: Set up JDK 21
         uses: actions/setup-java@v5

@@ -61,3 +61,11 @@ NeuralStem — 第三方组件与模型许可声明
   `StemPcmDataSource` 等分离与流式播放实现
 
 若你发现本仓库误含了未署名的第三方代码，请提 Issue 指出，会立即更正。
+
+5. NCM / AVS3-P3 边界
+-----------------------------------------------------------------------
+- `app/src/ncm/` 是**本项目原创**的 NCM 格式互操作实现（MIT），默认不编译、不打包；
+  只有 `-Pwith_ncm=true` 才加入构建。
+- UWA AVS3-P3 参考实现/预编译库**不随仓库分发**，由 `tools/fetch-avs3.sh` 在本地获取；
+  详见 `docs/LICENSING.md`。
+- `avs3_audio_bridge.c` / `Avs3Bridge.kt` 是原创 JNI/反射桥接代码，不包含 UWA 实现。
