@@ -1,6 +1,6 @@
 # 分离状态模型重构：需求与设计稿
 
-> 状态：**M3a 已完成（Android 领域适配器 + 启动/当前曲接入），M3b 进行中**
+> 状态：**M3 已完成（Domain 接管分离状态/UI/自动切轨），待 M4 验收合并**
 > 基线：`v0.2.13`（`7d9f2ed`）
 > 分支：`refactor/separation-state-model`
 > 目标：先把需求和边界定清楚，再写代码；不在 `main` 上直接改。
@@ -47,7 +47,7 @@
 | M0 | 本文档 | 决策/边界/迁移表定稿 |
 | M1 | 纯模型 + reducer + 测试 | ✅ 已完成：`spike/state/` + 50 条 reducer 测试；全量 424/0 |
 | M2 | Controller + adapter | ✅ 已完成：Channel actor + fake effects；全量 431/0 |
-| M3 | UI/VM/PlayerState 迁移 | 重复字段删除；自动切轨走 Effect |
+| M3 | UI/VM/PlayerState 迁移 | ✅ 已完成：Domain 接管；433/0；真机 edge/4-stem 通过 |
 | M4 | 验收 + 合并 | JVM/R8/真机场景全过；合 main 后发 v0.2.14 |
 
 ### M1 实现记录（2026-11-13）
@@ -86,7 +86,24 @@
   旧 UI/自动切轨仍由旧 repo 状态驱动，行为保持不变（真机 edge 启动验证）。
 - 新增 M3a 后全量 JVM 仍 431/0（集成层由真机验证）。
 
-### 本次“完成”的判据
+### M3 实现记录（2026-11-13）
+
+- `SeparationDomain`
+  - 进程级 Controller/repo/EdgeSession 适配；Effect → 旧 repo；
+  - Domain 自动切轨 Effect 经 `PlayerBridge` 落到 `PlayerViewModel.loadMultiTrack`；
+  - `SeparationEdgeUi` 派生：edgePercent/fraction/starved/gray/backfill/pending；
+  - 当前曲 `TrackChanged`、播放结束、取消/失败 detach 已接。
+- `SpikeViewModel`
+  - 启动/取消走 Domain；Domain snapshot → SeparationTask/State/export/lastEdgeDone；
+  - 删除旧 repo→UI 订阅；VM 重建从 Domain snapshot 恢复。
+- `PlayerViewModel` / `PlayerScreen` / `SeparationScreen`
+  - 删除 PlayerState 的 edgePercent/edgeStarved/edgeBeforeStart/edgeStartMs/
+    edgeSeparatedFraction/backfillPercent/pendingBackfillMs/separationOn/stemsAvailable；
+  - 统一读 `separationEdge` + `isMultiTrack`；旧自动切轨 effect disabled。
+- 真机：edge 缓存命中自动切多轨；4-stem 启动/缓存命中；取消/换曲路径待 M4 再全量验收。
+- JVM 433/0（新增 coverage frontGap、JobMetrics 传播测试）。
+
+### 本次“完成”的判据### 本次“完成”的判据
 
 - `SeparationController` 是分离状态的唯一写者；grep 不再出现多份分离 UI 字段。
 - reducer 覆盖 `State × Event` 迁移表；交错测试覆盖：
