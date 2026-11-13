@@ -83,12 +83,18 @@ content query ... _display_name=vocals.wav, relative_path=Music/separate/bullet_
 
 - 无 pending 残留；同名查询只有 1 行。
 
-### D1/A3 尝试记录（未通过判定）
+### A3：edge 运行中切歌
 
-- 在 edge 运行中点击分离页「取消分离」，当前坐标点击未触发取消回调；
-  分离继续到完成。需要改用 UI 语义/调试入口精确触发，不能记通过。
-- 尝试播放中 `media_session dispatch next` / `input keyevent 87` 切歌，
-  当前播放队列没有切到下一首；A3 未形成有效验证。
+- 在 `太空旅行.mp3` 上启动 edge（job=2），随后通过歌单切到 `katyusha.mp3`；
+- 日志：`SepDomain startEngine job=2` → 切换后 `SepService separation terminal → stopSelf`；
+- 分离页显示 `分离已取消`，当前曲为 `katyusha.mp3` 原曲，无 A 的进度/多轨。✅
+
+### D1：分离中取消 edge
+
+- 用 UI 树拿到的真实坐标点击「取消分离」；
+- 日志：`SepService: separation terminal → stopSelf`；
+- 分离页显示 `分离已取消`，回到原曲。✅
+- 另外用 debug `edgecancel` 命令验证了 `SeparationRepository.cancel()` 路径。
 
 ### B1：FULL 后台 + 当前 B（发现并修复一个 UI 残留）
 
@@ -117,10 +123,10 @@ content query ... _display_name=vocals.wav, relative_path=Music/separate/bullet_
 | # | 场景 | 状态 |
 |---|---|---|
 | A2 | A→B 切换瞬间（<1s）点极快 | 未做 |
-| A3 | A edge 还在跑时切 B | 未做 |
+| A3 | A edge 还在跑时切 B | ✅ 已通过 |
 | B1 | FULL 4-stem A 后台，切 B，A 完成 | ✅ 复验通过 |
 | B2 | 返回 A，缓存/手动恢复 | 未做 |
-| D1 | 分离中取消 edge | 尝试但点击未触发，未通过 |
+| D1 | 分离中取消 edge | ✅ 已通过 |
 | D2 | 播放自然结束 / FULL 后台继续 | 未做 |
 | D3 | kill PlaybackService/SeparationService | 未完成：stop-service 未真正销毁，需用 force-stop/异常路径 |
 | D4 | 进程死亡后重启 | ✅ 基础重启通过（无 FATAL） |
