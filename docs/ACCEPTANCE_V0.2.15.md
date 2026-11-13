@@ -83,6 +83,14 @@ content query ... _display_name=vocals.wav, relative_path=Music/separate/bullet_
 
 - 无 pending 残留；同名查询只有 1 行。
 
+### A2：A→B 切换瞬间点极快（已通过）
+
+- 播放 `who_am_i.flac`，seek 到曲尾，自动下一首 `bullet.flac`；
+- 自动切歌后约 **0.5s** 点「极快」；
+- 日志：`loadAndPlay bullet` 13:53:37.127 → B 的 `TrackBridge` 13:53:37.626 →
+  `SepDomain startEngine job=1 EDGE`，B cache `25641fd5...`；
+- 分离页当前曲为 `bullet.flac`，无 A 结果。✅
+
 ### A3：edge 运行中切歌
 
 - 在 `太空旅行.mp3` 上启动 edge（job=2），随后通过歌单切到 `katyusha.mp3`；
@@ -122,7 +130,7 @@ content query ... _display_name=vocals.wav, relative_path=Music/separate/bullet_
 
 | # | 场景 | 状态 |
 |---|---|---|
-| A2 | A→B 切换瞬间（<1s）点极快 | 未做 |
+| A2 | A→B 切换瞬间（<1s）点极快 | ✅ 已通过 |
 | A3 | A edge 还在跑时切 B | ✅ 已通过 |
 | B1 | FULL 4-stem A 后台，切 B，A 完成 | ✅ 复验通过 |
 | B2 | 返回 A，缓存/手动恢复 | 未做 |
