@@ -73,6 +73,7 @@ class SeparationDomain private constructor(private val app: Application) {
         private set
 
     private var activeJobId: Long? = null
+    private var activeSourcePath: String? = null
     private var sourceReady = false
 
     init {
@@ -95,10 +96,17 @@ class SeparationDomain private constructor(private val app: Application) {
 
     // ==================== Public events ====================
 
-    fun start(request: StartRequest) {
+    fun start(request: StartRequest): Boolean {
+        val current = controller.snapshot.value.currentTrackKey
+        if (!SeparationGuards.requestMatchesCurrent(request, current)) {
+            _notices.tryEmit("当前曲已切换，请重试")
+            return false
+        }
         sourceReady = false
         activeJobId = null
+        activeSourcePath = null
         controller.start(request)
+        return true
     }
 
     fun cancel(jobId: Long? = null) {
@@ -167,6 +175,7 @@ class SeparationDomain private constructor(private val app: Application) {
 
     private fun startEngine(effect: SeparationEffect.StartDecode) {
         activeJobId = effect.jobId
+        activeSourcePath = effect.request.sourcePath
         sourceReady = false
         val request = effect.request
         val file = request.sourcePath?.let(::File)
@@ -223,6 +232,17 @@ class SeparationDomain private constructor(private val app: Application) {
         val jobId = activeJobId ?: return
         val current = controller.snapshot.value.job
         if (current == null || current.jobId != jobId) return
+        val stateSource = when (state) {
+            is SeparationRepository.State.Done -> state.sourcePath
+            is SeparationRepository.State.Done4 -> state.sourcePath
+            is SeparationRepository.State.EdgeDone -> state.sourcePath
+            is SeparationRepository.State.Failed -> state.sourcePath
+            else -> null
+        }
+        if (!SeparationGuards.terminalSourceMatches(activeSourcePath, stateSource)) {
+            Log.i(TAG, "ignore stale repo terminal source=$stateSource active=$activeSourcePath")
+            return
+        }
 
         when (state) {
             is SeparationRepository.State.Preparing -> Unit
@@ -351,6 +371,8 @@ class SeparationDomain private constructor(private val app: Application) {
         val current = controller.snapshot.value.job ?: return
         if (current.jobId != jobId || current.kind != SeparationKind.EDGE) return
         if (current.isTerminal) return
+        // ★P0：全局 EdgeSession 必须属于当前 job 的源，否则会把 A 的覆盖度/文件给 B。
+        if (!SeparationGuards.edgeSourceMatches(activeSourcePath, edge.sourceUri)) return
         val total = edge.totalFrames.toLong()
         if (total <= 0L) return
         val start = edge.startFrame.toLong()
@@ -384,6 +406,10 @@ class SeparationDomain private constructor(private val app: Application) {
         val snap = controller.snapshot.value
         val job = snap.job
         if (job == null || job.kind != SeparationKind.EDGE) {
+            if (_edgeUi.value != SeparationEdgeUi()) _edgeUi.value = SeparationEdgeUi()
+            return
+        }
+        if (!SeparationGuards.edgeSourceMatches(activeSourcePath, edge.sourceUri)) {
             if (_edgeUi.value != SeparationEdgeUi()) _edgeUi.value = SeparationEdgeUi()
             return
         }

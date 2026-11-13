@@ -426,6 +426,18 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
      * 不订阅,导致缓存命中/完成时 UI 停在「分离中 0%」。
      * 现改为「一次性订阅到终态」,按钮路径与自动路径共用。
      */
+    /** ★P0：Domain 拒绝“已切歌”的启动时，别把状态机留在 Preparing。 */
+    private fun startDomain(request: StartRequest): Boolean {
+        val ok = domain.start(request)
+        if (!ok) {
+            session.onSeparationFailed("当前曲已切换，请重试")
+            _state.value = State.Error("当前曲已切换，请重试")
+            _lastEdgeDone.value = null
+            pushSeparationTask()
+        }
+        return ok
+    }
+
     private fun subscribeDomain() {
         if (domainSubscription != null) return
         domainSubscription = viewModelScope.launch {
@@ -448,6 +460,13 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
             lastMappedActiveJobId = job.jobId
             lastMappedDoneJobId = null
             lastMappedFailedJobId = null
+        }
+
+        // ★P0：旧曲的任务（尤其 FULL 后台继续）不能把完成态推给当前曲 UI。
+        val current = snapshot.currentTrackKey
+        if (current != null && job.trackKey.uri.isNotBlank() && job.trackKey.uri != current.uri) {
+            pushSeparationTask()
+            return
         }
 
         when (val lc = job.lifecycle) {
@@ -559,7 +578,7 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
         session.beginSeparation()
         pushSeparationTask()
         _state.value = State.Separating(0, 0f, 0)
-        domain.start(
+        startDomain(
             StartRequest(
                 kind = SeparationKind.FULL_2,
                 trackKey = TrackKey("", 0L),
@@ -582,7 +601,7 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
     fun start4Stem(source: File, ownerUri: String? = null) {
         session.beginSeparation()
         pushSeparationTask()
-        domain.start(
+        startDomain(
             StartRequest(
                 kind = SeparationKind.FULL_4,
                 trackKey = TrackKey(ownerUri ?: "", 0L),
@@ -613,7 +632,7 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
                 Log.i(TAG, "startOption(Sherpa): ${opt.spec.id} engine=${opt.spec.engine}")
                 session.beginSeparation()
                 pushSeparationTask()
-                domain.start(
+                startDomain(
                     StartRequest(
                         kind = SeparationKind.FULL_2,
                         trackKey = TrackKey(ownerUri ?: "", 0L),
@@ -634,7 +653,7 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
                 Log.i(TAG, "startOption: Demucs")
                 session.beginSeparation()
                 pushSeparationTask()
-                domain.start(
+                startDomain(
                     StartRequest(
                         kind = SeparationKind.FULL_4,
                         trackKey = TrackKey(ownerUri ?: "", 0L),
@@ -659,7 +678,7 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
         Log.i(TAG, "startEdgeOption: from=${fromPositionMs}ms")
         session.beginSeparation()
         pushSeparationTask()
-        domain.start(
+        startDomain(
             StartRequest(
                 kind = SeparationKind.EDGE,
                 trackKey = TrackKey(ownerUri ?: "", 0L),
