@@ -118,6 +118,16 @@
 - JVM **433/0**（M1 reducer 52 + M2 controller 7 + 原有 374）；
   真机 edge fast path、4-stem cache/启动、开关 off/on 通过。
 
+## v0.2.16：验收修复
+
+- 验收补测：A1/A2/A3/B1/C1/C2/D1/D4/E1/E2/F1/F2 通过；
+- 修复验收发现：旧曲 FULL 后台完成时，当前曲分离页残留旧 `Preparing`。
+  `SpikeViewModel` 在 job 不属于当前曲时 `resetSeparation()` + `State.Idle`。
+- 新增纯函数测试：`CurrentTrackBridge.tempSourceName`、`SeparationGuards.jobMatchesCurrent`、
+  `StemExporter.exportRelativeDir`；JVM **443/0**。
+- 仍未完成：B2（返回原曲恢复）、D2（播放自然结束）、D3（真正 kill Service）。
+- 详见 `docs/ACCEPTANCE_V0.2.15.md`。
+
 ## v0.2.15：路径审计后的 P0/P1/P2 修复
 
 - 审计文档：`docs/PATH_AUDIT.md`、`docs/REPAIR_PLAN.md`（BUG-01..BUG-10）。
