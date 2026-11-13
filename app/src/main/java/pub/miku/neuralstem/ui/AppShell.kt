@@ -213,6 +213,27 @@ fun AppShell(
         separationDomain.setPlayerBridge(domainPlayerBridge)
         onDispose { separationDomain.setPlayerBridge(null) }
     }
+
+    // ★P1：分离开关改由 Domain attach/detach；Bridge 负责真正 load/exit。
+    val domainToggleSeparation: (Boolean) -> Boolean = { on ->
+        if (on) {
+            val snap = separationDomain.snapshot.value
+            val job = snap.job
+            val canAttach = job != null &&
+                job.isTerminal &&
+                job.files != null &&
+                job.trackKey.uri == snap.currentTrackKey?.uri
+            if (canAttach) {
+                separationDomain.attach()
+                true
+            } else {
+                false
+            }
+        } else {
+            separationDomain.detach()
+            true
+        }
+    }
     LaunchedEffect(separationDomain) {
         separationDomain.notices.collect { msg ->
             snackbarHostState.showSnackbar(msg)
@@ -434,6 +455,7 @@ fun AppShell(
                         PlaylistStore.TrackRef(uri.toString(), title),
                     )
                 },
+                onToggleSeparationHost = domainToggleSeparation,
                 // ★2026-11-01：自动消失的提示条（替代原来的 AlertDialog）。
                 //   用 AppShell 现有的 snackbarHost（Scaffold 里已渲染），
                 //   时长 Short ≈ 4 秒，点「去分离页」可提前关掉并跳转。
@@ -459,7 +481,7 @@ fun AppShell(
                 // ★2026-11-01：**必须返回 Boolean**（是否已处理）。
                 //   以前这里是 `{ on -> playerVm.toggleSeparation(on) }`，
                 //   签名是 Unit → 返回值被丢弃 → 无分离结果时用户看不到任何反馈。
-                onToggleSeparation = { on -> playerVm.toggleSeparation(on) },
+                onToggleSeparation = domainToggleSeparation,
                 // 分离页也支持提示条（与播放器页同一实现）
                 onHint = { message, actionLabel, action ->
                     scope.launch {
