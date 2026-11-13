@@ -450,5 +450,8 @@ class SeparationDomain private constructor(private val app: Application) {
             instance ?: synchronized(this) {
                 instance ?: SeparationDomain(app).also { instance = it }
             }
+
+        /** 已初始化则返回，供 Service.onDestroy 上报丢失；不要为了上报去创建实例。 */
+        fun peek(): SeparationDomain? = instance
     }
 }
