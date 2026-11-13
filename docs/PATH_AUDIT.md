@@ -317,11 +317,11 @@ Domain 可能把 A 的 `writtenUpToFrame`/`vocalsFile` 发送为 B 的 coverage/
 - `SpikeViewModel.applyDomainSnapshot` 的 `Lifecycle.Finished` 分支不检查 `job.trackKey == snapshot.currentTrackKey`；
 - FULL D1 后台完成后，当前是 B 时仍可能把 A 的 Done 推给 `SeparationTask`/export。
 
-### BUG-06 [P1] 手动开关绕过 Domain
+### BUG-06 [P1] 手动开关绕过 Domain（已修）
 
-- `PlayerScreen` / `SeparationScreen` 仍直接调用 `PlayerViewModel.toggleSeparation`；
-- Domain 的 `AttachmentState` 不更新，`autoAttachSuppressedFor` 不生效；
-- 之后 Domain 可能认为仍附着/未附着，与播放器实际状态不一致。
+- **已修**：AppShell `domainToggleSeparation` 接 Domain attach/detach，PlayerScreen/
+  SeparationScreen 回调改走它；Domain attachment/suppression 与播放器一致。
+- 真机：edge 自动多轨 → off → on 正常。
 
 ### BUG-07 [P2] 导出缺少模型维度
 
@@ -329,10 +329,10 @@ Domain 可能把 A 的 `writtenUpToFrame`/`vocalsFile` 发送为 B 的 coverage/
 - Spleeter 2-stem、Spleeter 4-stem、Demucs 的同名文件会覆盖；
 - 与“每次分离应按歌+模型区分”的旧需求不一致。
 
-### BUG-08 [P2] 进程恢复/服务丢失事件未完全接线
+### BUG-08 [P2] 进程恢复/服务丢失事件未完全接线（部分修）
 
-- `onProcessRestored`、`onPlaybackServiceLost`、`onSeparationServiceLost` 没有完整调用点；
-- 目前依赖 cache/VM 对账，行为与 STATE_MODEL.md 的 D3/服务表有偏差。
+- **已修**：PlaybackService/SeparationService `onDestroy` 通过 Domain.peek 上报 ServiceLost；
+- `onProcessRestored` 仍无调用点；进程恢复仍靠 cache/VM 对账。
 
 ### BUG-09 [P2] 两层临时文件与清理
 

@@ -1,7 +1,7 @@
 # 维修计划（REPAIR_PLAN）
 
 > 来源：`PATH_AUDIT.md` 的 BUG-01..BUG-10。  
-> 状态：**P0 已实施（`fix/path-audit`），P1/P2 待排期**。  
+> 状态：**P0 已实施；P1-1/P1-2 已实施；P2 部分（临时清理）**。  
 > 原则：先复现/加测试，再修 P0；每步单独提交；`main` 保持 v0.2.14 可回退。
 
 ---
@@ -39,8 +39,9 @@ P2-2 临时文件/旧缓存清理
 P2-3 移除 SpikeVM 双适配
 ```
 
-P0-2..P0-5 已实现；P0-1 的真机 A→B 回归已通过（日志见 PATH_AUDIT）。
-P0 全绿后再决定是否合 main/发 v0.2.15；P1/P2 未动。
+P0 已实现并完成 A→B 真机回归；P1-1 开关走 Domain、P1-2 ServiceLost 已接；
+P2 仅做了旧临时文件清理，export 模型目录/直解 content URI/SpikeVM 适配仍未做。
+是否合 main/发 v0.2.15 待最终验收。
 
 ---
 
