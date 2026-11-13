@@ -26,7 +26,7 @@ object CurrentTrackBridge {
 
     private const val TAG = "TrackBridge"
 
-    /** 分离输入统一落盘名（按扩展名区分，供下游选直读 vs 解码路径）。 */
+    /** 分离输入落盘名前缀；实际文件名还会带 uri token，避免 A/B 同扩展互相覆盖。 */
     private const val CACHE_NAME = "separate_input"
 
     /**
@@ -48,7 +48,10 @@ object CurrentTrackBridge {
         return withContext(Dispatchers.IO) {
             try {
                 val ext = resolveExtension(context, parsed)
-                val local = File(context.cacheDir, "$CACHE_NAME.$ext")
+                // ★P0：一次分离的源必须唯一，不能所有 content:// 共用 separate_input.flac。
+                //   uri token 保证 A/B（同扩展）不会写同一个文件；同 uri 重跑复用。
+                val token = parsed.toString().hashCode().toUInt().toString(16)
+                val local = File(context.cacheDir, "${CACHE_NAME}_$token.$ext")
                 context.contentResolver.openInputStream(parsed)?.use { input ->
                     local.outputStream().use { output -> input.copyTo(output) }
                 } ?: error("无法打开 $parsed")
