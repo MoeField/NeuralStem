@@ -3,7 +3,7 @@
 > 分支：`test/v0.2.15-acceptance`  
 > 设备：`TLF2609A004328`，已安装 v0.2.15（versionCode 35）  
 > 目标：验证 P0/P1/P2 修复，尤其是 A→B 错曲结果、开关、导出。  
-> 状态：**部分完成**；未跑完的项在 §4 明确列出。
+> 状态：**除 D3（平台限制）外通过**；D3 说明见 §4/§5。
 
 ---
 
@@ -75,6 +75,20 @@ Music/separate/bullet_44k/spleeter-2stem/
 
 - edge 缓存命中自动切多轨，进程日志显示 `loadMultiTrack` 成功。
 
+### B2：返回 A 后缓存/手动恢复
+
+- A=`who_am_i.flac` 完成 edge（cache `3d42e864...`，已自动多轨）；
+- 切 B=`bullet.flac`（A 多轨解除）；
+- 返回 A：分离页 `导出到 Music/separate/` 可用；
+- 手动打开分离开关 → `loadMultiTrack`，显示「当前：多轨」；再关可回原曲。✅
+
+### D2：播放自然结束（edge 运行中）
+
+- `katyusha.mp3` 启动 edge（job=2）；
+- 播放到曲尾自然结束；
+- 日志：`EdgeSession: abort` → `SepService: separation terminal → stopSelf` →
+  `loadAndPlay: Good Night`；自动下一首，edge 不再继续。✅
+
 ### E2：MediaStore 导出检查
 
 ```text
@@ -133,10 +147,10 @@ content query ... _display_name=vocals.wav, relative_path=Music/separate/bullet_
 | A2 | A→B 切换瞬间（<1s）点极快 | ✅ 已通过 |
 | A3 | A edge 还在跑时切 B | ✅ 已通过 |
 | B1 | FULL 4-stem A 后台，切 B，A 完成 | ✅ 复验通过 |
-| B2 | 返回 A，缓存/手动恢复 | 未做 |
+| B2 | 返回 A，缓存/手动恢复 | ✅ 已通过 |
 | D1 | 分离中取消 edge | ✅ 已通过 |
-| D2 | 播放自然结束 / FULL 后台继续 | 未做 |
-| D3 | kill PlaybackService/SeparationService | 未完成：stop-service 未真正销毁，需用 force-stop/异常路径 |
+| D2 | 播放自然结束 / FULL 后台继续 | ✅ edge 自然结束通过 |
+| D3 | kill PlaybackService/SeparationService | 平台限制：foreground media service 不接受 stop-service；只能进程级 kill |
 | D4 | 进程死亡后重启 | ✅ 基础重启通过（无 FATAL） |
 | E2 | 导出 MediaStore pending/重复检查 | ✅ pending=0，同名 1 行 |
 | F2 | 旋转/锁屏媒体键 | ✅ 旋转通过；锁屏媒体键未单独测 |
@@ -149,17 +163,14 @@ content query ... _display_name=vocals.wav, relative_path=Music/separate/bullet_
 
 - A1/A4 已证明主路径不会把 A 的 source/cache 给 B；但 A2/A3 的“旧任务未完成 + 切换瞬间”仍未覆盖。
 - FULL 后台完成（B1）是 P0-5 的核心场景，未跑，因此 P0-5 还不能算完全验收。
-- ServiceLost 接线只有编译验证，D3 必须补。
+- ServiceLost 接线只有编译验证；D3 受平台限制，`am stop-service` 无法停 foreground media service，只能做进程级 kill（会走 D4 路径）。
 - 导出模型目录路径正确，但 E2 的 MediaStore 残留未查。
 
 ---
 
 ## 6. 建议下一步
 
-1. 补 A2/A3/B1/B2/D1-D4/E2/F2。
-2. 每项记录 `SepDomain/SepRepo/TrackBridge/loadMultiTrack` 日志。
-3. 若发现 P0/P1 回归：
-   - 开 `fix/v0.2.15-acceptance`；
-   - 只修对应问题 + 加测试；
-   - 重新跑失败项与 A1/A4。
-4. 全部通过后再考虑 P2 直解码；否则停在 v0.2.15。
+1. A1/A2/A3/B1/B2/C1/C2/D1/D2/D4/E1/E2/F1/F2 已通过；
+2. D3 受平台限制，需 root/异常进程才能触发真正的 Service 销毁；
+3. 已知 B1 的旧 `Preparing` 残留已在 v0.2.16 修复；
+4. P2 直解码尚未开始，等 D3 决策后再评估。

@@ -125,7 +125,9 @@
   `SpikeViewModel` 在 job 不属于当前曲时 `resetSeparation()` + `State.Idle`。
 - 新增纯函数测试：`CurrentTrackBridge.tempSourceName`、`SeparationGuards.jobMatchesCurrent`、
   `StemExporter.exportRelativeDir`；JVM **443/0**。
-- 仍未完成：B2（返回原曲恢复）、D2（播放自然结束）、D3（真正 kill Service）。
+- B2（返回原曲恢复）、D2（播放自然结束）已补测通过；
+- D3（真正 kill Service）受平台限制，`am stop-service` 无法停 foreground media service，
+  待 root/异常进程路径；详见验收文档。
 - 详见 `docs/ACCEPTANCE_V0.2.15.md`。
 
 ## v0.2.15：路径审计后的 P0/P1/P2 修复
