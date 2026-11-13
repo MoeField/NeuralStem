@@ -1,8 +1,14 @@
 package pub.miku.neuralstem.spike
 
+import android.content.Context
+import android.net.Uri
+import android.os.ParcelFileDescriptor
 import java.io.Closeable
 import java.io.File
+import java.io.FileInputStream
 import java.io.RandomAccessFile
+import java.nio.ByteBuffer
+import java.nio.channels.FileChannel
 
 /**
  * WAV 读写工具(Task 0e:全面改为流式,支持长音频)。
@@ -42,16 +48,21 @@ object WavIo {
      * 只解析 RIFF 头拿元信息。内存占用 O(1),与文件大小无关。
      * 仅支持 PCM 16-bit / mono 或 stereo(Spike 从简)。
      */
-    fun probe(file: File): WavInfo {
-        RandomAccessFile(file, "r").use { raf ->
-            val h = parseHeader(raf, file)
-            val actualDataLen = minOf(h.dataLen, raf.length() - h.dataPos).toInt()
-            val totalFrames = actualDataLen / (2 * h.channels)
-            return WavInfo(h.channels, h.sampleRate, totalFrames)
-        }
+    fun probe(file: File): WavInfo =
+        WavRandomAccess.fromFile(file).use { src -> probe(src, file.name) }
+
+    /** 直接探测 content URI 的 WAV（fd 随机读，不复制原始字节）。 */
+    fun probe(context: Context, uri: Uri): WavInfo {
+        WavRandomAccess.fromUri(context, uri).use { src -> return probe(src, uri.toString()) }
     }
 
-    /** RIFF 头部解析结果。internal:供 [WavReader] 复用(避免二次解析)。 */
+    private fun probe(src: WavRandomAccess, label: String): WavInfo {
+        val h = parseHeader(src, label)
+        val actualDataLen = minOf(h.dataLen, src.length - h.dataPos).toInt()
+        val totalFrames = actualDataLen / (2 * h.channels)
+        return WavInfo(h.channels, h.sampleRate, totalFrames)
+    }
+
     internal class Header(
         val channels: Int,
         val sampleRate: Int,
@@ -59,10 +70,10 @@ object WavIo {
         val dataLen: Long,
     )
 
-    internal fun parseHeader(raf: RandomAccessFile, file: File): Header {
-        require(readFourCc(raf) == "RIFF") { "Not a RIFF file: $file" }
-        raf.readIntLE() // riff size
-        require(readFourCc(raf) == "WAVE") { "Not a WAVE file: $file" }
+    internal fun parseHeader(src: WavRandomAccess, label: String): Header {
+        require(readFourCc(src) == "RIFF") { "Not a RIFF file: $label" }
+        src.readIntLE() // riff size
+        require(readFourCc(src) == "WAVE") { "Not a WAVE file: $label" }
 
         var channels = 0
         var sampleRate = 0
@@ -71,30 +82,30 @@ object WavIo {
         var dataPos = -1L
         var dataLen = -1L
 
-        while (raf.filePointer < raf.length()) {
-            val chunkId = readFourCc(raf)
-            val chunkSize = raf.readIntLE().toLong() and 0xFFFFFFFFL
+        while (src.position < src.length) {
+            val chunkId = readFourCc(src)
+            val chunkSize = src.readIntLE().toLong() and 0xFFFFFFFFL
             when (chunkId) {
                 "fmt " -> {
-                    audioFormat = raf.readShortLE()
-                    channels = raf.readShortLE()
-                    sampleRate = raf.readIntLE()
-                    raf.readIntLE()  // byte rate
-                    raf.readShortLE() // block align
-                    bitsPerSample = raf.readShortLE()
+                    audioFormat = src.readShortLE()
+                    channels = src.readShortLE()
+                    sampleRate = src.readIntLE()
+                    src.readIntLE()  // byte rate
+                    src.readShortLE() // block align
+                    bitsPerSample = src.readShortLE()
                     val skip = (chunkSize - 16).toInt()
-                    if (skip > 0) raf.seek(raf.filePointer + skip) // 跳过 fmt 扩展区
+                    if (skip > 0) src.seek(src.position + skip) // 跳过 fmt 扩展区
                 }
                 "data" -> {
-                    dataPos = raf.filePointer
+                    dataPos = src.position
                     dataLen = chunkSize
-                    raf.seek(raf.filePointer + chunkSize)
+                    src.seek(src.position + chunkSize)
                 }
-                else -> raf.seek(raf.filePointer + chunkSize) // 跳过未知 chunk
+                else -> src.seek(src.position + chunkSize) // 跳过未知 chunk
             }
         }
 
-        require(dataPos >= 0) { "No data chunk in $file" }
+        require(dataPos >= 0) { "No data chunk in $label" }
         require(audioFormat == 1) { "Only PCM(1) supported, got format=$audioFormat" }
         require(bitsPerSample == 16) { "Only 16-bit PCM supported, got $bitsPerSample-bit" }
         require(channels in 1..2) { "Only mono/stereo supported, got $channels channels" }
@@ -118,9 +129,9 @@ object WavIo {
 // 顶层声明:WavIo / WavReader / WavWriter 三者共用。
 // (若放回 object WavIo 内部,会变成"成员扩展函数",顶层类 WavWriter 就看不见了)
 
-internal fun readFourCc(raf: RandomAccessFile): String {
+internal fun readFourCc(src: WavRandomAccess): String {
     val b = ByteArray(4)
-    raf.readFully(b)
+    src.readFully(b)
     return String(b, Charsets.US_ASCII)
 }
 
@@ -147,15 +158,89 @@ internal fun RandomAccessFile.writeShortLE(v: Int) {
  * 按帧随机访问,内存占用 = 请求的那一块(不随歌曲总长增长)。
  * 读取自动 clamp 到文件末尾,调用方不必额外判断边界。
  */
-class WavReader(file: File) : Closeable {
+/**
+ * content/File 统一的随机访问源（FileChannel positioned read）。
+ * 不依赖 RandomAccessFile(FileDescriptor)（Java 没有这个构造）。
+ */
+internal class WavRandomAccess private constructor(
+    private val channel: FileChannel,
+    private val closeables: List<Closeable>,
+) : Closeable {
 
-    private val raf = RandomAccessFile(file, "r")
+    var position: Long = 0L
+    val length: Long get() = channel.size()
+
+    fun seek(pos: Long) { position = pos }
+
+    fun readFully(dst: ByteArray, off: Int = 0, len: Int = dst.size) {
+        var done = 0
+        while (done < len) {
+            val n = channel.read(ByteBuffer.wrap(dst, off + done, len - done), position)
+            check(n > 0) { "Unexpected EOF at $position" }
+            position += n
+            done += n
+        }
+    }
+
+    fun readUnsignedByte(): Int {
+        val b = ByteArray(1)
+        readFully(b)
+        return b[0].toInt() and 0xFF
+    }
+
+    fun readIntLE(): Int =
+        readUnsignedByte() or
+            (readUnsignedByte() shl 8) or
+            (readUnsignedByte() shl 16) or
+            (readUnsignedByte() shl 24)
+
+    fun readShortLE(): Int =
+        readUnsignedByte() or (readUnsignedByte() shl 8)
+
+    override fun close() {
+        runCatching { channel.close() }
+        closeables.asReversed().forEach { runCatching { it.close() } }
+    }
+
+    companion object {
+        fun fromFile(file: File): WavRandomAccess {
+            val fis = FileInputStream(file)
+            return WavRandomAccess(fis.channel, listOf(fis))
+        }
+
+        fun fromUri(context: Context, uri: Uri): WavRandomAccess {
+            val pfd: ParcelFileDescriptor = context.contentResolver.openFileDescriptor(uri, "r")
+                ?: error("无法打开 $uri")
+            return try {
+                val fis = FileInputStream(pfd.fileDescriptor)
+                WavRandomAccess(fis.channel, listOf(fis, pfd))
+            } catch (t: Throwable) {
+                runCatching { pfd.close() }
+                throw t
+            }
+        }
+    }
+}
+
+/**
+ * 流式 WAV 读取器(Task 0e)。
+ *
+ * 按帧随机访问,内存占用 = 请求的那一块(不随歌曲总长增长)。
+ * 读取自动 clamp 到文件末尾,调用方不必额外判断边界。
+ */
+class WavReader private constructor(
+    private val src: WavRandomAccess,
+    label: String,
+) : Closeable {
+
     private val header: WavIo.Header
     val info: WavIo.WavInfo
 
+    constructor(file: File) : this(WavRandomAccess.fromFile(file), file.name)
+
     init {
-        header = WavIo.parseHeader(raf, file)
-        val actualDataLen = minOf(header.dataLen, raf.length() - header.dataPos).toInt()
+        header = WavIo.parseHeader(src, label)
+        val actualDataLen = minOf(header.dataLen, src.length - header.dataPos).toInt()
         info = WavIo.WavInfo(header.channels, header.sampleRate, actualDataLen / (2 * header.channels))
     }
 
@@ -173,10 +258,10 @@ class WavReader(file: File) : Closeable {
         if (n <= 0) return FloatArray(0)
 
         val byteOffset = header.dataPos + startFrame.toLong() * 2 * channels
-        raf.seek(byteOffset)
+        src.seek(byteOffset)
 
         val bytes = ByteArray(n * channels * 2)
-        raf.readFully(bytes)
+        src.readFully(bytes)
 
         val out = FloatArray(n * channels)
         var b = 0
@@ -189,8 +274,19 @@ class WavReader(file: File) : Closeable {
         return out
     }
 
-    override fun close() {
-        raf.close()
+    override fun close() = src.close()
+
+    companion object {
+        /** ★P2：content URI WAV 直接 fd 随机访问，不再先复制一次。 */
+        fun fromUri(context: Context, uri: Uri): WavReader {
+            val raf = WavRandomAccess.fromUri(context, uri)
+            return try {
+                WavReader(raf, uri.toString())
+            } catch (t: Throwable) {
+                runCatching { raf.close() }
+                throw t
+            }
+        }
     }
 }
 
