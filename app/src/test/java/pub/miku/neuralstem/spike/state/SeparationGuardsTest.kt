@@ -50,6 +50,14 @@ class SeparationGuardsTest {
     }
 
     @Test
+    fun job_track_must_match_current() {
+        assertTrue(SeparationGuards.jobMatchesCurrent(trackA, trackA))
+        assertFalse(SeparationGuards.jobMatchesCurrent(trackA, trackB))
+        assertTrue(SeparationGuards.jobMatchesCurrent(null, trackA))
+        assertTrue(SeparationGuards.jobMatchesCurrent(trackB, TrackKey("", 0L)))
+    }
+
+    @Test
     fun edge_source_must_match_active_job() {
         assertTrue(SeparationGuards.edgeSourceMatches("/a", "/a"))
         assertFalse(SeparationGuards.edgeSourceMatches("/b", "/a"))

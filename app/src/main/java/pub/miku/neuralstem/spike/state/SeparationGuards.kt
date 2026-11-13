@@ -35,6 +35,13 @@ object SeparationGuards {
         return stateSourcePath == activeSourcePath
     }
 
+    /** 任务所属曲是否就是当前曲；供 UI 映射丢弃旧曲 Finished。 */
+    fun jobMatchesCurrent(current: TrackKey?, jobTrack: TrackKey): Boolean {
+        if (current == null) return true
+        if (jobTrack.uri.isBlank()) return true
+        return current.uri == jobTrack.uri
+    }
+
     /** EdgeSession 的 sourceUri 是否属于当前 job。 */
     fun edgeSourceMatches(
         activeSourcePath: String?,

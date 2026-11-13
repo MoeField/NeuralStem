@@ -51,8 +51,7 @@ object CurrentTrackBridge {
                 val ext = resolveExtension(context, parsed)
                 // ★P0：一次分离的源必须唯一，不能所有 content:// 共用 separate_input.flac。
                 //   uri token 保证 A/B（同扩展）不会写同一个文件；同 uri 重跑复用。
-                val token = parsed.toString().hashCode().toUInt().toString(16)
-                val local = File(context.cacheDir, "${CACHE_NAME}_$token.$ext")
+                val local = File(context.cacheDir, tempSourceName(parsed.toString(), ext))
                 context.contentResolver.openInputStream(parsed)?.use { input ->
                     local.outputStream().use { output -> input.copyTo(output) }
                 } ?: error("无法打开 $parsed")
@@ -63,6 +62,12 @@ object CurrentTrackBridge {
                 null
             }
         }
+    }
+
+    /** 纯函数，便于 JVM 测试：同一 uri 稳定、不同 uri 不冲突。 */
+    internal fun tempSourceName(uriString: String, ext: String): String {
+        val token = uriString.hashCode().toUInt().toString(16)
+        return "${CACHE_NAME}_$token.$ext"
     }
 
     /** 清理超过 1 小时的旧分离输入；正常任务结束后不保证调用，避免长期堆 cache。 */

@@ -112,6 +112,13 @@ class StemExportNamingTest {
     }
 
     @Test
+    fun `导出相对目录包含模型维度`() {
+        assertEquals("separate/song", StemExporter.exportRelativeDir("song", null))
+        assertEquals("separate/song/spleeter-2stem", StemExporter.exportRelativeDir("song", "spleeter-2stem"))
+        assertEquals("separate/song", StemExporter.exportRelativeDir("", ""))
+    }
+
+    @Test
     fun `全非法或空名回退为 song`() {
         assertEquals("song", StemExporter.safeDirName(""))
         assertEquals("song", StemExporter.safeDirName("   "))
