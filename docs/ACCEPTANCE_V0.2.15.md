@@ -75,6 +75,21 @@ Music/separate/bullet_44k/spleeter-2stem/
 
 - edge 缓存命中自动切多轨，进程日志显示 `loadMultiTrack` 成功。
 
+### E2：MediaStore 导出检查
+
+```text
+content query ... _display_name=vocals.wav, relative_path=Music/separate/bullet_44k/spleeter-2stem/, is_pending=0
+```
+
+- 无 pending 残留；同名查询只有 1 行。
+
+### D1/A3 尝试记录（未通过判定）
+
+- 在 edge 运行中点击分离页「取消分离」，当前坐标点击未触发取消回调；
+  分离继续到完成。需要改用 UI 语义/调试入口精确触发，不能记通过。
+- 尝试播放中 `media_session dispatch next` / `input keyevent 87` 切歌，
+  当前播放队列没有切到下一首；A3 未形成有效验证。
+
 ### B1：FULL 后台 + 当前 B（发现并修复一个 UI 残留）
 
 - A=`who_am_i.flac` 启动 4-stem；切到 B=`bullet.flac`；
@@ -105,11 +120,11 @@ Music/separate/bullet_44k/spleeter-2stem/
 | A3 | A edge 还在跑时切 B | 未做 |
 | B1 | FULL 4-stem A 后台，切 B，A 完成 | ✅ 复验通过 |
 | B2 | 返回 A，缓存/手动恢复 | 未做 |
-| D1 | 分离中取消 edge | 未做 |
+| D1 | 分离中取消 edge | 尝试但点击未触发，未通过 |
 | D2 | 播放自然结束 / FULL 后台继续 | 未做 |
 | D3 | kill PlaybackService/SeparationService | 未完成：stop-service 未真正销毁，需用 force-stop/异常路径 |
 | D4 | 进程死亡后重启 | ✅ 基础重启通过（无 FATAL） |
-| E2 | 导出 MediaStore pending/重复检查 | 只查了目录名 |
+| E2 | 导出 MediaStore pending/重复检查 | ✅ pending=0，同名 1 行 |
 | F2 | 旋转/锁屏媒体键 | ✅ 旋转通过；锁屏媒体键未单独测 |
 
 注意：**未完成这些之前，不应把本轮视为“验收通过”，也不应继续 P2 直解码重构。**
