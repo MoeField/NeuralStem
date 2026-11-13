@@ -72,12 +72,12 @@ android {
         targetSdk = 37
         // ★版本号（2026-10-20 修正）：之前停在 10 / 0.1.0-alpha，但已发到 v0.2.1。
         //   versionCode 必须**严格递增**，否则 F-Droid/Obtainium 看不到更新。
-        //   当前规则：semver 的 minor*10 + patch = 36（0.2.16 → 36）。
-        versionCode = 36
+        //   当前规则：semver 的 minor*10 + patch = 37（0.2.17 → 37）。
+        versionCode = 37
         // ★versionName 可由 CI 覆盖（`-PversionName=0.2.5`，从 tag 名解出）。
         //   为何需要：tag 与 build.gradle 里的版本号容易不同步；
         //   以 tag 为准能保证“Release 页显示的版本 = 代码里的版本”。
-        versionName = (project.findProperty("versionName") as String?) ?: "0.2.16"
+        versionName = (project.findProperty("versionName") as String?) ?: "0.2.17"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 

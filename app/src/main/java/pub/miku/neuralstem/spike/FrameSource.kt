@@ -172,6 +172,10 @@ object SeparationInput {
      * @param localFile 已在本地可随机访问的文件(SAF 导入会先拷到 cacheDir)
      */
     fun open(context: Context, localFile: File): FrameSource {
+        // ★P2：压缩 content URI 的桥接文件不落原始字节；直接读 content URI 解码。
+        CurrentTrackBridge.readBridgedSource(localFile)?.let { bridged ->
+            return openBridged(context, localFile, bridged)
+        }
         val isWav = localFile.extension.equals("wav", ignoreCase = true)
 
         if (isWav) {
@@ -197,7 +201,7 @@ object SeparationInput {
             "sep-src-${System.currentTimeMillis()}-${localFile.name.hashCode()}.wav",
         )
         val ok = try {
-            decodeToTempWav(context, localFile, tmp)
+            decodeToTempWav(context, Uri.fromFile(localFile), localFile.name, tmp)
         } catch (t: Throwable) {
             Log.e(TAG, "decodeToTempWav failed: ${localFile.name}", t)
             false
@@ -210,6 +214,48 @@ object SeparationInput {
         Log.i(
             TAG,
             "decoded temp wav: ${tmp.name} ${tmp.length()}B " +
+                "sr=${wav.sampleRate} ch=${wav.channels} frames=${wav.totalFrames}",
+        )
+        return if (wav.sampleRate == MODEL_SAMPLE_RATE) {
+            TempFileFrameSource(wav, tmp)
+        } else {
+            ResamplingFrameSource(wav, wav.sampleRate, MODEL_SAMPLE_RATE, tmp)
+        }
+    }
+
+    /** 桥接元数据 → 直接解码 content URI，不复制原始压缩字节。 */
+    private fun openBridged(
+        context: Context,
+        bridgeFile: File,
+        bridged: CurrentTrackBridge.BridgedSource,
+    ): FrameSource {
+        if (bridged.extension.equals("wav", ignoreCase = true)) {
+            error("bridged WAV should have been copied: ${bridgeFile.name}")
+        }
+        cleanupStaleTemps(context)
+        val tmp = File(
+            context.cacheDir,
+            "sep-src-${System.currentTimeMillis()}-${bridged.contentHash}.wav",
+        )
+        val ok = try {
+            decodeToTempWav(
+                context,
+                Uri.parse(bridged.uri),
+                bridged.displayName,
+                tmp,
+            )
+        } catch (t: Throwable) {
+            Log.e(TAG, "decodeToTempWav(bridged) failed: ${bridged.displayName}", t)
+            false
+        }
+        if (!ok) {
+            runCatching { tmp.delete() }
+            error("解码失败: ${bridged.displayName}")
+        }
+        val wav = WavFrameSource(WavReader(tmp))
+        Log.i(
+            TAG,
+            "decoded bridged uri: ${bridged.displayName} ${tmp.length()}B " +
                 "sr=${wav.sampleRate} ch=${wav.channels} frames=${wav.totalFrames}",
         )
         return if (wav.sampleRate == MODEL_SAMPLE_RATE) {
@@ -235,10 +281,15 @@ object SeparationInput {
      * 内存 O(解码块)，不再需要 `ByteArrayOutputStream` + 整曲 `FloatArray`。
      * 返回 false = 未收到真正的 EOS（取消或 guard 熔断），调用方应删除临时文件。
      */
-    private fun decodeToTempWav(context: Context, localFile: File, temp: File): Boolean {
+    private fun decodeToTempWav(
+        context: Context,
+        sourceUri: Uri,
+        label: String,
+        temp: File,
+    ): Boolean {
         val extractor = MediaExtractor()
         try {
-            extractor.setDataSource(context, Uri.fromFile(localFile), null)
+            extractor.setDataSource(context, sourceUri, null)
             var trackIndex = -1
             var format: MediaFormat? = null
             for (i in 0 until extractor.trackCount) {
@@ -249,7 +300,7 @@ object SeparationInput {
                     break
                 }
             }
-            check(trackIndex >= 0) { "no audio track in ${localFile.name}" }
+            check(trackIndex >= 0) { "no audio track in $label" }
             extractor.selectTrack(trackIndex)
             val mime = format!!.getString(MediaFormat.KEY_MIME)!!
             val codec = MediaCodec.createDecoderByType(mime)
@@ -340,7 +391,7 @@ object SeparationInput {
                 writer?.close()
                 Log.i(
                     TAG,
-                    "decodeToTempWav: ${localFile.name} sr=$outRate " +
+                    "decodeToTempWav: $label sr=$outRate " +
                         "frames=${writer?.framesWritten} eos=$outputDone",
                 )
                 return outputDone && writer != null && temp.length() > 44
