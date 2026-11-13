@@ -230,7 +230,31 @@ object SeparationInput {
         bridged: CurrentTrackBridge.BridgedSource,
     ): FrameSource {
         if (bridged.extension.equals("wav", ignoreCase = true)) {
-            error("bridged WAV should have been copied: ${bridgeFile.name}")
+            val uri = Uri.parse(bridged.uri)
+            // fd 随机访问失败（极少数不可 seek 的 provider）才回退到解码临时 WAV。
+            val wav = runCatching {
+                WavFrameSource(WavReader.fromUri(context, uri))
+            }.getOrElse { t ->
+                Log.w(TAG, "WavReader.fromUri failed, fallback decode: ${bridged.displayName}", t)
+                cleanupStaleTemps(context)
+                val tmp = File(
+                    context.cacheDir,
+                    "sep-src-${System.currentTimeMillis()}-${bridged.contentHash}.wav",
+                )
+                val ok = try {
+                    decodeToTempWav(context, uri, bridged.displayName, tmp)
+                } catch (e: Throwable) {
+                    Log.e(TAG, "decodeToTempWav(wav bridged) failed: ${bridged.displayName}", e)
+                    false
+                }
+                if (!ok) {
+                    runCatching { tmp.delete() }
+                    error("WAV fd 打开失败: ${bridged.displayName}")
+                }
+                TempFileFrameSource(WavFrameSource(WavReader(tmp)), tmp)
+            }
+            Log.i(TAG, "wav content fd: ${bridged.displayName} sr=${wav.sampleRate} frames=${wav.totalFrames}")
+            return wav
         }
         cleanupStaleTemps(context)
         val tmp = File(

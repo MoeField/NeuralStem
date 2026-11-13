@@ -16,9 +16,9 @@ import java.util.Properties
  * ## 为什么需要
  * 播放器持有的是 `content://`（SAF）或 `file://` 的 [Uri]，
  * 而分离引擎（SegregationRepository.start / start4 / startDemucs）需要 [File]。
- * - WAV：仍需一份本地副本，因为 [WavReader] 要随机访问 File；
- * - 压缩源：只写一个 `.sepmeta` 元数据文件，解码时直接读 content URI，
- *   不再把整首原始字节复制进 cacheDir。
+ * - WAV：`.sepmeta` + `WavReader.fromUri`（content fd 随机访问）；
+ * - 压缩源：`.sepmeta` + MediaExtractor 直接读 content URI 解码；
+ * 两者都不再把整首原始字节复制进 cacheDir。
  *
  * ## 复用
  * 若 [Uri] 本身就是 `file://`（外部目录加载/自动化路径），直接复用该文件，不做拷贝。
@@ -36,7 +36,7 @@ object CurrentTrackBridge {
     /**
      * 把当前播放曲的 [uri] 变成可交给分离引擎的本地 [File]。
      *
-     * 压缩 `content://` 返回 `.sepmeta` 元数据文件；下游 SeparationInput 识别后直接解码，
+     * `content://` 返回 `.sepmeta` 元数据文件；下游 SeparationInput 识别后直接解码/读 fd，
      * 不会生成 `separate_input_<hash>.<ext>` 的原始字节副本。
      *
      * @param uri 当前曲 Uri（`content://` 或 `file://`）
@@ -58,18 +58,8 @@ object CurrentTrackBridge {
                 val ext = resolveExtension(context, parsed)
                 // ★P0：一次分离的源必须唯一，不能所有 content:// 共用 separate_input.flac。
                 //   uri token 保证 A/B（同扩展）不会写同一个文件；同 uri 重跑复用。
-                if (ext.equals("wav", ignoreCase = true)) {
-                    // WAV 需要随机访问（WavReader 吃 File），仍需一份本地副本。
-                    val local = File(context.cacheDir, tempSourceName(parsed.toString(), ext))
-                    context.contentResolver.openInputStream(parsed)?.use { input ->
-                        local.outputStream().use { output -> input.copyTo(output) }
-                    } ?: error("无法打开 $parsed")
-                    Log.i(TAG, "bridged wav $parsed -> ${local.absolutePath} (${local.length()} B)")
-                    return@withContext local
-                }
-
-                // ★P2：压缩源不再整份复制。只写元数据（原始 URI/显示名/扩展/内容 hash），
-                //   SeparationInput 用 MediaExtractor 直接读 content URI 解码。
+                // ★P2：所有 content URI 都不再整份复制。WAV 走 fd 随机访问，
+                //   压缩源用 MediaExtractor 直接读 content URI 解码。
                 val hash = sha256(context, parsed)
                 val meta = File(
                     context.cacheDir,

@@ -118,6 +118,19 @@
 - JVM **433/0**（M1 reducer 52 + M2 controller 7 + 原有 374）；
   真机 edge fast path、4-stem cache/启动、开关 off/on 通过。
 
+## v0.2.18：WAV fd 随机访问
+
+- `WavIo`/`WavReader` 改为 `FileChannel` positioned read：
+  - File 仍走本地文件；
+  - content URI WAV 走 `ParceFileDescriptor` + `FileChannel`，不再复制原文件；
+- `CurrentTrackBridge` 对 WAV content URI 也只写 `.sepmeta`，`SeparationInput`
+  优先 `WavReader.fromUri`；仅 fd 不可 seek 时才回退解码临时 WAV；
+- 真机：
+  - WAV content：`wav content fd: bullet_44k.wav sr=44100 frames=6528376`，无原始副本；
+  - file WAV：仍 `wav @44.1k → 流式直读(零解码)`；
+  - 压缩源直解码路径不受影响；
+- JVM **446/0**；`WavIoStreamingTest` 的 FileChannel 读写往返通过。
+
 ## v0.2.17：压缩源直解码（P2-2）
 
 - `CurrentTrackBridge` 对压缩 `content://` 只写 `.sepmeta` 元数据（原始 URI/显示名/扩展/内容 hash），
