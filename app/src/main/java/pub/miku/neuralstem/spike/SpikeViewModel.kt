@@ -29,6 +29,7 @@ import pub.miku.neuralstem.spike.state.TrackKey
 import pub.miku.neuralstem.spike.state.Lifecycle
 import pub.miku.neuralstem.spike.state.JobMetrics
 import pub.miku.neuralstem.spike.state.SeparationSnapshot
+import pub.miku.neuralstem.spike.state.SeparationGuards
 
 /**
  * Spike 编排(Task 0b,sherpa-onnx 主路线)。
@@ -463,8 +464,11 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
         }
 
         // ★P0：旧曲的任务（尤其 FULL 后台继续）不能把完成态推给当前曲 UI。
-        val current = snapshot.currentTrackKey
-        if (current != null && job.trackKey.uri.isNotBlank() && job.trackKey.uri != current.uri) {
+        if (!SeparationGuards.jobMatchesCurrent(snapshot.currentTrackKey, job.trackKey)) {
+            // ★验收发现：旧曲 FULL 后台时，UI 不能保留旧 job 的 Preparing/Running。
+            //   Domain 只有一个 job（这里是旧曲），当前曲没有自己的任务 → 清理当前任务态。
+            session.resetSeparation()
+            _state.value = State.Idle
             pushSeparationTask()
             return
         }

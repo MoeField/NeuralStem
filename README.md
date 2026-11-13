@@ -226,6 +226,7 @@ CI 用 Repository Secrets（`KEYSTORE_BASE64` / `KEYSTORE_PASSWORD` / `KEY_ALIAS
 - [`docs/STATE_MODEL.md`](docs/STATE_MODEL.md)：分离状态模型重构设计稿。
 - [`docs/PATH_AUDIT.md`](docs/PATH_AUDIT.md)：播放/分离/缓存/UI 全路径审计与待修 bug。
 - [`docs/REPAIR_PLAN.md`](docs/REPAIR_PLAN.md)：按级别排序的维修计划。
+- [`docs/ACCEPTANCE_V0.2.15.md`](docs/ACCEPTANCE_V0.2.15.md)：v0.2.15 验收记录。
 
 ### 性能（参考设备实测）
 

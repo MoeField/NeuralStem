@@ -60,15 +60,7 @@ object StemExporter {
         val safeModel = modelName
             ?.takeIf { it.isNotBlank() }
             ?.let(::safeDirName)
-        val dirRel = buildString {
-            append(Environment.DIRECTORY_MUSIC)
-            append("/separate/")
-            append(safeSong)
-            if (safeModel != null) {
-                append('/')
-                append(safeModel)
-            }
-        }
+        val dirRel = "${Environment.DIRECTORY_MUSIC}/${exportRelativeDir(songName, modelName)}"
         var ok = 0
         val errors = ArrayList<String>()
 
@@ -89,6 +81,15 @@ object StemExporter {
         }
         Log.i(TAG, msg)
         return msg
+    }
+
+    /** Music 下的相对目录（便于 JVM 测命名；不含 Environment 前缀）。 */
+    internal fun exportRelativeDir(songName: String, modelName: String?): String {
+        val safeSong = safeDirName(songName)
+        val safeModel = modelName
+            ?.takeIf { it.isNotBlank() }
+            ?.let(::safeDirName)
+        return if (safeModel != null) "separate/$safeSong/$safeModel" else "separate/$safeSong"
     }
 
     /**

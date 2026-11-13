@@ -288,7 +288,8 @@ Domain 可能把 A 的 `writtenUpToFrame`/`vocalsFile` 发送为 B 的 coverage/
 - repo 终态新增 `sourcePath`；Domain 只接受与 activeSourcePath 匹配的终态
 - start 校验 `request.trackKey == currentTrackKey`
 - EdgeSession source 不匹配时 tickEdge/publishEdgeUi 不发事件
-- SpikeViewModel Finished 按 currentTrackKey 过滤
+- SpikeViewModel Finished 按 currentTrackKey 过滤；旧曲 job 不匹配时同步
+  `resetSeparation()`，清掉残留 Preparing
 - 真机 A（who，已 edge 多轨）→ 自动下一首 B（bullet）→ B 极快：
   `TrackBridge` 分别生成 `separate_input_c44e105d.flac` / `separate_input_7659cab2.flac`，
   B 命中 `25641fd5d493ca5e-spleeter`，A 的 `3d42e864dce0c19a` 未被复用。
@@ -350,7 +351,7 @@ Domain 可能把 A 的 `writtenUpToFrame`/`vocalsFile` 发送为 B 的 coverage/
 
 ## 11. 测试覆盖现状
 
-- JVM：433/0。
+- JVM：443/0。
   - `SeparationReducerTest`：迁移/交错/终态/超时/缓存/导出门控等。
   - `SeparationControllerTest`：事件串行/缺省 effect/旧 job。
 - 真机已过：

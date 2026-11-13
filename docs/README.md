@@ -6,5 +6,6 @@
 - [STATE_MODEL.md](STATE_MODEL.md) — 分离状态模型重构的需求、事件表与迁移计划（设计稿）。
 - [PATH_AUDIT.md](PATH_AUDIT.md) — 播放/分离/缓存/UI 全路径清单与逻辑自查（审计稿，含待修 bug）。
 - [REPAIR_PLAN.md](REPAIR_PLAN.md) — 按审计 bug 分级的维修计划（计划稿，未实施）。
+- [ACCEPTANCE_V0.2.15.md](ACCEPTANCE_V0.2.15.md) — v0.2.15 P0/P1/P2 验收记录（部分完成）。
 
 项目使用说明见仓库根目录的 [README](../README.md)。
