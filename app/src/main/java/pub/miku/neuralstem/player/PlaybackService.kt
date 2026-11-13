@@ -774,6 +774,10 @@ class PlaybackService : MediaSessionService() {
 
     override fun onDestroy() {
         Log.i(TAG, "service destroyed")
+        runCatching {
+            pub.miku.neuralstem.spike.state.SeparationDomain.peek()
+                ?.onPlaybackServiceLost()
+        }
         handler.removeCallbacksAndMessages(null)
         eqRetry = null
         eqController.detachAll()   // M3-P3：EQ 随 Service 释放

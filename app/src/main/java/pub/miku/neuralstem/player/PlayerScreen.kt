@@ -67,6 +67,8 @@ fun PlayerScreen(
     importEnabled: Boolean = true,
     // ★R2：导入成功后通知宿主（→ 追加进当前选中歌单）。
     onImported: (Uri, String) -> Unit = { _, _ -> },
+    /** ★P1：分离开关由宿主/Domain 处理；null = 旧 PlayerVM 直连（兼容）。 */
+    onToggleSeparationHost: ((Boolean) -> Boolean)? = null,
     /**
      * ★2026-11-01：**自动消失的提示条**（由宿主用 Snackbar 实现）。
      *
@@ -91,7 +93,7 @@ fun PlayerScreen(
     val noSepHint = stringResource(R.string.sep_none_hint)
     val noSepAction = stringResource(R.string.sep_none_go)
     val onSeparationToggle: (Boolean) -> Unit = { on ->
-        val ok = vm.toggleSeparation(on)
+        val ok = onToggleSeparationHost?.invoke(on) ?: vm.toggleSeparation(on)
         if (on && !ok) onHint(noSepHint, noSepAction) { onOpenSpike() }
     }
     // ★ 进度流传引用即可（子组件内部 collect）。

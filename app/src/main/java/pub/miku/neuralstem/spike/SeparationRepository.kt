@@ -78,6 +78,8 @@ class SeparationRepository(private val app: Application) {
             val audioDurationMs: Long,
             /** true = 命中缓存,未真正推理 */
             val fromCache: Boolean = false,
+            /** ★P0：产生该结果的源文件；Domain 用它丢弃旧 job 的迟到终态。 */
+            val sourcePath: String? = null,
         ) : State
 
         /**
@@ -94,9 +96,16 @@ class SeparationRepository(private val app: Application) {
             val peakPssMb: Float,
             val audioDurationMs: Long,
             val fromCache: Boolean = false,
+            /** ★P0：产生该结果的源文件。 */
+            val sourcePath: String? = null,
         ) : State
 
-        data class Failed(val message: String, val cause: Throwable? = null) : State
+        data class Failed(
+            val message: String,
+            val cause: Throwable? = null,
+            /** ★P0：产生该结果的源文件。 */
+            val sourcePath: String? = null,
+        ) : State
         data object Cancelled : State
 
         /**
@@ -125,6 +134,8 @@ class SeparationRepository(private val app: Application) {
              * （否则用户拿到的 WAV 前半段是静音）。
              */
             val complete: Boolean = false,
+            /** ★P0：产生该结果的源文件。 */
+            val sourcePath: String? = null,
         ) : State
     }
 
@@ -216,20 +227,30 @@ class SeparationRepository(private val app: Application) {
                 val cached = readCache(outDir)
                 if (cached != null) {
                     Log.i(TAG, "cache HIT: ${outDir.absolutePath}")
-                    if (generation.get() == myGen) _state.value = cached
+                    if (generation.get() == myGen) {
+                        _state.value = cached.copy(sourcePath = source.absolutePath)
+                    }
                     return@launchSeparation
                 }
 
                 val result = separate(source, engine, uvrModelName, chunkOverrideFrames, outDir)
                 writeCacheManifest(outDir, result)
-                if (generation.get() == myGen) _state.value = result
+                if (generation.get() == myGen) {
+                    _state.value = result.copy(sourcePath = source.absolutePath)
+                }
             } catch (ce: CancellationException) {
                 Log.i(TAG, "separation cancelled")
                 if (generation.get() == myGen) _state.value = State.Cancelled
                 throw ce
             } catch (t: Throwable) {
                 Log.e(TAG, "separation failed", t)
-                if (generation.get() == myGen) _state.value = State.Failed("分离失败: ${t.message}", t)
+                if (generation.get() == myGen) {
+                    _state.value = State.Failed(
+                        "分离失败: ${t.message}",
+                        t,
+                        sourcePath = source.absolutePath,
+                    )
+                }
             }
         }
     }
@@ -316,6 +337,7 @@ class SeparationRepository(private val app: Application) {
                             startFrame = startFrame,
                             sampleRate = sr,
                             complete = true,
+                            sourcePath = source.absolutePath,
                         )
                     }
                     Log.i(TAG, "edge 缓存命中（fast path，未解码源）：${fastOutDir.absolutePath}")
@@ -456,6 +478,7 @@ class SeparationRepository(private val app: Application) {
                             startFrame = startFrame,
                             sampleRate = frameSource.sampleRate,
                             complete = true,
+                            sourcePath = source.absolutePath,
                         )
                         Log.i(TAG, "edge 缓存命中：跳过分离（complete=true）")
                         return@launchSeparation
@@ -682,6 +705,7 @@ class SeparationRepository(private val app: Application) {
                                 startFrame = startFrame,
                                 sampleRate = frameSource.sampleRate,
                                 complete = manifest.complete,
+                                sourcePath = source.absolutePath,
                             )
                             Log.i(
                                 TAG,
@@ -711,7 +735,11 @@ class SeparationRepository(private val app: Application) {
                     if (mySessionGen >= 0 && session.generation == mySessionGen) {
                         session.fail(t.message ?: "edge separation failed")
                     }
-                    _state.value = State.Failed("边分离边播失败: ${t.message}", t)
+                    _state.value = State.Failed(
+                        "边分离边播失败: ${t.message}",
+                        t,
+                        sourcePath = source.absolutePath,
+                    )
                 }
             }
         }
@@ -767,20 +795,30 @@ class SeparationRepository(private val app: Application) {
 
                 readCache4(outDir)?.let {
                     Log.i(TAG, "cache HIT (4-stem): ${outDir.absolutePath}")
-                    if (generation.get() == myGen) _state.value = it
+                    if (generation.get() == myGen) {
+                        _state.value = it.copy(sourcePath = source.absolutePath)
+                    }
                     return@launchSeparation
                 }
 
                 val result = separate4(source, dir, outDir)
                 writeCacheManifest4(outDir, result)
-                if (generation.get() == myGen) _state.value = result
+                if (generation.get() == myGen) {
+                    _state.value = result.copy(sourcePath = source.absolutePath)
+                }
             } catch (ce: CancellationException) {
                 Log.i(TAG, "4-stem separation cancelled")
                 if (generation.get() == myGen) _state.value = State.Cancelled
                 throw ce
             } catch (t: Throwable) {
                 Log.e(TAG, "4-stem separation failed", t)
-                if (generation.get() == myGen) _state.value = State.Failed("4-stem 分离失败: ${t.message}", t)
+                if (generation.get() == myGen) {
+                    _state.value = State.Failed(
+                        "4-stem 分离失败: ${t.message}",
+                        t,
+                        sourcePath = source.absolutePath,
+                    )
+                }
             }
         }
     }
@@ -885,19 +923,29 @@ class SeparationRepository(private val app: Application) {
 
                 readCacheDemucs(outDir)?.let {
                     Log.i(TAG, "cache HIT (demucs): ${outDir.absolutePath}")
-                    if (generation.get() == myGen) _state.value = it
+                    if (generation.get() == myGen) {
+                        _state.value = it.copy(sourcePath = source.absolutePath)
+                    }
                     return@launchSeparation
                 }
                 val result = separateDemucs(source, mdl, outDir, threads, useNnapi)
                 writeCacheManifest4(outDir, result)
-                if (generation.get() == myGen) _state.value = result
+                if (generation.get() == myGen) {
+                    _state.value = result.copy(sourcePath = source.absolutePath)
+                }
             } catch (ce: CancellationException) {
                 Log.i(TAG, "demucs separation cancelled")
                 if (generation.get() == myGen) _state.value = State.Cancelled
                 throw ce
             } catch (t: Throwable) {
                 Log.e(TAG, "demucs separation failed", t)
-                if (generation.get() == myGen) _state.value = State.Failed("Demucs 分离失败: ${t.message}", t)
+                if (generation.get() == myGen) {
+                    _state.value = State.Failed(
+                        "Demucs 分离失败: ${t.message}",
+                        t,
+                        sourcePath = source.absolutePath,
+                    )
+                }
             }
         }
     }

@@ -121,6 +121,11 @@ class SeparationService : Service() {
     }
 
     override fun onDestroy() {
+        // Service 非正常销毁时让 Domain 知道；正常终态时 reducer 会 no-op。
+        runCatching {
+            pub.miku.neuralstem.spike.state.SeparationDomain.peek()
+                ?.onSeparationServiceLost()
+        }
         scope.cancel()
         super.onDestroy()
     }

@@ -13,7 +13,7 @@ import java.io.File
  * 阶段 UI / U7：**导出分离结果**。
  *
  * ## 规格（用户决策）
- * - 目标：`Music/separate/<歌曲名>/`
+ * - 目标：`Music/separate/<歌曲名>/<模型>/`（模型目录来自 stem cache 的 engine 后缀）
  * - **WAV**（无损优先）；**含原曲**；**英文文件名**
  *   （`vocals.wav` / `drums.wav` / `bass.wav` / `other.wav` / `original.wav`）
  * - **不带 EQ / 音量处理** —— 导出的是**纯净**分离产物。
@@ -54,9 +54,21 @@ object StemExporter {
         songName: String,
         stemFiles: List<File>,
         original: File? = null,
+        modelName: String? = null,
     ): String {
         val safeSong = safeDirName(songName)
-        val dirRel = "${Environment.DIRECTORY_MUSIC}/separate/$safeSong"
+        val safeModel = modelName
+            ?.takeIf { it.isNotBlank() }
+            ?.let(::safeDirName)
+        val dirRel = buildString {
+            append(Environment.DIRECTORY_MUSIC)
+            append("/separate/")
+            append(safeSong)
+            if (safeModel != null) {
+                append('/')
+                append(safeModel)
+            }
+        }
         var ok = 0
         val errors = ArrayList<String>()
 
@@ -72,10 +84,29 @@ object StemExporter {
 
         val msg = buildString {
             append("导出 $ok 个文件 → Music/separate/$safeSong/")
+            if (safeModel != null) append("$safeModel/")
             if (errors.isNotEmpty()) append("；失败: ${errors.joinToString()}")
         }
         Log.i(TAG, msg)
         return msg
+    }
+
+    /**
+     * 从 stem cache 目录推断模型名，作为导出子目录。
+     * 目录形如 `<hash>-spleeter`、`<hash>-spleeter4`、`<hash>-demucs`、
+     * `<hash>-<engine>-full`；不依赖 UI 当前选项，换曲/重建后仍可追踪。
+     */
+    internal fun inferModelDirName(stemFiles: List<File>): String? {
+        val dir = stemFiles.firstOrNull()?.parentFile?.name ?: return null
+        val base = dir.removeSuffix("-full")
+        val tag = base.substringAfterLast('-', "")
+        if (tag.isBlank()) return null
+        return when (tag) {
+            "spleeter" -> "spleeter-2stem"
+            "spleeter4" -> "spleeter-4stem"
+            "demucs" -> "demucs"
+            else -> tag
+        }
     }
 
     /** 拷贝 [src] 到 Music 下的 [dirRel]/[outName]。返回是否成功。 */

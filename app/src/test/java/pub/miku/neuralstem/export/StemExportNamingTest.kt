@@ -3,6 +3,7 @@ package pub.miku.neuralstem.export
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 
 /**
  * ★导出文件名映射的测试（2026-11-01 加 2 轨导出时补）。
@@ -87,6 +88,27 @@ class StemExportNamingTest {
         val n = StemExporter.safeDirName("a/b\\c:d*e?f\"g<h>i|j")
         assertEquals(false, n.any { it in "/\\:*?\"<>|" })
         assertTrue("应保留主体字符，实际 $n", n.startsWith("a"))
+    }
+
+    @Test
+    fun `从 cache 目录推断模型导出目录`() {
+        assertEquals(
+            "spleeter-2stem",
+            StemExporter.inferModelDirName(listOf(File("/cache/abc-spleeter/vocals.wav"))),
+        )
+        assertEquals(
+            "spleeter-4stem",
+            StemExporter.inferModelDirName(listOf(File("/cache/abc-spleeter4/vocals.wav"))),
+        )
+        assertEquals(
+            "demucs",
+            StemExporter.inferModelDirName(listOf(File("/cache/abc-demucs/vocals.wav"))),
+        )
+        assertEquals(
+            "spleeter-2stem",
+            StemExporter.inferModelDirName(listOf(File("/cache/abc-spleeter-full/vocals.wav"))),
+        )
+        assertEquals(null, StemExporter.inferModelDirName(emptyList()))
     }
 
     @Test

@@ -282,6 +282,18 @@ Domain 可能把 A 的 `writtenUpToFrame`/`vocalsFile` 发送为 B 的 coverage/
 
 **建议**：unique source file + source/job token + tickEdge source 校验 + start current-track 校验。
 
+**修复进度（2026-11-13，`fix/path-audit`）**：
+
+- 已实现唯一临时源：`separate_input_<uriHash>.<ext>`
+- repo 终态新增 `sourcePath`；Domain 只接受与 activeSourcePath 匹配的终态
+- start 校验 `request.trackKey == currentTrackKey`
+- EdgeSession source 不匹配时 tickEdge/publishEdgeUi 不发事件
+- SpikeViewModel Finished 按 currentTrackKey 过滤
+- 真机 A（who，已 edge 多轨）→ 自动下一首 B（bullet）→ B 极快：
+  `TrackBridge` 分别生成 `separate_input_c44e105d.flac` / `separate_input_7659cab2.flac`，
+  B 命中 `25641fd5d493ca5e-spleeter`，A 的 `3d42e864dce0c19a` 未被复用。
+- JVM 437/0。
+
 ### BUG-02 [P1] `tickEdge`/`publishEdgeUi` 可能把旧 edge 会话当作当前 job
 
 - `EdgeSeparationSession` 是全局单例；`tickEdge` 只看 `activeJobId` 和 `current.kind==EDGE`，
@@ -305,22 +317,22 @@ Domain 可能把 A 的 `writtenUpToFrame`/`vocalsFile` 发送为 B 的 coverage/
 - `SpikeViewModel.applyDomainSnapshot` 的 `Lifecycle.Finished` 分支不检查 `job.trackKey == snapshot.currentTrackKey`；
 - FULL D1 后台完成后，当前是 B 时仍可能把 A 的 Done 推给 `SeparationTask`/export。
 
-### BUG-06 [P1] 手动开关绕过 Domain
+### BUG-06 [P1] 手动开关绕过 Domain（已修）
 
-- `PlayerScreen` / `SeparationScreen` 仍直接调用 `PlayerViewModel.toggleSeparation`；
-- Domain 的 `AttachmentState` 不更新，`autoAttachSuppressedFor` 不生效；
-- 之后 Domain 可能认为仍附着/未附着，与播放器实际状态不一致。
+- **已修**：AppShell `domainToggleSeparation` 接 Domain attach/detach，PlayerScreen/
+  SeparationScreen 回调改走它；Domain attachment/suppression 与播放器一致。
+- 真机：edge 自动多轨 → off → on 正常。
 
-### BUG-07 [P2] 导出缺少模型维度
+### BUG-07 [P2] 导出缺少模型维度（已修）
 
-- 目录只有 `Music/separate/<song>/`；
-- Spleeter 2-stem、Spleeter 4-stem、Demucs 的同名文件会覆盖；
-- 与“每次分离应按歌+模型区分”的旧需求不一致。
+- **已修**：`StemExporter.export` 支持 `modelName`，路径
+  `Music/separate/<song>/<model>/`；`inferModelDirName` 从缓存目录后缀推断模型。
+- 现有旧导出目录不会被迁移；新导出按模型分目录。
 
-### BUG-08 [P2] 进程恢复/服务丢失事件未完全接线
+### BUG-08 [P2] 进程恢复/服务丢失事件未完全接线（部分修）
 
-- `onProcessRestored`、`onPlaybackServiceLost`、`onSeparationServiceLost` 没有完整调用点；
-- 目前依赖 cache/VM 对账，行为与 STATE_MODEL.md 的 D3/服务表有偏差。
+- **已修**：PlaybackService/SeparationService `onDestroy` 通过 Domain.peek 上报 ServiceLost；
+- `onProcessRestored` 仍无调用点；进程恢复仍靠 cache/VM 对账。
 
 ### BUG-09 [P2] 两层临时文件与清理
 

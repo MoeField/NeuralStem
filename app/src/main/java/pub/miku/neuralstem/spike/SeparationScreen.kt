@@ -685,7 +685,12 @@ fun SeparationScreen(
                     exportableFiles?.let { files ->
                         val song = fileName.ifBlank { "song" }
                         scope.launch(Dispatchers.IO) {
-                            val msg = StemExporter.export(app, song, files)
+                            val msg = StemExporter.export(
+                                app,
+                                song,
+                                files,
+                                modelName = StemExporter.inferModelDirName(files),
+                            )
                             withContext(Dispatchers.Main) { exportMsg = msg }
                         }
                     }
