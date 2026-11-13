@@ -84,7 +84,8 @@ Music/separate/bullet_44k/spleeter-2stem/
   没有清掉 `SeparationTask`。
 - **已修**：`SpikeViewModel.applyDomainSnapshot` 在旧曲 job 不匹配当前曲时
   `session.resetSeparation()` + `State.Idle`，不再把旧任务的 Preparing 留在 B 页面。
-- 该修复尚未重新跑 B1 真机复验（见 §4）。
+- **复验通过（2026-11-13 12:52）**：A 的 4-stem cache 完成 → 切 B → 分离页
+  显示 B 原曲、无进度/无 A 完成态、导出禁用。
 
 ---
 
@@ -102,14 +103,14 @@ Music/separate/bullet_44k/spleeter-2stem/
 |---|---|---|
 | A2 | A→B 切换瞬间（<1s）点极快 | 未做 |
 | A3 | A edge 还在跑时切 B | 未做 |
-| B1 | FULL 4-stem A 后台，切 B，A 完成 | 已跑，发现 UI 残留并修复；待复验 |
+| B1 | FULL 4-stem A 后台，切 B，A 完成 | ✅ 复验通过 |
 | B2 | 返回 A，缓存/手动恢复 | 未做 |
 | D1 | 分离中取消 edge | 未做 |
 | D2 | 播放自然结束 / FULL 后台继续 | 未做 |
-| D3 | kill PlaybackService/SeparationService | 未做 |
-| D4 | 进程死亡后重启 | 未做 |
+| D3 | kill PlaybackService/SeparationService | 未完成：stop-service 未真正销毁，需用 force-stop/异常路径 |
+| D4 | 进程死亡后重启 | ✅ 基础重启通过（无 FATAL） |
 | E2 | 导出 MediaStore pending/重复检查 | 只查了目录名 |
-| F2 | 旋转/锁屏媒体键 | 未做 |
+| F2 | 旋转/锁屏媒体键 | ✅ 旋转通过；锁屏媒体键未单独测 |
 
 注意：**未完成这些之前，不应把本轮视为“验收通过”，也不应继续 P2 直解码重构。**
 
