@@ -47,6 +47,7 @@ object CurrentTrackBridge {
 
         return withContext(Dispatchers.IO) {
             try {
+                cleanupStaleTemps(context)
                 val ext = resolveExtension(context, parsed)
                 // ★P0：一次分离的源必须唯一，不能所有 content:// 共用 separate_input.flac。
                 //   uri token 保证 A/B（同扩展）不会写同一个文件；同 uri 重跑复用。
@@ -61,6 +62,16 @@ object CurrentTrackBridge {
                 Log.e(TAG, "toFile failed for $uri", t)
                 null
             }
+        }
+    }
+
+    /** 清理超过 1 小时的旧分离输入；正常任务结束后不保证调用，避免长期堆 cache。 */
+    private fun cleanupStaleTemps(context: Context) {
+        val now = System.currentTimeMillis()
+        runCatching {
+            context.cacheDir.listFiles { f ->
+                f.name.startsWith(CACHE_NAME) && now - f.lastModified() > 3_600_000L
+            }?.forEach { it.delete() }
         }
     }
 
