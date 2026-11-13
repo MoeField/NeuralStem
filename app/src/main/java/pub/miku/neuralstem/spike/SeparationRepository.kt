@@ -1192,6 +1192,8 @@ class SeparationRepository(private val app: Application) {
 
     /** 输入文件内容哈希(首歌级缓存键)—— 不依赖文件名/路径 */
     private fun contentHash(file: File): String {
+        // ★P2：压缩 content URI 的桥接文件只有元数据，hash 来自原始内容流。
+        CurrentTrackBridge.sourceHash(file)?.let { return it }
         val md = MessageDigest.getInstance("SHA-256")
         file.inputStream().use { input ->
             val buf = ByteArray(1 shl 16)

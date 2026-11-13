@@ -7,14 +7,18 @@ import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.security.MessageDigest
+import java.util.Properties
 
 /**
  * 阶段 3.1（分离页重构 · C1）：**当前播放曲 Uri → File 桥**。
  *
  * ## 为什么需要
  * 播放器持有的是 `content://`（SAF）或 `file://` 的 [Uri]，
- * 而分离引擎（SegregationRepository.start / start4 / startDemucs）需要可随机访问的 [File]。
- * SAF 流不可 seek、且不保证长期可读 → 先整份拷到应用私有 `cacheDir` 再交给分离引擎。
+ * 而分离引擎（SegregationRepository.start / start4 / startDemucs）需要 [File]。
+ * - WAV：仍需一份本地副本，因为 [WavReader] 要随机访问 File；
+ * - 压缩源：只写一个 `.sepmeta` 元数据文件，解码时直接读 content URI，
+ *   不再把整首原始字节复制进 cacheDir。
  *
  * ## 复用
  * 若 [Uri] 本身就是 `file://`（外部目录加载/自动化路径），直接复用该文件，不做拷贝。
@@ -32,8 +36,11 @@ object CurrentTrackBridge {
     /**
      * 把当前播放曲的 [uri] 变成可交给分离引擎的本地 [File]。
      *
+     * 压缩 `content://` 返回 `.sepmeta` 元数据文件；下游 SeparationInput 识别后直接解码，
+     * 不会生成 `separate_input_<hash>.<ext>` 的原始字节副本。
+     *
      * @param uri 当前曲 Uri（`content://` 或 `file://`）
-     * @return 本地可随机访问文件；失败返回 null（调用方应展示空态/错误）
+     * @return 本地文件/元数据；失败返回 null（调用方应展示空态/错误）
      */
     suspend fun toFile(context: Context, uri: String?): File? {
         if (uri.isNullOrBlank()) return null
@@ -51,18 +58,91 @@ object CurrentTrackBridge {
                 val ext = resolveExtension(context, parsed)
                 // ★P0：一次分离的源必须唯一，不能所有 content:// 共用 separate_input.flac。
                 //   uri token 保证 A/B（同扩展）不会写同一个文件；同 uri 重跑复用。
-                val local = File(context.cacheDir, tempSourceName(parsed.toString(), ext))
-                context.contentResolver.openInputStream(parsed)?.use { input ->
-                    local.outputStream().use { output -> input.copyTo(output) }
-                } ?: error("无法打开 $parsed")
-                Log.i(TAG, "bridged $parsed -> ${local.absolutePath} (${local.length()} B, ext=$ext)")
-                local
+                if (ext.equals("wav", ignoreCase = true)) {
+                    // WAV 需要随机访问（WavReader 吃 File），仍需一份本地副本。
+                    val local = File(context.cacheDir, tempSourceName(parsed.toString(), ext))
+                    context.contentResolver.openInputStream(parsed)?.use { input ->
+                        local.outputStream().use { output -> input.copyTo(output) }
+                    } ?: error("无法打开 $parsed")
+                    Log.i(TAG, "bridged wav $parsed -> ${local.absolutePath} (${local.length()} B)")
+                    return@withContext local
+                }
+
+                // ★P2：压缩源不再整份复制。只写元数据（原始 URI/显示名/扩展/内容 hash），
+                //   SeparationInput 用 MediaExtractor 直接读 content URI 解码。
+                val hash = sha256(context, parsed)
+                val meta = File(
+                    context.cacheDir,
+                    tempSourceName(parsed.toString(), "sepmeta"),
+                )
+                val props = Properties().apply {
+                    setProperty(KEY_URI, parsed.toString())
+                    setProperty(KEY_DISPLAY_NAME, displayName(context, parsed))
+                    setProperty(KEY_EXT, ext)
+                    setProperty(KEY_HASH, hash)
+                }
+                meta.outputStream().use { props.store(it, "NeuralStem bridged source") }
+                Log.i(TAG, "bridged uri $parsed -> ${meta.absolutePath} (hash=$hash, ext=$ext)")
+                meta
             } catch (t: Throwable) {
                 Log.e(TAG, "toFile failed for $uri", t)
                 null
             }
         }
     }
+
+    private fun displayName(context: Context, uri: Uri): String = runCatching {
+        context.contentResolver.query(uri, null, null, null, null)?.use { c ->
+            val idx = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+            if (idx >= 0 && c.moveToFirst()) c.getString(idx) else null
+        }
+    }.getOrNull() ?: uri.lastPathSegment ?: "audio"
+
+    private fun sha256(context: Context, uri: Uri): String {
+        val md = MessageDigest.getInstance("SHA-256")
+        context.contentResolver.openInputStream(uri)?.use { input ->
+            val buf = ByteArray(1 shl 16)
+            while (true) {
+                val n = input.read(buf)
+                if (n <= 0) break
+                md.update(buf, 0, n)
+            }
+        } ?: error("无法打开 $uri")
+        return md.digest().joinToString("") { "%02x".format(it) }.take(16)
+    }
+
+    private const val KEY_URI = "uri"
+    private const val KEY_DISPLAY_NAME = "displayName"
+    private const val KEY_EXT = "ext"
+    private const val KEY_HASH = "hash"
+
+    /** 压缩 content URI 的桥接元数据。 */
+    data class BridgedSource(
+        val uri: String,
+        val displayName: String,
+        val extension: String,
+        val contentHash: String,
+    )
+
+    /** 读取元数据文件；不是桥接文件/损坏时返回 null。 */
+    fun readBridgedSource(file: File): BridgedSource? {
+        if (file.extension != "sepmeta") return null
+        return runCatching {
+            val props = Properties()
+            file.inputStream().use { props.load(it) }
+            val uri = props.getProperty(KEY_URI) ?: return null
+            val hash = props.getProperty(KEY_HASH) ?: return null
+            BridgedSource(
+                uri = uri,
+                displayName = props.getProperty(KEY_DISPLAY_NAME) ?: file.name,
+                extension = props.getProperty(KEY_EXT) ?: "audio",
+                contentHash = hash,
+            )
+        }.getOrNull()
+    }
+
+    /** 桥接文件对应的原始内容 hash；普通文件返回 null，由调用方按文件内容算。 */
+    fun sourceHash(file: File): String? = readBridgedSource(file)?.contentHash
 
     /** 纯函数，便于 JVM 测试：同一 uri 稳定、不同 uri 不冲突。 */
     internal fun tempSourceName(uriString: String, ext: String): String {

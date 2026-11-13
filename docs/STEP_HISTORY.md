@@ -118,6 +118,19 @@
 - JVM **433/0**（M1 reducer 52 + M2 controller 7 + 原有 374）；
   真机 edge fast path、4-stem cache/启动、开关 off/on 通过。
 
+## v0.2.17：压缩源直解码（P2-2）
+
+- `CurrentTrackBridge` 对压缩 `content://` 只写 `.sepmeta` 元数据（原始 URI/显示名/扩展/内容 hash），
+  不再整首复制 `separate_input_<hash>.<ext>`；
+- `SeparationInput` 识别桥接元数据后用 `MediaExtractor.setDataSource(context, contentUri)` 直接解码；
+  WAV 仍保留一份本地副本（WavReader 需要随机访问 File）；
+- `SeparationRepository.contentHash` 优先读取桥接元数据 hash，保持旧缓存键不变；
+- 真机验证：
+  - 首次 edge：`TrackBridge: bridged uri ... .sepmeta` → `SepInput decoded bridged uri`，无原始副本；
+  - 二次 edge：`edge 缓存命中（fast path，未解码源）`；
+  - 4-stem：同样直解码并正常完成；
+- JVM **446/0**；新增 `CurrentTrackBridgeMetaTest`。
+
 ## v0.2.16：验收修复
 
 - 验收补测：A1/A2/A3/B1/C1/C2/D1/D4/E1/E2/F1/F2 通过；

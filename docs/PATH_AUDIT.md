@@ -335,11 +335,12 @@ Domain 可能把 A 的 `writtenUpToFrame`/`vocalsFile` 发送为 B 的 coverage/
 - **已修**：PlaybackService/SeparationService `onDestroy` 通过 Domain.peek 上报 ServiceLost；
 - `onProcessRestored` 仍无调用点；进程恢复仍靠 cache/VM 对账。
 
-### BUG-09 [P2] 两层临时文件与清理
+### BUG-09 [P2] 两层临时文件与清理（压缩源已修）
 
-- content:// 先复制 `separate_input.<ext>`，压缩源再解码 `sep-src-*.wav`；
-- 固定名、无按 job 清理；旧文件堆积且可能被覆盖。
-- 对压缩源第一层可移除（直接解码 content URI/fd）；WAV 需一次本地副本或可 seek fd。
+- **已修（压缩源）**：`content://` 不再复制原始字节，只写 `.sepmeta`；
+  `SeparationInput` 直接读 content URI 解码到 `sep-src-*.wav`；
+- WAV 仍保留一份本地副本（`WavReader` 需要随机访问 File）；
+- 元数据/临时 WAV 均有 >1h 清理；旧版本遗留的 `separate_input_*` 也会被清理。
 
 ### BUG-10 [P2] UI 映射仍保留一次性消费/适配层
 
