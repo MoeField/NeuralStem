@@ -323,11 +323,11 @@ Domain 可能把 A 的 `writtenUpToFrame`/`vocalsFile` 发送为 B 的 coverage/
   SeparationScreen 回调改走它；Domain attachment/suppression 与播放器一致。
 - 真机：edge 自动多轨 → off → on 正常。
 
-### BUG-07 [P2] 导出缺少模型维度
+### BUG-07 [P2] 导出缺少模型维度（已修）
 
-- 目录只有 `Music/separate/<song>/`；
-- Spleeter 2-stem、Spleeter 4-stem、Demucs 的同名文件会覆盖；
-- 与“每次分离应按歌+模型区分”的旧需求不一致。
+- **已修**：`StemExporter.export` 支持 `modelName`，路径
+  `Music/separate/<song>/<model>/`；`inferModelDirName` 从缓存目录后缀推断模型。
+- 现有旧导出目录不会被迁移；新导出按模型分目录。
 
 ### BUG-08 [P2] 进程恢复/服务丢失事件未完全接线（部分修）
 

@@ -40,7 +40,7 @@ P2-3 移除 SpikeVM 双适配
 ```
 
 P0 已实现并完成 A→B 真机回归；P1-1 开关走 Domain、P1-2 ServiceLost 已接；
-P2 仅做了旧临时文件清理，export 模型目录/直解 content URI/SpikeVM 适配仍未做。
+P2 已完成旧临时文件清理 + 导出模型目录；直解 content URI/SpikeVM 适配仍未做。
 是否合 main/发 v0.2.15 待最终验收。
 
 ---
