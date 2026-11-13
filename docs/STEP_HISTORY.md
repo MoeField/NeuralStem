@@ -118,6 +118,25 @@
 - JVM **433/0**（M1 reducer 52 + M2 controller 7 + 原有 374）；
   真机 edge fast path、4-stem cache/启动、开关 off/on 通过。
 
+## v0.2.15：路径审计后的 P0/P1/P2 修复
+
+- 审计文档：`docs/PATH_AUDIT.md`、`docs/REPAIR_PLAN.md`（BUG-01..BUG-10）。
+- P0 错曲结果修复：
+  - 临时源唯一化 `separate_input_<uriHash>.<ext>`；
+  - repo 终态携带 `sourcePath`；Domain 丢弃不匹配的迟到终态；
+  - EdgeSession source 不匹配时 `tickEdge`/`publishEdgeUi` 不发事件；
+  - `Domain.start` 校验 request/current TrackKey；
+  - Finished 任务按 currentTrackKey 过滤（FULL 后台完成不推当前曲 UI）。
+- P1：
+  - 分离开关走 Domain attach/detach + PlayerBridge；
+  - PlaybackService/SeparationService onDestroy 上报 ServiceLost；
+  - 旧临时源清理（>1h）。
+- P2：
+  - 导出加模型目录：`Music/separate/<song>/<model>/`；
+  - `inferModelDirName` 从 cache 后缀推断 spleeter-2stem/spleeter-4stem/demucs。
+- JVM **438/0**；真机 A（who edge 多轨）→ B（bullet）极快：B 命中自己的 cache/source；
+  开关 off/on、导出模型目录通过；R8 release 构建通过。
+
 ## 已知限制 / 后续可做
 
 - AVS3/NCM 参考解码器不入库；没有它时相关格式跳过，不能随 release 分发。
