@@ -346,17 +346,16 @@ fun SeparationScreen(
     // → 分离一结束，separationTask 就不再是 Done2/Done4 → **导出按钮永远置灰**。
     // 实测：完成分离后按钮 `enabled=false`，`/sdcard/Music/separate` 从未被创建。
     //
-    // 现改为读 VM 里“消费瞬间抄下来”的快照，与瞬态任务状态解耦。
-    // 好处：2 轨（本输新增）与 4 轨（原就有但从未生效）一并修好。
-    // ★B3：导出快照必须属于当前曲；换曲后 owner 不匹配 → 按钮置灰。
-    val lastExportable by vm.lastExportable.collectAsState()
-    val exportableFiles = if (vm.exportableOwnerMatches(currentUri)) lastExportable else null
-    // ★B3 诊断：导出快照是否属于当前曲（换曲后应为 false，按钮置灰）。
-    LaunchedEffect(currentUri, lastExportable) {
+    // ★P2-3 第一步：导出改为直接从 Domain snapshot 派生（不再读并行 lastExportable）。
+    //   job 必须是 Finished 且 trackKey 属于当前曲；文件存在性由 VM 兜底。
+    val domainSnapshot by vm.domainSnapshot.collectAsState()
+    val exportableFiles = remember(domainSnapshot, currentUri) {
+        vm.exportableFiles(currentUri)
+    }
+    LaunchedEffect(currentUri, domainSnapshot) {
         EdgeProbe.log(
             "SepUI",
-            "export ownerMatch=${vm.exportableOwnerMatches(currentUri)} " +
-                "files=${exportableFiles?.size ?: 0}",
+            "domain export files=${exportableFiles?.size ?: 0}",
         )
     }
 

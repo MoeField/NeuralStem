@@ -73,6 +73,28 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
 
     private val domain = SeparationDomain.get(app)
 
+    /** ★P2-3：UI 的只读 Domain 快照入口（第一步先迁导出/归属判断）。 */
+    val domainSnapshot: StateFlow<SeparationSnapshot> = domain.snapshot
+
+    /**
+     * 当前曲可导出的 stem 文件，直接来自 Domain job（不再依赖并行 lastExportable）。
+     * 文件存在性再做一次兜底（缓存可能被清）。
+     */
+    fun exportableFiles(currentUri: String?): List<File>? {
+        val snap = domainSnapshot.value
+        val files = SeparationGuards.exportableFiles(snap, currentUri)
+            ?.map(::File)
+            ?.filter { it.exists() }
+            ?.takeIf { it.isNotEmpty() }
+        Log.i(
+            TAG,
+            "exportableFiles current=$currentUri domainCurrent=${snap.currentTrackKey?.uri} " +
+                "job=${snap.job?.jobId}/${snap.job?.lifecycle}/${snap.job?.trackKey?.uri} " +
+                "files=${files?.size ?: 0}",
+        )
+        return files
+    }
+
     private val _state = MutableStateFlow<State>(State.Idle)
     val state: StateFlow<State> = _state.asStateFlow()
 

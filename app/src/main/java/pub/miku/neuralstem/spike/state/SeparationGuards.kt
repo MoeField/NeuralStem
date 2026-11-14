@@ -42,6 +42,23 @@ object SeparationGuards {
         return current.uri == jobTrack.uri
     }
 
+    /**
+     * UI 导出/完成态的唯一归属判断：finished job、属于当前曲、文件存在由调用方再校验。
+     * 纯函数，避免 UI 继续从 SpikeVM 的并行快照读导出状态。
+     */
+    fun exportableFiles(
+        snapshot: SeparationSnapshot,
+        currentUri: String?,
+    ): List<String>? {
+        val job = snapshot.job ?: return null
+        if (job.lifecycle !is Lifecycle.Finished) return null
+        val files = job.files?.paths ?: return null
+        if (currentUri != null && job.trackKey.uri != currentUri) return null
+        val current = snapshot.currentTrackKey
+        if (current != null && job.trackKey.uri != current.uri) return null
+        return files
+    }
+
     /** EdgeSession 的 sourceUri 是否属于当前 job。 */
     fun edgeSourceMatches(
         activeSourcePath: String?,
