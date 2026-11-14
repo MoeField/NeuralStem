@@ -46,6 +46,8 @@ import pub.miku.neuralstem.R
 import pub.miku.neuralstem.devtools.EdgeProbe
 import pub.miku.neuralstem.export.StemExporter
 import pub.miku.neuralstem.player.SeparationTask
+import pub.miku.neuralstem.spike.state.SeparationUi
+import pub.miku.neuralstem.spike.state.SeparationUiMapper
 import pub.miku.neuralstem.settings.SettingsRepository
 import java.io.File
 
@@ -159,6 +161,54 @@ fun SeparationScreen(
     val benchmarked = benchRtfAll.isNotEmpty()
     // ★3a-2：分离任务状态 = 单一真源（来自状态机）；repoState 不再直接读。
     val separationTask by vm.separationTask.collectAsState()
+    // ★P2-3 第 2 步：显示态优先从 Domain snapshot 派生；job 为空才回退旧 SeparationTask。
+    val domainSnapshot by vm.domainSnapshot.collectAsState()
+    val domainUi = remember(domainSnapshot, edgePercent) {
+        SeparationUiMapper.map(domainSnapshot, edgePercent)
+    }
+    val displayTask: SeparationTask = remember(domainUi, separationTask, domainSnapshot) {
+        when (val ui = domainUi) {
+            null -> separationTask
+            else -> when (ui.phase) {
+                SeparationUi.Phase.PREPARING ->
+                    SeparationTask.Preparing(SeparationTask.PrepPhase.START)
+                SeparationUi.Phase.DECODING ->
+                    SeparationTask.Preparing(SeparationTask.PrepPhase.DECODING)
+                SeparationUi.Phase.RUNNING ->
+                    SeparationTask.Running(ui.percent)
+                SeparationUi.Phase.CANCELLING ->
+                    SeparationTask.Preparing(SeparationTask.PrepPhase.START)
+                SeparationUi.Phase.FAILED ->
+                    SeparationTask.Failed(ui.failedMessage ?: "分离失败")
+                SeparationUi.Phase.DONE -> {
+                    val job = domainSnapshot.job
+                    val m = job?.metrics
+                    val paths = job?.files?.paths?.map { File(it) }.orEmpty()
+                    when {
+                        ui.kind == pub.miku.neuralstem.spike.state.SeparationKind.FULL_2 &&
+                            paths.size >= 2 -> SeparationTask.Done2(
+                            vocalsFile = paths[0],
+                            accompanimentFile = paths[1],
+                            modelLoadMs = m?.modelLoadMs ?: 0L,
+                            inferTimeMs = m?.inferTimeMs ?: 0L,
+                            peakPssMb = m?.peakPssMb ?: 0f,
+                            audioDurationMs = m?.audioDurationMs ?: 0L,
+                            fromCache = m?.fromCache == true,
+                        )
+                        ui.kind == pub.miku.neuralstem.spike.state.SeparationKind.FULL_4 &&
+                            paths.size >= 4 -> SeparationTask.Done4(
+                            stemFiles = paths,
+                            inferTimeMs = m?.inferTimeMs ?: 0L,
+                            peakPssMb = m?.peakPssMb ?: 0f,
+                            audioDurationMs = m?.audioDurationMs ?: 0L,
+                            fromCache = m?.fromCache == true,
+                        )
+                        else -> SeparationTask.Idle
+                    }
+                }
+            }
+        }
+    }
     // ★2026-11-07：边播完成后的短时完成态（5s 后自动消失）。
     val lastEdgeDone by vm.lastEdgeDone.collectAsState()
     // ★F5.4：分离完成时的触感反馈。
@@ -168,12 +218,13 @@ fun SeparationScreen(
 
     val hasSong = fileName.isNotBlank() && !currentUri.isNullOrBlank()
     // ★3a-2：busy 单一来源（不再拼接 spikeState + repoState）。
-    val busy = separationTask is SeparationTask.Preparing ||
-        separationTask is SeparationTask.Running
+    val busy = domainUi?.busy == true ||
+        displayTask is SeparationTask.Preparing ||
+        displayTask is SeparationTask.Running
 
     // ★2026-11-06 诊断：把**页面实际显示的状态**落文件，与 `SepTick`/`SepState` 对照，
     //   验证“解码/分离中的文案与百分比”是否真的对应后台工作。
-    val uiStatus = when (val t = separationTask) {
+    val uiStatus = when (val t = displayTask) {
         is SeparationTask.Preparing ->
             if (backfillPercent != null) "backfilling($backfillPercent%)" else "preparing(${t.phase})"
         is SeparationTask.Running ->
@@ -196,7 +247,7 @@ fun SeparationScreen(
     // ★2026-11-07：解码阶段没有真实进度回调 → 至少显示“已解码 x 秒”，
     //   否则 10s 的静态“解码音频…”看起来像卡死。
     var decodingSeconds by remember { mutableIntStateOf(0) }
-    val decodingPhase = (separationTask as? SeparationTask.Preparing)?.phase
+    val decodingPhase = (displayTask as? SeparationTask.Preparing)?.phase
     LaunchedEffect(decodingPhase) {
         decodingSeconds = 0
         if (decodingPhase == SeparationTask.PrepPhase.DECODING) {
@@ -348,7 +399,6 @@ fun SeparationScreen(
     //
     // ★P2-3 第一步：导出改为直接从 Domain snapshot 派生（不再读并行 lastExportable）。
     //   job 必须是 Finished 且 trackKey 属于当前曲；文件存在性由 VM 兜底。
-    val domainSnapshot by vm.domainSnapshot.collectAsState()
     val exportableFiles = remember(domainSnapshot, currentUri) {
         vm.exportableFiles(currentUri)
     }
@@ -587,7 +637,7 @@ fun SeparationScreen(
         }
 
         // ---- 进度 / 结果（★3a-2：**单一真源** separationTask；不再并列读 spikeState + repoState）----
-        when (val t = separationTask) {
+        when (val t = displayTask) {
             is SeparationTask.Preparing -> {
                 // ★两阶段（2026-10-20）：补前段时 `_state` 也是 Preparing，
                 //   但那时**已可完整播放正向那段** → 不能显示“准备中”（误导）。
