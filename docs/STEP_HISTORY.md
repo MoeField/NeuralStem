@@ -118,6 +118,19 @@
 - JVM **433/0**（M1 reducer 52 + M2 controller 7 + 原有 374）；
   真机 edge fast path、4-stem cache/启动、开关 off/on 通过。
 
+## v0.2.19：移除 SpikeVM 分离双适配
+
+- 导出：`SeparationScreen` 改读 Domain snapshot；新增 `SeparationGuards.exportableFiles`。
+- 显示：新增 `SeparationUiMapper`（Preparing/Decoding/Running/Done/Failed/Cancelling）。
+- 完成副作用：FULL 完成改为 Domain 派生的一次性 `CompletedStems` 事件，按 jobId 去重；
+  EDGE 仍由 Domain 自动 attach，保留 `lastEdgeDone` 短提示。
+- 删除：`_separationTask` / `separationTask` / `lastExportable` / `exportableOwnerUri` /
+  `lastMapped*` / `consumeSeparationDone` 的 VM-UI 适配；`SpikeViewModel` 不再持有
+  `SessionStateMachine.separation` 镜像。
+- `SeparationScreen` 的进度/文案/取消全部直接读 Domain snapshot。
+- JVM **452/0**；真机 4-stem 完成自动切多轨、进度、导出、取消通过。
+- `SessionStateMachine.separation` API 仍作为播放器侧历史状态保留，不再被 UI/VM 使用。
+
 ## v0.2.18：WAV fd 随机访问
 
 - `WavIo`/`WavReader` 改为 `FileChannel` positioned read：
