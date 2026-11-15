@@ -45,7 +45,6 @@ import kotlinx.coroutines.withContext
 import pub.miku.neuralstem.R
 import pub.miku.neuralstem.devtools.EdgeProbe
 import pub.miku.neuralstem.export.StemExporter
-import pub.miku.neuralstem.player.SeparationTask
 import pub.miku.neuralstem.spike.state.SeparationUi
 import pub.miku.neuralstem.spike.state.SeparationUiMapper
 import pub.miku.neuralstem.settings.SettingsRepository
@@ -107,7 +106,7 @@ fun SeparationScreen(
     /**
      * ★两阶段（2026-10-20）：阶段 1 已完成、正在回头补前段（0..100）；null = 没在补。
      *
-     * 补前段期间 `separationTask` 仍是 `Preparing`，但**正向那段已可完整播放** →
+     * 补前段期间 Domain 仍是 Preparing/Decoding，但**正向那段已可完整播放** →
      * UI 要显示“已可完整播放 · 正在补前段”而不是“准备中”（误导）。
      */
     backfillPercent: Int? = null,
@@ -159,56 +158,16 @@ fun SeparationScreen(
     val benchRtf: Map<String, Float> = benchRtfAll.mapValues { it.value.rtf }
     // ★G-1b：首启**强制**检测完成才能用分离——未检测(无缓存)则门控。
     val benchmarked = benchRtfAll.isNotEmpty()
-    // ★3a-2：分离任务状态 = 单一真源（来自状态机）；repoState 不再直接读。
-    val separationTask by vm.separationTask.collectAsState()
-    // ★P2-3 第 2 步：显示态优先从 Domain snapshot 派生；job 为空才回退旧 SeparationTask。
+    // ★P2-3 第 2/3 步：显示态和完成副作用都由 Domain 驱动。
     val domainSnapshot by vm.domainSnapshot.collectAsState()
+    val pendingCompletion by vm.pendingCompletion.collectAsState()
+    val cancelledNotice by vm.cancelledNotice.collectAsState()
     val domainUi = remember(domainSnapshot, edgePercent) {
         SeparationUiMapper.map(domainSnapshot, edgePercent)
     }
-    val displayTask: SeparationTask = remember(domainUi, separationTask, domainSnapshot) {
-        when (val ui = domainUi) {
-            null -> separationTask
-            else -> when (ui.phase) {
-                SeparationUi.Phase.PREPARING ->
-                    SeparationTask.Preparing(SeparationTask.PrepPhase.START)
-                SeparationUi.Phase.DECODING ->
-                    SeparationTask.Preparing(SeparationTask.PrepPhase.DECODING)
-                SeparationUi.Phase.RUNNING ->
-                    SeparationTask.Running(ui.percent)
-                SeparationUi.Phase.CANCELLING ->
-                    SeparationTask.Preparing(SeparationTask.PrepPhase.START)
-                SeparationUi.Phase.FAILED ->
-                    SeparationTask.Failed(ui.failedMessage ?: "分离失败")
-                SeparationUi.Phase.DONE -> {
-                    val job = domainSnapshot.job
-                    val m = job?.metrics
-                    val paths = job?.files?.paths?.map { File(it) }.orEmpty()
-                    when {
-                        ui.kind == pub.miku.neuralstem.spike.state.SeparationKind.FULL_2 &&
-                            paths.size >= 2 -> SeparationTask.Done2(
-                            vocalsFile = paths[0],
-                            accompanimentFile = paths[1],
-                            modelLoadMs = m?.modelLoadMs ?: 0L,
-                            inferTimeMs = m?.inferTimeMs ?: 0L,
-                            peakPssMb = m?.peakPssMb ?: 0f,
-                            audioDurationMs = m?.audioDurationMs ?: 0L,
-                            fromCache = m?.fromCache == true,
-                        )
-                        ui.kind == pub.miku.neuralstem.spike.state.SeparationKind.FULL_4 &&
-                            paths.size >= 4 -> SeparationTask.Done4(
-                            stemFiles = paths,
-                            inferTimeMs = m?.inferTimeMs ?: 0L,
-                            peakPssMb = m?.peakPssMb ?: 0f,
-                            audioDurationMs = m?.audioDurationMs ?: 0L,
-                            fromCache = m?.fromCache == true,
-                        )
-                        else -> SeparationTask.Idle
-                    }
-                }
-            }
-        }
-    }
+    val domainPhase = domainUi?.phase
+    val domainKind = domainUi?.kind
+    val fromCache = domainSnapshot.job?.metrics?.fromCache == true
     // ★2026-11-07：边播完成后的短时完成态（5s 后自动消失）。
     val lastEdgeDone by vm.lastEdgeDone.collectAsState()
     // ★F5.4：分离完成时的触感反馈。
@@ -217,40 +176,33 @@ fun SeparationScreen(
     var exportMsg by remember { mutableStateOf<String?>(null) }
 
     val hasSong = fileName.isNotBlank() && !currentUri.isNullOrBlank()
-    // ★3a-2：busy 单一来源（不再拼接 spikeState + repoState）。
-    val busy = domainUi?.busy == true ||
-        displayTask is SeparationTask.Preparing ||
-        displayTask is SeparationTask.Running
+    val busy = domainUi?.busy == true
 
-    // ★2026-11-06 诊断：把**页面实际显示的状态**落文件，与 `SepTick`/`SepState` 对照，
-    //   验证“解码/分离中的文案与百分比”是否真的对应后台工作。
-    val uiStatus = when (val t = displayTask) {
-        is SeparationTask.Preparing ->
-            if (backfillPercent != null) "backfilling($backfillPercent%)" else "preparing(${t.phase})"
-        is SeparationTask.Running ->
+    val uiStatus = when (domainPhase) {
+        null -> if (cancelledNotice) "cancelled" else "idle"
+        SeparationUi.Phase.PREPARING -> "preparing"
+        SeparationUi.Phase.DECODING ->
+            if (backfillPercent != null) "backfilling($backfillPercent%)" else "decoding"
+        SeparationUi.Phase.RUNNING ->
             if (edgePercent != null) {
-                // 同时记录是否已切多轨（决定 UI 是「已可播放」还是「就绪后自动切」）
-                (if (separationOn) "playable" else "waiting") + "·separating(${t.percent}%)"
+                (if (separationOn) "playable" else "waiting") + "·separating(${domainUi?.percent ?: 0}%)"
             } else {
-                "separating(${t.percent}%)"
+                "separating(${domainUi?.percent ?: 0}%)"
             }
-        is SeparationTask.Done2 -> "done2"
-        is SeparationTask.Done4 -> "done4"
-        is SeparationTask.Failed -> "failed"
-        SeparationTask.Cancelled -> "cancelled"
-        SeparationTask.Idle -> "idle"
+        SeparationUi.Phase.DONE -> "done(${domainKind})"
+        SeparationUi.Phase.FAILED -> "failed"
+        SeparationUi.Phase.CANCELLING -> "cancelling"
     }
     LaunchedEffect(uiStatus, edgeStarved, busy) {
         EdgeProbe.log("SepUI", "text=$uiStatus starved=$edgeStarved busy=$busy")
     }
 
-    // ★2026-11-07：解码阶段没有真实进度回调 → 至少显示“已解码 x 秒”，
-    //   否则 10s 的静态“解码音频…”看起来像卡死。
+    // ★2026-11-07：解码阶段没有真实进度回调 → 至少显示“已解码 x 秒”。
     var decodingSeconds by remember { mutableIntStateOf(0) }
-    val decodingPhase = (displayTask as? SeparationTask.Preparing)?.phase
-    LaunchedEffect(decodingPhase) {
+    val decoding = domainPhase == SeparationUi.Phase.DECODING
+    LaunchedEffect(decoding) {
         decodingSeconds = 0
-        if (decodingPhase == SeparationTask.PrepPhase.DECODING) {
+        if (decoding) {
             while (true) {
                 delay(1_000)
                 decodingSeconds++
@@ -258,23 +210,23 @@ fun SeparationScreen(
         }
     }
 
-    // ---- 完成 → 自动切多轨（★I3：**一次性消费**，天然只响应"Running→Done 转换"，----
-    //      不响应进入时的遗留态；不再用 prevSpike/prevRepo 手搓 → 重建也不会误触发）----
-    LaunchedEffect(separationTask) {
-        val done = vm.consumeSeparationDone() ?: return@LaunchedEffect
-        when (done) {
-            is SeparationTask.Done2 -> onPlayStems(
+    // ---- 完成 → 自动切多轨（Domain 一次性事件，按 jobId 去重）----
+    LaunchedEffect(pendingCompletion) {
+        val done = vm.consumePendingCompletion() ?: return@LaunchedEffect
+        when (done.kind) {
+            pub.miku.neuralstem.spike.state.SeparationKind.FULL_2 -> onPlayStems(
                 SpikeViewModel.State.Done(
-                    vocalsFile = done.vocalsFile,
-                    accompanimentFile = done.accompanimentFile,
-                    modelLoadMs = done.modelLoadMs,
-                    inferTimeMs = done.inferTimeMs,
-                    peakPssMb = done.peakPssMb,
-                    audioDurationMs = done.audioDurationMs,
-                    fromCache = done.fromCache,
+                    vocalsFile = done.files[0],
+                    accompanimentFile = done.files[1],
+                    modelLoadMs = done.metrics.modelLoadMs,
+                    inferTimeMs = done.metrics.inferTimeMs,
+                    peakPssMb = done.metrics.peakPssMb,
+                    audioDurationMs = done.metrics.audioDurationMs,
+                    fromCache = done.metrics.fromCache,
                 ),
             )
-            is SeparationTask.Done4 -> onPlayStems4(done.stemFiles)
+            pub.miku.neuralstem.spike.state.SeparationKind.FULL_4 -> onPlayStems4(done.files)
+            else -> Unit
         }
         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
     }
@@ -636,11 +588,9 @@ fun SeparationScreen(
             }
         }
 
-        // ---- 进度 / 结果（★3a-2：**单一真源** separationTask；不再并列读 spikeState + repoState）----
-        when (val t = displayTask) {
-            is SeparationTask.Preparing -> {
-                // ★两阶段（2026-10-20）：补前段时 `_state` 也是 Preparing，
-                //   但那时**已可完整播放正向那段** → 不能显示“准备中”（误导）。
+        // ---- 进度 / 结果（Domain snapshot 单一真源）----
+        when (domainPhase) {
+            SeparationUi.Phase.PREPARING, SeparationUi.Phase.DECODING -> {
                 if (backfillPercent != null) {
                     LinearProgressIndicator(
                         progress = { backfillPercent / 100f },
@@ -652,62 +602,68 @@ fun SeparationScreen(
                     )
                 } else {
                     Text(
-                        when (t.phase) {
-                            SeparationTask.PrepPhase.DECODING ->
-                                stringResource(R.string.sep_prep_decoding_elapsed, decodingSeconds)
-                            SeparationTask.PrepPhase.LOADING_MODEL -> stringResource(R.string.sep_prep_loading_model)
-                            SeparationTask.PrepPhase.MODEL_READY -> stringResource(R.string.sep_prep_model_ready)
-                            SeparationTask.PrepPhase.START -> stringResource(R.string.sep_preparing)
+                        if (domainPhase == SeparationUi.Phase.DECODING) {
+                            stringResource(R.string.sep_prep_decoding_elapsed, decodingSeconds)
+                        } else {
+                            stringResource(R.string.sep_preparing)
                         },
                     )
                 }
             }
-            is SeparationTask.Running -> {
+            SeparationUi.Phase.RUNNING -> {
+                val percent = domainUi?.percent ?: 0
                 LinearProgressIndicator(
-                    progress = { t.percent / 100f },
+                    progress = { percent / 100f },
                     modifier = Modifier.fillMaxWidth(),
                 )
-                // ★G-3ux：边分离边播时，多轨已可听但仍需后台分离 → 文案要说明白，
-                //   否则“分离开关：多轨”与“分离中 58%”自相矛盾。
                 if (edgePercent != null) {
-                    // ★2026-11-07：只有**真的切到多轨之后**才说“已可播放”。
-                    //   旧实现只看 edgePercent != null（边播会话在跑），
-                    //   实测 gate 还 Buffering（4%）时就写了“已可播放”，是假话。
                     Text(
                         stringResource(
                             if (separationOn) R.string.sep_running_playable
                             else R.string.sep_running_waiting,
-                            t.percent,
+                            percent,
                         ),
                         color = MaterialTheme.colorScheme.primary,
                     )
-                    // ★闸门：分离跟不上播放 → 已自动暂停，需要解释
                     if (edgeStarved) {
                         Text(
-                            stringResource(R.string.sep_edge_starved_paused, t.percent),
+                            stringResource(R.string.sep_edge_starved_paused, percent),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.error,
                         )
                     }
                 } else {
-                    Text(stringResource(R.string.sep_running_pct, t.percent))
+                    Text(stringResource(R.string.sep_running_pct, percent))
                 }
             }
-            is SeparationTask.Done2 -> Text(
-                stringResource(if (t.fromCache) R.string.sep_done_cache else R.string.sep_done),
-                color = MaterialTheme.colorScheme.primary,
-            )
-            is SeparationTask.Done4 -> {
-                Text(
-                    stringResource(if (t.fromCache) R.string.sep_done4_cache else R.string.sep_done4),
-                    color = MaterialTheme.colorScheme.primary,
-                )
+            SeparationUi.Phase.DONE -> {
+                when (domainKind) {
+                    pub.miku.neuralstem.spike.state.SeparationKind.FULL_2 -> Text(
+                        stringResource(if (fromCache) R.string.sep_done_cache else R.string.sep_done),
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    pub.miku.neuralstem.spike.state.SeparationKind.FULL_4 -> Text(
+                        stringResource(if (fromCache) R.string.sep_done4_cache else R.string.sep_done4),
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    else -> Unit // EDGE 由 lastEdgeDone 短提示负责
+                }
             }
-            is SeparationTask.Failed ->
-                Text(stringResource(R.string.sep_failed, t.message), color = MaterialTheme.colorScheme.error)
-            SeparationTask.Cancelled ->
-                Text(stringResource(R.string.sep_cancelled), color = MaterialTheme.colorScheme.onSurfaceVariant)
-            SeparationTask.Idle -> Unit
+            SeparationUi.Phase.FAILED -> Text(
+                stringResource(R.string.sep_failed, domainUi?.failedMessage ?: "分离失败"),
+                color = MaterialTheme.colorScheme.error,
+            )
+            SeparationUi.Phase.CANCELLING -> Text(
+                stringResource(R.string.sep_preparing),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            null -> Unit
+        }
+        if (domainUi == null && cancelledNotice) {
+            Text(
+                stringResource(R.string.sep_cancelled),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
         // ★2026-11-07：边播完成的短时提示（5s）——否则完成后页面立刻回到初始态，
         //   看起来像“什么都没发生”。
