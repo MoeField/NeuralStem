@@ -1,5 +1,6 @@
 package pub.miku.neuralstem.spike.state
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -55,6 +56,62 @@ class SeparationGuardsTest {
         assertFalse(SeparationGuards.jobMatchesCurrent(trackA, trackB))
         assertTrue(SeparationGuards.jobMatchesCurrent(null, trackA))
         assertTrue(SeparationGuards.jobMatchesCurrent(trackB, TrackKey("", 0L)))
+    }
+
+    @Test
+    fun exportable_files_only_for_finished_current_job() {
+        val files = StemFiles(listOf("/cache/vocals.wav", "/cache/accompaniment.wav"))
+        fun snapshot(
+            track: TrackKey,
+            lifecycle: Lifecycle,
+            stemFiles: StemFiles?,
+            current: TrackKey? = track,
+        ) = SeparationSnapshot(
+            currentTrackKey = current,
+            job = JobState(
+                jobId = 1L,
+                trackKey = track,
+                kind = SeparationKind.EDGE,
+                lifecycle = lifecycle,
+                files = stemFiles,
+            ),
+        )
+
+        assertEquals(
+            files.paths,
+            SeparationGuards.exportableFiles(
+                snapshot(trackA, Lifecycle.Finished, files),
+                trackA.uri,
+            ),
+        )
+        assertEquals(
+            null,
+            SeparationGuards.exportableFiles(
+                snapshot(trackA, Lifecycle.Finished, files),
+                trackB.uri,
+            ),
+        )
+        assertEquals(
+            null,
+            SeparationGuards.exportableFiles(
+                snapshot(trackA, Lifecycle.Finished, files, current = trackB),
+                trackA.uri,
+            ),
+        )
+        assertEquals(
+            null,
+            SeparationGuards.exportableFiles(
+                snapshot(trackA, Lifecycle.Running, files),
+                trackA.uri,
+            ),
+        )
+        assertEquals(
+            null,
+            SeparationGuards.exportableFiles(
+                snapshot(trackA, Lifecycle.Finished, null),
+                trackA.uri,
+            ),
+        )
     }
 
     @Test
