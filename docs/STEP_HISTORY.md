@@ -118,6 +118,14 @@
 - JVM **433/0**（M1 reducer 52 + M2 controller 7 + 原有 374）；
   真机 edge fast path、4-stem cache/启动、开关 off/on 通过。
 
+## v0.2.21：PCM 缓存设置页
+
+- 设置页新增「PCM 缓存」：占用、文件数、12GB 上限、清理未使用。
+- 当前播放曲 pin / 正在解码的 active tmp 不会被清理；修复清理后残留 tmp。
+- 长跑后设置页验证：当前曲保护、清理计数正确。
+- JVM **467/0**。
+- 遗留：上限暂不可调；NCM release 未启用，仍未验证。
+
 ## v0.2.20：共享 PCM 解码缓存
 
 - 新增 `PcmStore`：单飞解码、`PcmLease` 引用计数、pin、LRU、原子落盘。
