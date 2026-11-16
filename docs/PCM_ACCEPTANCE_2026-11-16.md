@@ -37,11 +37,31 @@
 6. **edge**
    - PCM 命中后正常启动
 
-## 未完成
+## 本轮新增通过
 
-- A→B 顺序播放 + B 极快（PCM 版本）未重跑
-- PCM 解码中直接切歌/取消的完整验证
-- NCM / RawBytes 路径
+### A→B + B 极快
+
+- 12:44:14 `loadAndPlay who_am_i.flac`
+- 12:44:19 `loadAndPlay bullet.flac`（自动下一首）
+- B 极快：`SepRepo edge 缓存命中`
+- 没有把 A 的 PCM/结果给 B；B 日志与当前曲均为 bullet
+
+### PCM 解码中切歌
+
+- 12:44:38 `太空旅行.mp3` PcmDecode start
+- 12:44:40 切到 bullet
+- 12:44:59 太空的 PcmDecode 继续完成
+- 新曲 waveform 正常，无旧波形串入、无崩溃
+
+### PCM 解码中取消分离
+
+- `Good Night.mp3` 首次 PcmDecode + 立即分离
+- 点取消：UI「分离已取消」
+- PcmDecode 继续到完成，无崩溃/无重复解码日志
+
+## 未完成 / 不可用
+
+- NCM / RawBytes：release 构建未启用 NCM，无法在 v0.2.20 上验证
 - 12GB 上限真实压测
 - 2–4 小时 PCM 版本长跑
 - 设置页 PCM 占用展示
