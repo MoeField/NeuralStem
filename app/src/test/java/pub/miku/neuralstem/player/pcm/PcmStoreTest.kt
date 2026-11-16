@@ -54,7 +54,7 @@ class PcmStoreTest {
         val n = counter.incrementAndGet()
         if (n <= failTimes) return@PcmDecoder null
         output.outputStream().use { it.write(ByteArray(writes)) }
-        progress(writes.toLong())
+        progress(writes.toLong(), null)
         delay(delayMs)
         PcmArtifact(
             file = output,

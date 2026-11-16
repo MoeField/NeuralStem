@@ -13,6 +13,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import pub.miku.neuralstem.spike.WavReader
+import pub.miku.neuralstem.player.pcm.PcmSourceFactory
+import pub.miku.neuralstem.player.pcm.PcmStoreProvider
 import java.io.File
 
 /**
@@ -101,12 +103,15 @@ class WaveformExtractor(
                 if (cached != null) {
                     Log.i(TAG, "waveform(cache hit): points=${cached.pointCount}, dur=${cached.durationMs}ms")
                     _waveform.value = cached
+                    if (source is AudioSource.MediaUri) {
+                        predecodePcm(source)
+                    }
                     return@launch
                 }
 
                 val result = when (source) {
                     is AudioSource.WavFile -> ExtractResult(extractFromWav(source.file), complete = true)
-                    is AudioSource.MediaUri -> extractFromExtractor(source, selfJob)
+                    is AudioSource.MediaUri -> extractMediaUri(source, selfJob)
                     is AudioSource.RawBytes -> extractFromBytes(source, selfJob)
                 }
                 Log.i(
@@ -224,6 +229,70 @@ class WaveformExtractor(
                 max[p] = if (hi == -Float.MAX_VALUE) 0f else hi
             }
             return WaveformData(min, max, sr, total.toLong())
+        }
+    }
+
+    /**
+     * ★Phase 2：压缩源优先走共享 PCM。
+     * - PcmStore 命中/等待完成后，直接读本地 WAV 算完整包络
+     * - 解码过程中通过 progress.envelope 渐进更新
+     * - 失败才回退旧 extractFromExtractor
+     */
+    private suspend fun extractMediaUri(
+        source: AudioSource.MediaUri,
+        selfJob: Job?,
+    ): ExtractResult {
+        val ctx = contextProvider()
+        val descriptor = PcmSourceFactory.fromMediaUri(ctx, source.uri, source.label)
+        if (descriptor?.pcmCacheable == true) {
+            val store = PcmStoreProvider.get(ctx)
+            val session = store.prepare(descriptor)
+            if (session != null) {
+                var latest: WaveformData? = null
+                val progressJob = scope.launch {
+                    session.progress.collect { p ->
+                        p.envelope?.let {
+                            latest = it
+                            _waveform.value = it
+                        }
+                    }
+                }
+                val artifact = try {
+                    session.await()
+                } finally {
+                    progressJob.cancel()
+                }
+                if (artifact != null) {
+                    val cachedEnvelope = latest
+                    val final = if (cachedEnvelope != null &&
+                        cachedEnvelope.totalFrames == artifact.totalFrames
+                    ) {
+                        cachedEnvelope
+                    } else {
+                        extractFromWav(artifact.file)
+                    }
+                    if (final.pointCount > 0) {
+                        Log.i(
+                            TAG,
+                            "waveform(pcm reusable): points=${final.pointCount}, dur=${final.durationMs}ms",
+                        )
+                        _waveform.value = final
+                        return ExtractResult(final, complete = true)
+                    }
+                }
+                Log.w(TAG, "PCM 准备失败，回退独立解码：${source.uri}")
+            }
+        }
+        return extractFromExtractor(source, selfJob)
+    }
+
+    /** 包络缓存命中时仍后台准备 PCM（体验优先策略 A）；不阻塞波形。 */
+    private fun predecodePcm(source: AudioSource.MediaUri) {
+        val ctx = contextProvider()
+        val descriptor = PcmSourceFactory.fromMediaUri(ctx, source.uri, source.label) ?: return
+        if (!descriptor.pcmCacheable) return
+        scope.launch {
+            PcmStoreProvider.get(ctx).prepare(descriptor)?.await()
         }
     }
 

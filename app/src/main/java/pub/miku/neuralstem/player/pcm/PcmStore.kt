@@ -40,7 +40,7 @@ class PcmStore(
         suspend fun decode(
             source: SourceDescriptor,
             output: File,
-            onProgress: (bytesWritten: Long) -> Unit,
+            onProgress: (bytesWritten: Long, envelope: pub.miku.neuralstem.player.WaveformData?) -> Unit,
         ): PcmArtifact?
     }
 
@@ -60,8 +60,18 @@ class PcmStore(
     }
 
     private val dir = cacheDir.apply { if (!exists()) mkdirs() }
+
+    init {
+        // 进程被杀后可能留下 tmp-*；只清理 1 小时前的，避免误删正在写的。
+        runCatching {
+            val now = System.currentTimeMillis()
+            dir.listFiles { f -> f.name.startsWith("tmp-") && now - f.lastModified() > 3_600_000L }
+                ?.forEach { it.delete() }
+        }
+    }
     private val mutex = Mutex()
     private val entries = LinkedHashMap<String, Entry>(16, 0.75f, true)
+    private val pinnedKeys = mutableSetOf<String>()
 
     /** 单飞准备：Ready/Decoding 直接复用，Missing 启动解码。 */
     suspend fun prepare(source: SourceDescriptor): PcmSession? {
@@ -130,12 +140,18 @@ class PcmStore(
     /** 当前播放曲 pin：LRU/clear 都不会删。 */
     suspend fun pin(source: SourceDescriptor) {
         if (!source.pcmCacheable) return
-        mutex.withLock { entries[source.cacheKey]?.pinned = true }
+        mutex.withLock {
+            pinnedKeys.add(source.cacheKey)
+            entries[source.cacheKey]?.pinned = true
+        }
     }
 
     suspend fun unpin(source: SourceDescriptor) {
         if (!source.pcmCacheable) return
-        mutex.withLock { entries[source.cacheKey]?.pinned = false }
+        mutex.withLock {
+            pinnedKeys.remove(source.cacheKey)
+            entries[source.cacheKey]?.pinned = false
+        }
         trim()
     }
 
@@ -149,7 +165,8 @@ class PcmStore(
                     e.state is State.Ready &&
                         e.leases == 0 &&
                         e.waiters == 0 &&
-                        !e.pinned
+                        !e.pinned &&
+                        e.source.cacheKey !in pinnedKeys
                 }
                 .sortedBy { it.lastAccessMs }
             for (e in candidates) {
@@ -161,6 +178,25 @@ class PcmStore(
                     entries.remove(e.source.cacheKey)
                 }
             }
+            // 跨进程遗留的 cache 文件不在 entries 里；按 mtime LRU 补删。
+            if (total > maxBytes) {
+                val protected = entries.values
+                    .filter { e ->
+                        e.state is State.Ready &&
+                            (e.leases > 0 || e.waiters > 0 || e.pinned ||
+                                e.source.cacheKey in pinnedKeys)
+                    }
+                    .mapNotNull { (it.state as? State.Ready)?.artifact?.file }
+                    .toSet() + pinnedKeys.map { fileFor(it) }.toSet()
+                dir.listFiles()
+                    ?.filter { it.isFile && !it.name.startsWith("tmp-") && it !in protected }
+                    ?.sortedBy { it.lastModified() }
+                    ?.forEach { f ->
+                        if (total <= maxBytes) return@forEach
+                        val len = f.length()
+                        if (f.delete()) total -= len
+                    }
+            }
         }
     }
 
@@ -171,9 +207,24 @@ class PcmStore(
         while (it.hasNext()) {
             val e = it.next()
             val ready = e.state as? State.Ready ?: continue
-            if (e.leases > 0 || e.waiters > 0 || e.pinned) continue
+            if (e.leases > 0 || e.waiters > 0 || e.pinned ||
+                e.source.cacheKey in pinnedKeys
+            ) continue
             if (ready.artifact.file.delete()) removed++
             it.remove()
+        }
+        // 清理上次进程遗留、未被 entries 跟踪的文件（当前播放曲 pin 除外）
+        val activeFiles = entries.values
+            .filter { e ->
+                e.state is State.Ready &&
+                    (e.leases > 0 || e.waiters > 0 || e.pinned ||
+                        e.source.cacheKey in pinnedKeys)
+            }
+            .mapNotNull { (it.state as? State.Ready)?.artifact?.file }
+            .toSet() + pinnedKeys.map { fileFor(it) }.toSet()
+        dir.listFiles()?.filter { it.isFile && it !in activeFiles }?.forEach {
+            if (it.name.startsWith("tmp-")) return@forEach
+            if (it.delete()) removed++
         }
         removed
     }
@@ -187,9 +238,13 @@ class PcmStore(
         val temp = File(dir, "tmp-${hash(key)}-${UUID.randomUUID()}.wav")
         val finalFile = fileFor(key)
         try {
-            val decoded = decoder.decode(source, temp) { written ->
+            val decoded = decoder.decode(source, temp) { written, envelope ->
                 session.updateProgress(
-                    PcmProgress(PcmProgress.Phase.DECODING, bytesWritten = written),
+                    PcmProgress(
+                        PcmProgress.Phase.DECODING,
+                        bytesWritten = written,
+                        envelope = envelope,
+                    ),
                 )
             }
             if (decoded == null || !temp.exists() || temp.length() <= 0L) {

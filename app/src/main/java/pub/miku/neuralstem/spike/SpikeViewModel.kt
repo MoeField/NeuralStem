@@ -18,6 +18,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import pub.miku.neuralstem.devtools.EdgeProbe
 import pub.miku.neuralstem.settings.SettingsRepository
+import pub.miku.neuralstem.player.pcm.PcmStoreProvider
 import java.io.File
 import pub.miku.neuralstem.spike.state.SeparationBackend
 import pub.miku.neuralstem.spike.state.SeparationDomain
@@ -609,7 +610,13 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
      * @return 删除的缓存目录数；-1 = 拒绝
      */
     fun clearCache(): Int {
-        return repo.clearCache()
+        val n = repo.clearCache()
+        // PCM 缓存与分离缓存一起清；当前曲 pin 的文件由 PcmStore 保护。
+        viewModelScope.launch {
+            runCatching { PcmStoreProvider.get(getApplication()).clearUnpinned() }
+                .onSuccess { removed -> Log.i(TAG, "pcm cache cleared: $removed") }
+        }
+        return n
     }
 
     /**

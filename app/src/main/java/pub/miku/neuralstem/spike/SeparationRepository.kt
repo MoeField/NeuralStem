@@ -1,5 +1,10 @@
 package pub.miku.neuralstem.spike
 
+import pub.miku.neuralstem.player.pcm.PcmLease
+import pub.miku.neuralstem.player.pcm.PcmSourceFactory
+import pub.miku.neuralstem.player.pcm.PcmStoreProvider
+import android.net.Uri
+
 import android.app.Application
 import android.os.Debug
 import android.os.SystemClock
@@ -344,7 +349,7 @@ class SeparationRepository(private val app: Application) {
                     return@launchSeparation
                 }
                 // 1) 解码/重采样输入
-                val frameSource = SeparationInput.open(app, source)
+                val frameSource = openFrameSource(source)
                 try {
                     val startFrame = (fromPositionMs.coerceAtLeast(0) * frameSource.sampleRate / 1000L)
                         .toInt().coerceIn(0, frameSource.totalFrames)
@@ -828,7 +833,7 @@ class SeparationRepository(private val app: Application) {
         modelDir: File,
         outDir: File,
     ): State.Done4 = withContext(Dispatchers.IO) {
-        val frameSource = SeparationInput.open(app, source)
+        val frameSource = openFrameSource(source)
         var estimator: Spleeter4Estimator? = null
         try {
             estimator = Spleeter4Estimator.create(modelDir, threads = NUM_THREADS)
@@ -957,7 +962,7 @@ class SeparationRepository(private val app: Application) {
         threads: Int,
         useNnapi: Boolean,
     ): State.Done4 = withContext(Dispatchers.IO) {
-        val frameSource = SeparationInput.open(app, source)
+        val frameSource = openFrameSource(source)
         var estimator: DemucsEstimator? = null
         try {
             estimator = DemucsEstimator.create(model, threads = threads, useNnapi = useNnapi)
@@ -1067,7 +1072,7 @@ class SeparationRepository(private val app: Application) {
 
         // 1) 准备输入(解码 / 重采样 / 补声道)
         _state.value = State.Preparing(State.PrepPhase.DECODING)
-        val frameSource = SeparationInput.open(app, source)
+        val frameSource = openFrameSource(source)
         try {
             // 2) 定位模型
             _state.value = State.Preparing(State.PrepPhase.LOADING_MODEL)
@@ -1186,6 +1191,62 @@ class SeparationRepository(private val app: Application) {
             )
         }
         return vocals.absolutePath to accomp.absolutePath
+    }
+
+    /**
+     * ★Phase 3：优先复用 PcmStore 的共享 PCM。
+     * - 压缩 content URI / 本地压缩文件 → PcmStore acqure → WavFrameSource
+     * - WAV 直接读 / PCM 失败 → 原路径回退
+     */
+    private suspend fun openFrameSource(source: File): FrameSource {
+        if (source.extension.equals("wav", ignoreCase = true)) {
+            return SeparationInput.open(app, source)
+        }
+        val bridged = CurrentTrackBridge.readBridgedSource(source)
+        // WAV 的 .sepmeta 仍走 fd/直接读，不走 PCM decode。
+        if (bridged != null && bridged.extension.equals("wav", ignoreCase = true)) {
+            return SeparationInput.open(app, source)
+        }
+        val desc = if (bridged != null) {
+            runCatching {
+                PcmSourceFactory.fromMediaUri(app, Uri.parse(bridged.uri), bridged.displayName)
+            }.getOrNull()
+        } else {
+            PcmSourceFactory.fromFile(source)
+        }
+        if (desc?.pcmCacheable == true) {
+            val lease = runCatching { PcmStoreProvider.get(app).acquire(desc) }.getOrNull()
+            if (lease != null) {
+                val opened = runCatching {
+                    SeparationInput.open(app, lease.artifact.file)
+                }.getOrNull()
+                if (opened != null) {
+                    Log.i(TAG, "separation input: PCM cache HIT ${lease.artifact.file.name}")
+                    return PcmLeaseFrameSource(opened, lease)
+                }
+                lease.close()
+            }
+        }
+        return SeparationInput.open(app, source)
+    }
+
+    /** 分离使用期间持有 PCM lease，确保文件不被 LRU 删除。 */
+    private class PcmLeaseFrameSource(
+        private val delegate: FrameSource,
+        private val lease: PcmLease,
+    ) : FrameSource {
+        override val channels: Int get() = delegate.channels
+        override val sampleRate: Int get() = delegate.sampleRate
+        override val totalFrames: Int get() = delegate.totalFrames
+        override fun readFrames(startFrame: Int, frames: Int): FloatArray =
+            delegate.readFrames(startFrame, frames)
+        override fun close() {
+            try {
+                delegate.close()
+            } finally {
+                lease.close()
+            }
+        }
     }
 
     // ---------------- F3.3 缓存 ----------------

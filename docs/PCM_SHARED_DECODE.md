@@ -28,10 +28,28 @@ SourceDescriptor
 ## 阶段
 
 - [x] Phase 1：`PcmStore` + `PcmLease` + 单飞 + LRU + JVM 测试
-- [ ] Phase 2：`PcmDecodePipeline`，波形接入
-- [ ] Phase 3：分离/edge 接入 PCM cache
-- [ ] Phase 4：缓存容量/清缓存/设置页/进度 UI
+- [x] Phase 2：`PcmDecodePipeline`，波形接入
+- [x] Phase 3：分离/edge 接入 PCM cache
+- [x] Phase 4：当前曲 pin、清缓存联动、tmp 清理、跨进程 LRU（设置页占用显示未做）
 - [ ] Phase 5：真机性能、长跑、A/B、发布
+
+## Phase 2/3 已完成
+
+- `PcmDecodePipeline`：MediaExtractor/MediaCodec → 完整 WAV + 渐进包络
+- WaveformExtractor 优先读 PcmStore；包络缓存命中时仍后台预解码
+- SeparationRepository 的输入优先 `PcmStore.acquire`；分离期间持有 lease
+- 真机 bullet.flac：
+  - `PcmDecode start/done`
+  - `Waveform: waveform(pcm reusable)`
+  - 分离 `PCM cache HIT pcm-...wav`，无 `decodeToTempWav`
+- 真机验证共 **461/0**
+
+## Phase 4 已完成
+
+- `PlayerViewModel` 在当前曲 pin PCM，换曲 unpin
+- `SpikeViewModel.clearCache` 同时清理未使用 PCM；当前曲被 pin 时保留
+- `PcmStore` 启动清理 1h 前 tmp、跨进程遗留文件参与 LRU
+- 真机：清 stem cache 后 PCM 仍命中；`pcm cache cleared: 0`（当前曲 pin）
 
 ## Phase 1 已完成
 

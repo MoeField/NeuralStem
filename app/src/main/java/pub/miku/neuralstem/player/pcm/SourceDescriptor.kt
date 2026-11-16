@@ -13,6 +13,8 @@ data class SourceDescriptor(
     val kind: Kind = Kind.OTHER,
     val sizeBytes: Long? = null,
     val lastModifiedMs: Long? = null,
+    /** 实际可解码位置：file path 或 content uri。 */
+    val location: String? = null,
 ) {
     enum class Kind {
         LOCAL_FILE,
