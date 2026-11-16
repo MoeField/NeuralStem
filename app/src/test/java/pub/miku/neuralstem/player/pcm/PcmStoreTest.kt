@@ -14,6 +14,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -188,6 +189,28 @@ class PcmStoreTest {
         assertTrue(orphan.exists())
         store.trim()
         assertTrue(!orphan.exists())
+    }
+
+    @Test
+    fun lru_evicts_oldest_unpinned_but_keeps_pinned() = runBlocking {
+        val store = PcmStore(cacheDir, scope, decoder(writes = 800), maxBytes = 1200L)
+        val srcA = source("src-a")
+        val srcB = source("src-b")
+        val leaseA = store.acquire(srcA)!!
+        val fileA = leaseA.artifact.file
+        leaseA.close()
+        delay(30)
+        store.pin(srcA)
+
+        val leaseB = store.acquire(srcB)!!
+        val fileB = leaseB.artifact.file
+        leaseB.close()
+        delay(30)
+        store.trim()
+
+        assertTrue(fileA.exists())
+        assertFalse(fileB.exists())
+        store.unpin(srcA)
     }
 
     @Test

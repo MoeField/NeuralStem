@@ -7,11 +7,12 @@
 
 ## 自动化
 
-- JVM：**464/0**
+- JVM：**465/0**
 - 新增 `PcmStore` 边界测试：
   - pin 在 prepare 之前
   - 3 个并发 acquire 只解一次
   - trim 清理跨进程遗留 PCM
+  - LRU 淘汰未使用最旧 PCM，但保留 pinned
   - lease/clear/pin 已有覆盖
 
 ## 真机已通过
