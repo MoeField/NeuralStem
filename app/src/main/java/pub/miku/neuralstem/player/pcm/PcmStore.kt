@@ -72,6 +72,8 @@ class PcmStore(
     private val mutex = Mutex()
     private val entries = LinkedHashMap<String, Entry>(16, 0.75f, true)
     private val pinnedKeys = mutableSetOf<String>()
+    /** 正在解码的 temp 文件；clear/trim 不能删。 */
+    private val activeTemps = mutableSetOf<File>()
 
     /** 单飞准备：Ready/Decoding 直接复用，Missing 启动解码。 */
     suspend fun prepare(source: SourceDescriptor): PcmSession? {
@@ -189,7 +191,7 @@ class PcmStore(
                     .mapNotNull { (it.state as? State.Ready)?.artifact?.file }
                     .toSet() + pinnedKeys.map { fileFor(it) }.toSet()
                 dir.listFiles()
-                    ?.filter { it.isFile && !it.name.startsWith("tmp-") && it !in protected }
+                    ?.filter { it.isFile && it !in activeTemps && it !in protected }
                     ?.sortedBy { it.lastModified() }
                     ?.forEach { f ->
                         if (total <= maxBytes) return@forEach
@@ -223,20 +225,29 @@ class PcmStore(
             .mapNotNull { (it.state as? State.Ready)?.artifact?.file }
             .toSet() + pinnedKeys.map { fileFor(it) }.toSet()
         dir.listFiles()?.filter { it.isFile && it !in activeFiles }?.forEach {
-            if (it.name.startsWith("tmp-")) return@forEach
+            if (it in activeTemps) return@forEach
             if (it.delete()) removed++
         }
         removed
     }
 
+    /** 设置页显示用：固定上限（当前 12GB，LRU）。 */
+    val cacheLimitBytes: Long get() = maxBytes
+
     suspend fun cacheBytes(): Long = mutex.withLock {
         dir.listFiles()?.filter { it.isFile }?.sumOf { it.length() } ?: 0L
+    }
+
+    /** 设置页显示用：缓存文件数（含 tmp，便于排查）。 */
+    suspend fun cacheFileCount(): Int = mutex.withLock {
+        dir.listFiles()?.count { it.isFile } ?: 0
     }
 
     private suspend fun decode(source: SourceDescriptor, session: PcmSession) {
         val key = source.cacheKey
         val temp = File(dir, "tmp-${hash(key)}-${UUID.randomUUID()}.wav")
         val finalFile = fileFor(key)
+        mutex.withLock { activeTemps.add(temp) }
         try {
             val decoded = decoder.decode(source, temp) { written, envelope ->
                 session.updateProgress(
@@ -277,6 +288,8 @@ class PcmStore(
             }
         } catch (t: Throwable) {
             fail(source, temp, t.message ?: t::class.java.simpleName)
+        } finally {
+            mutex.withLock { activeTemps.remove(temp) }
         }
     }
 

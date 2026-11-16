@@ -14,6 +14,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -147,6 +148,94 @@ class PcmStoreTest {
         val second = store.prepare(source())!!
         assertNotNull(second.await())
         assertEquals(2, count.get())
+    }
+
+    @Test
+    fun pin_before_prepare_protects_cache_from_clear() = runBlocking {
+        val store = PcmStore(cacheDir, scope, decoder())
+        store.pin(source())
+        val lease = store.acquire(source())!!
+        val path = lease.artifact.file
+        lease.close()
+        delay(30)
+
+        assertEquals(0, store.clearUnpinned())
+        assertTrue(path.exists())
+        store.unpin(source())
+        assertEquals(1, store.clearUnpinned())
+    }
+
+    @Test
+    fun concurrent_acquire_calls_share_one_decode() = runBlocking {
+        val count = AtomicInteger(0)
+        val store = PcmStore(cacheDir, scope, decoder(delayMs = 30, counter = count))
+        val leases = listOf(
+            async { store.acquire(source()) },
+            async { store.acquire(source()) },
+            async { store.acquire(source()) },
+        ).awaitAll()
+        assertEquals(1, count.get())
+        assertEquals(3, leases.count { it != null })
+        leases.forEach { it?.close() }
+    }
+
+    @Test
+    fun trim_removes_old_untracked_pcm_orphans() = runBlocking {
+        val store = PcmStore(cacheDir, scope, decoder(), maxBytes = 10L)
+        val orphan = File(cacheDir, "old-orphan.wav").apply {
+            writeBytes(ByteArray(100))
+            setLastModified(0L)
+        }
+        assertTrue(orphan.exists())
+        store.trim()
+        assertTrue(!orphan.exists())
+    }
+
+    @Test
+    fun lru_evicts_oldest_unpinned_but_keeps_pinned() = runBlocking {
+        val store = PcmStore(cacheDir, scope, decoder(writes = 800), maxBytes = 1200L)
+        val srcA = source("src-a")
+        val srcB = source("src-b")
+        val leaseA = store.acquire(srcA)!!
+        val fileA = leaseA.artifact.file
+        leaseA.close()
+        delay(30)
+        store.pin(srcA)
+
+        val leaseB = store.acquire(srcB)!!
+        val fileB = leaseB.artifact.file
+        leaseB.close()
+        delay(30)
+        store.trim()
+
+        assertTrue(fileA.exists())
+        assertFalse(fileB.exists())
+        store.unpin(srcA)
+    }
+
+    @Test
+    fun usage_api_reports_files_and_clear() = runBlocking {
+        val store = PcmStore(cacheDir, scope, decoder())
+        val lease = store.acquire(source())!!
+        assertTrue(store.cacheBytes() > 0)
+        assertTrue(store.cacheFileCount() >= 1)
+        lease.close()
+        delay(30)
+        assertTrue(store.clearUnpinned() >= 1)
+        assertEquals(0, store.cacheFileCount())
+    }
+
+    @Test
+    fun clear_removes_stale_tmp_but_not_active_decode() = runBlocking {
+        val store = PcmStore(cacheDir, scope, decoder(delayMs = 200))
+        val stale = File(cacheDir, "tmp-stale.wav").apply { writeBytes(ByteArray(10)) }
+        val lease = store.acquire(source())!!
+        // 解码结束后 stale tmp 应被 clear 删除
+        lease.close()
+        delay(30)
+        assertTrue(store.clearUnpinned() >= 1)
+        assertFalse(stale.exists())
+        assertEquals(0, store.cacheFileCount())
     }
 
     @Test

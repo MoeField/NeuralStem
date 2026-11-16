@@ -34,12 +34,15 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.launch
+import pub.miku.neuralstem.player.pcm.PcmStoreProvider
 import pub.miku.neuralstem.R
 import pub.miku.neuralstem.spike.ModelRegistry
 import pub.miku.neuralstem.spike.SpeedTier
@@ -77,7 +80,7 @@ import pub.miku.neuralstem.spike.TierRegistry
  */
 
 /** 设置页内部的页面。 */
-private enum class SettingsPage { ROOT, MODELS, POLICY, NCM, CACHE }
+private enum class SettingsPage { ROOT, MODELS, POLICY, NCM, CACHE, PCM_CACHE }
 
 @Composable
 fun SettingsScreen(
@@ -141,6 +144,11 @@ fun SettingsScreen(
             modifier = modifier,
             onBack = { page = SettingsPage.ROOT },
         )
+        // ★PCM 缓存（所有构建可用；波形/分离共享解码的 WAV）。
+        SettingsPage.PCM_CACHE -> PcmCacheScreen(
+            modifier = modifier,
+            onBack = { page = SettingsPage.ROOT },
+        )
         SettingsPage.ROOT -> SettingsRoot(
             modifier = modifier,
             vm = vm,
@@ -157,6 +165,7 @@ fun SettingsScreen(
             } else {
                 null
             },
+            onOpenPcmCache = { page = SettingsPage.PCM_CACHE },
         )
     }
 }
@@ -172,6 +181,8 @@ private fun SettingsRoot(
     onOpenNcm: (() -> Unit)? = null,
     /** ★解码缓存入口；null = 不显示（没 AVS3 解码器就没缓存）。 */
     onOpenCache: (() -> Unit)? = null,
+    /** PCM 缓存入口：波形/分离共享解码 WAV，所有构建可用。 */
+    onOpenPcmCache: (() -> Unit)? = null,
 ) {
     val ctx = LocalContext.current
 
@@ -314,6 +325,16 @@ private fun SettingsRoot(
             )
         }
 
+        // ---- ▸ PCM 缓存（波形/分离共享解码 WAV；所有构建可用）----
+        if (onOpenPcmCache != null) {
+            HorizontalDivider()
+            EntryRow(
+                title = "PCM 缓存",
+                subtitle = "波形与分离共享的 WAV 解码结果；当前播放曲不会被清理",
+                onClick = onOpenPcmCache,
+            )
+        }
+
         HorizontalDivider()
 
         // Step5：转盘一圈时长
@@ -323,6 +344,121 @@ private fun SettingsRoot(
 
         // Step5：变速范围（单一项 X → 滑块 [1/X, X]）
         SpeedRangeSetting()
+    }
+}
+
+/**
+ * PCM 缓存页。
+ *
+ * PcmStore 是进程级单例；当前播放曲由 PlayerViewModel pin 住。
+ * 这里只做「查看占用 + 清理未使用文件」，不做容量编辑（默认 12GB LRU）。
+ */
+@Composable
+private fun PcmCacheScreen(modifier: Modifier = Modifier, onBack: () -> Unit) {
+    val ctx = LocalContext.current
+    val store = remember { PcmStoreProvider.get(ctx) }
+    val scope = rememberCoroutineScope()
+
+    var usedBytes by remember { mutableStateOf(0L) }
+    var files by remember { mutableIntStateOf(0) }
+    var lastCleared by remember { mutableIntStateOf(-1) }
+    var showClearConfirm by remember { mutableStateOf(false) }
+
+    suspend fun refresh() {
+        usedBytes = runCatching { store.cacheBytes() }.getOrDefault(0L)
+        files = runCatching { store.cacheFileCount() }.getOrDefault(0)
+    }
+
+    LaunchedEffect(Unit) { refresh() }
+
+    fun mb(b: Long): String = "%.1f".format(b / 1_048_576.0)
+
+    Column(modifier = modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TextButton(onClick = onBack) { Text("‹ 返回") }
+            Text(
+                "PCM 缓存",
+                style = MaterialTheme.typography.titleLarge,
+                modifier = Modifier.padding(start = 8.dp),
+            )
+        }
+
+        Column(
+            Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Text(
+                "波形和分离共用同一份解码 WAV。缓存命中时，分离不再二次解码；" +
+                    "当前播放曲会被 pin 住，清理时不会删除。",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+
+            HorizontalDivider()
+
+            Text("当前占用", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "${mb(usedBytes)} MB ・ $files 个文件",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Text(
+                "上限：${"%.0f".format(store.cacheLimitBytes / 1_073_741_824.0)} GB（LRU）",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (lastCleared >= 0) {
+                Text(
+                    "上次清理：删除 $lastCleared 个未使用文件",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { scope.launch { refresh() } }) { Text("刷新") }
+                OutlinedButton(
+                    onClick = { showClearConfirm = true },
+                    enabled = files > 0,
+                ) { Text("清理未使用缓存") }
+            }
+
+            Text(
+                "说明：高采样率源会保留原始采样率，单首可能上百 MB；" +
+                    "WAV 直接用于后续分离，因此优先保证复用而不是压缩。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+
+    if (showClearConfirm) {
+        AlertDialog(
+            onDismissRequest = { showClearConfirm = false },
+            title = { Text("清理 PCM 缓存？") },
+            text = {
+                Text(
+                    "将删除未被播放/分离占用的 PCM WAV；" +
+                        "当前播放曲和正在分离的文件会保留。",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    scope.launch {
+                        lastCleared = runCatching { store.clearUnpinned() }.getOrDefault(0)
+                        refresh()
+                    }
+                    showClearConfirm = false
+                }) { Text("清理") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearConfirm = false }) { Text("取消") }
+            },
+        )
     }
 }
 
