@@ -30,6 +30,9 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import pub.miku.neuralstem.player.pcm.PcmSourceFactory
+import pub.miku.neuralstem.player.pcm.PcmStoreProvider
+import pub.miku.neuralstem.player.pcm.SourceDescriptor
 import org.json.JSONArray
 import org.json.JSONObject
 import kotlin.math.abs
@@ -298,6 +301,9 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     private val playlistStore by lazy { PlaylistStore(getApplication()) }
 
     /** 波形提取器(Task 2);scope 用 VM 的,切歌自动取消上次 */
+    /** 当前播放曲的 PCM 缓存 pin，切换曲目时释放旧 pin。 */
+    private var pinnedPcm: SourceDescriptor? = null
+
     private val waveformExtractor = WaveformExtractor(viewModelScope).apply {
         contextProvider = { getApplication<Application>() }
     }
@@ -665,8 +671,9 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
              * - AVS3 `.m4a` → `doLoad` 收到的是**缓存 WAV**，`MediaExtractor` 原生支持（实测 OK）
              * - 普通 mp3/flac → `content://`，直接解
              */
-            private fun waveformSourceFor(uri: Uri): AudioSource =
-                if (uri.scheme == "ncm") {
+            private fun waveformSourceFor(uri: Uri): AudioSource {
+                pinPcmFor(uri)
+                return if (uri.scheme == "ncm") {
                     AudioSource.RawBytes(
                         bytesProvider = { Avs3Bridge.ncmBytesOf(uri) },
                         cacheKey = uri.toString(),
@@ -674,6 +681,28 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                 } else {
                     AudioSource.MediaUri(uri)
                 }
+            }
+
+            /** 当前曲 pin 住 PCM；换曲时释放旧 pin（PcmStore 单例）。 */
+            private fun pinPcmFor(uri: Uri) {
+                if (uri.scheme == "ncm") return
+                val app = getApplication<Application>()
+                val desc = when (uri.scheme) {
+                    "content" -> PcmSourceFactory.fromMediaUri(app, uri)
+                    "file" -> uri.path?.let { PcmSourceFactory.fromFile(File(it)) }
+                    else -> null
+                } ?: return
+                if (!desc.pcmCacheable) return
+                viewModelScope.launch {
+                    val store = PcmStoreProvider.get(app)
+                    val old = pinnedPcm
+                    if (old?.cacheKey != desc.cacheKey) {
+                        old?.let { store.unpin(it) }
+                        pinnedPcm = desc
+                        store.pin(desc)
+                    }
+                }
+            }
 
             override fun onPlayerError(error: PlaybackException) {
                 // ★bug C 傅底 —— 致命错误（ERROR_CODE_TIMEOUT）自动重建 pipeline。
@@ -2060,6 +2089,10 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         session.syncMode(SessionMode.Single)
         cancelStemWaveforms()
         _stemWaveforms.value = emptyList()
+        pinnedPcm?.let { old ->
+            pinnedPcm = null
+            viewModelScope.launch { runCatching { PcmStoreProvider.get(getApplication()).unpin(old) } }
+        }
         _state.value = withDerived(
             _state.value.copy(
                 tracks = emptyList(),
