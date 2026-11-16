@@ -30,7 +30,7 @@ SourceDescriptor
 - [x] Phase 1：`PcmStore` + `PcmLease` + 单飞 + LRU + JVM 测试
 - [x] Phase 2：`PcmDecodePipeline`，波形接入
 - [x] Phase 3：分离/edge 接入 PCM cache
-- [x] Phase 4：当前曲 pin、清缓存联动、tmp 清理、跨进程 LRU（设置页占用显示未做）
+- [x] Phase 4：当前曲 pin、清缓存联动、tmp 清理、跨进程 LRU、设置页 PCM 占用/清理（v0.2.21）
 - [x] Phase 5：真机 PCM 命中/2/4-stem/edge 验证；随 v0.2.20 发布（设置页占用显示仍待做）
 
 ## Phase 2/3 已完成
@@ -50,6 +50,8 @@ SourceDescriptor
 - `SpikeViewModel.clearCache` 同时清理未使用 PCM；当前曲被 pin 时保留
 - `PcmStore` 启动清理 1h 前 tmp、跨进程遗留文件参与 LRU
 - 真机：清 stem cache 后 PCM 仍命中；`pcm cache cleared: 0`（当前曲 pin）
+- 设置页新增「PCM 缓存」：占用/文件数/12GB 上限/清理未使用
+- 清理保护当前曲 pin 与正在解码的 tmp；清空后文件数可为 0
 
 ## Phase 1 已完成
 

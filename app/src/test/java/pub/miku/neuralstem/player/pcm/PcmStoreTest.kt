@@ -214,6 +214,31 @@ class PcmStoreTest {
     }
 
     @Test
+    fun usage_api_reports_files_and_clear() = runBlocking {
+        val store = PcmStore(cacheDir, scope, decoder())
+        val lease = store.acquire(source())!!
+        assertTrue(store.cacheBytes() > 0)
+        assertTrue(store.cacheFileCount() >= 1)
+        lease.close()
+        delay(30)
+        assertTrue(store.clearUnpinned() >= 1)
+        assertEquals(0, store.cacheFileCount())
+    }
+
+    @Test
+    fun clear_removes_stale_tmp_but_not_active_decode() = runBlocking {
+        val store = PcmStore(cacheDir, scope, decoder(delayMs = 200))
+        val stale = File(cacheDir, "tmp-stale.wav").apply { writeBytes(ByteArray(10)) }
+        val lease = store.acquire(source())!!
+        // 解码结束后 stale tmp 应被 clear 删除
+        lease.close()
+        delay(30)
+        assertTrue(store.clearUnpinned() >= 1)
+        assertFalse(stale.exists())
+        assertEquals(0, store.cacheFileCount())
+    }
+
+    @Test
     fun non_cacheable_wav_is_not_cached() = runBlocking {
         val count = AtomicInteger(0)
         val store = PcmStore(cacheDir, scope, decoder(counter = count))
