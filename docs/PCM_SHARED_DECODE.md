@@ -31,7 +31,7 @@ SourceDescriptor
 - [x] Phase 2：`PcmDecodePipeline`，波形接入
 - [x] Phase 3：分离/edge 接入 PCM cache
 - [x] Phase 4：当前曲 pin、清缓存联动、tmp 清理、跨进程 LRU（设置页占用显示未做）
-- [ ] Phase 5：真机性能、长跑、A/B、发布
+- [x] Phase 5：真机 PCM 命中/2/4-stem/edge 验证；随 v0.2.20 发布（设置页占用显示仍待做）
 
 ## Phase 2/3 已完成
 

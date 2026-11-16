@@ -118,6 +118,17 @@
 - JVM **433/0**（M1 reducer 52 + M2 controller 7 + 原有 374）；
   真机 edge fast path、4-stem cache/启动、开关 off/on 通过。
 
+## v0.2.20：共享 PCM 解码缓存
+
+- 新增 `PcmStore`：单飞解码、`PcmLease` 引用计数、pin、LRU、原子落盘。
+- `PcmDecodePipeline`：MediaExtractor/MediaCodec 解一次，写 WAV + 渐进包络。
+- 波形优先读 PcmStore；包络缓存命中时仍后台预解码。
+- 分离/edge 输入优先 `PcmStore.acquire`，分离期间持有 lease。
+- 当前曲 pin；`clearCache` 同步清理未使用 PCM。
+- 真机：分离日志 `PCM cache HIT pcm-*.wav`，不再二次 `decodeToTempWav`。
+- JVM **461/0**；PCM cache 默认上限 12GB。
+- 遗留：设置页未显示 PCM 占用；PCM WAV 保持解码器原始采样率（大文件更占盘）。
+
 ## v0.2.19：移除 SpikeVM 分离双适配
 
 - 导出：`SeparationScreen` 改读 Domain snapshot；新增 `SeparationGuards.exportableFiles`。
