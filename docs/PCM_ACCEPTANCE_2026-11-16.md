@@ -72,6 +72,23 @@
 - 192k 源 PCM WAV 明显较大（bullet 约 113MB/148s）；默认 12GB 上限约百首量级
 - 分离侧日志 `wav @192000Hz → ResamplingFrameSource`，PCM 复用但仍有重采样成本
 
+## 2 小时 PCM 长跑
+
+- 时长：**7204s（约 2h00m）**
+- 轨迹：默认歌单循环
+- 操作：切歌 **19 次**，edge **7 次**，清 stem cache **3 次**，重设 EQ **4 次**
+- 进程：未重启、无 crash/ANR/OOM
+- 播放：25 次快照全部 `PLAYING`
+- PSS：111MB → 峰值 237MB → 结束时 213MB
+- 温度：37.0–38.4°C
+- 音量：25 次快照全部 1/15
+- EQ：4 次采样全部 5 段 -15.0dB
+- 长跑后专项：清 stem cache → edge → `PCM cache HIT pcm-78b98e...wav`，无二次 `decodeToTempWav`
+
+日志目录：`/tmp/pcm_soak_20261116_132038/`
+
+> 说明：长跑脚本的 logcat 过滤只保留了 1 条 PcmDecode 记录，未统计到完整 PCM HIT 次数；因此只能确认“无崩溃/无重启”，不能把日志缺失当成完整命中统计。
+
 ## 结论
 
-核心 PCM 复用路径通过；尚不能称为完整验收。下一步补 A/B、切歌取消、长跑和 NCM 回退。
+核心 PCM 复用路径通过；尚不能称为完整验收。下一步补 NCM 回退和 PCM 占用统计。
