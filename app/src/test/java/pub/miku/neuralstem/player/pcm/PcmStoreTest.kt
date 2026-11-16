@@ -150,6 +150,47 @@ class PcmStoreTest {
     }
 
     @Test
+    fun pin_before_prepare_protects_cache_from_clear() = runBlocking {
+        val store = PcmStore(cacheDir, scope, decoder())
+        store.pin(source())
+        val lease = store.acquire(source())!!
+        val path = lease.artifact.file
+        lease.close()
+        delay(30)
+
+        assertEquals(0, store.clearUnpinned())
+        assertTrue(path.exists())
+        store.unpin(source())
+        assertEquals(1, store.clearUnpinned())
+    }
+
+    @Test
+    fun concurrent_acquire_calls_share_one_decode() = runBlocking {
+        val count = AtomicInteger(0)
+        val store = PcmStore(cacheDir, scope, decoder(delayMs = 30, counter = count))
+        val leases = listOf(
+            async { store.acquire(source()) },
+            async { store.acquire(source()) },
+            async { store.acquire(source()) },
+        ).awaitAll()
+        assertEquals(1, count.get())
+        assertEquals(3, leases.count { it != null })
+        leases.forEach { it?.close() }
+    }
+
+    @Test
+    fun trim_removes_old_untracked_pcm_orphans() = runBlocking {
+        val store = PcmStore(cacheDir, scope, decoder(), maxBytes = 10L)
+        val orphan = File(cacheDir, "old-orphan.wav").apply {
+            writeBytes(ByteArray(100))
+            setLastModified(0L)
+        }
+        assertTrue(orphan.exists())
+        store.trim()
+        assertTrue(!orphan.exists())
+    }
+
+    @Test
     fun non_cacheable_wav_is_not_cached() = runBlocking {
         val count = AtomicInteger(0)
         val store = PcmStore(cacheDir, scope, decoder(counter = count))
