@@ -122,6 +122,7 @@
 
 - 前段缺口提示/「补齐前段」按钮改用 EdgeSeparationSession 的稳定 startFrame，不再因新 job coverage=0 闪一下。
 - 清缓存成功后立即取消 `lastEdgeDone` 的 5 秒 flash，不再残留「✓ 分离完成 · 全曲可播」。
+- 发布链路：F-Droid 自建源改为 Release published 后由 GitHub Actions 自动签名发布。
 - JVM **471/0**。
 
 ## v0.2.27：自动 attach 后覆盖率继续更新

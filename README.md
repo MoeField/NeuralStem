@@ -62,6 +62,17 @@
 
 > 需要 Android 6.0（API 23）或更高。
 
+#### F-Droid 自建源（可选）
+
+也可以直接把自建源加到 F-Droid 安装/更新，之后跟随 Release 自动更新：
+
+```text
+https://neuralstem.miku.pub/fdroid/repo/
+```
+
+F-Droid → 设置 → 仓库 → 添加上述地址 → 刷新。  
+仓库地址和签名固定，后续发版不需要重新添加。
+
 ### 2. 下载模型（首次必做）
 
 分离需要 AI 模型文件，App 里可以直接下：

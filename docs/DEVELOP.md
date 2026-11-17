@@ -150,6 +150,32 @@ apksigner verify --print-certs app/build/outputs/apk/release/app-arm64-v8a-relea
 
 推送 `vX.Y.Z` tag 后 CI 会跑单测并上传 Release APK。
 
+### F-Droid 自建源自动发布
+
+Release published 后，`.github/workflows/fdroid-publish.yml` 会自动：
+
+1. 下载 `app-arm64-v8a-release.apk`
+2. 用 `gh-pages` 现有 repo + `fdroid/metadata/*.yml` 重新生成签名 index
+3. 只替换 `gh-pages` 的 `fdroid/repo/`，保留 `CNAME` / `.nojekyll`
+
+地址：
+
+```text
+https://neuralstem.miku.pub/fdroid/repo/
+```
+
+它使用独立的 repo signing key secrets：
+
+```text
+FDROID_KEYSTORE_BASE64
+FDROID_KEYSTORE_PASSWORD
+FDROID_KEY_ALIAS
+FDROID_KEY_PASSWORD（可省略，默认同 keystore 密码）
+```
+
+不要和 App APK 的 `KEYSTORE_*` secrets 混用。详细恢复/手动流程见
+[`fdroid/README.md`](../fdroid/README.md)。
+
 ## 7. 已知限制
 
 - AVS3/NCM 参考解码器不入库；没有它时相关格式跳过。

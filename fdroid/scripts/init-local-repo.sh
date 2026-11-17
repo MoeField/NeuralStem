@@ -29,7 +29,7 @@ cd "$LOCAL"
 if [ ! -f config.yml ] || [ ! -f keystore.p12 ]; then
   "$FDROID_BIN" init --no-prompt \
     --android-home "$ANDROID_HOME" \
-    --keystore "$LOCAL/keystore.jks" \
+    --keystore "$LOCAL/keystore.p12" \
     --repo-keyalias neuralstem-repo
 fi
 
@@ -55,4 +55,4 @@ PY
 mkdir -p metadata repo
 cp "$ROOT/fdroid/metadata/pub.miku.neuralstem.yml" metadata/
 echo "repo initialized: $LOCAL"
-echo "备份：$LOCAL/keystore.jks 和 $LOCAL/config.yml（不要提交）"
+echo "备份：$LOCAL/keystore.p12 和 $LOCAL/config.yml（不要提交）"
