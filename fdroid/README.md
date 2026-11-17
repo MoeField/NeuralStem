@@ -1,5 +1,10 @@
 # 自建 F-Droid 兼容源
 
+> **注意：`fdroid/local/` 只是本地生成目录，不是仓库地址。**
+> 用户应添加 GitHub Pages URL：
+> `https://moefield.github.io/NeuralStem/fdroid/repo/`
+> 本地目录不会被 F-Droid 客户端访问，也不应该把绝对路径写进 F-Droid 配置。
+
 不依赖 F-Droid 官方 buildserver 或审核。用户手动添加仓库地址后，
 即可在 F-Droid 客户端中安装/更新 NeuralStem。
 
