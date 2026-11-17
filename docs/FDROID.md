@@ -96,14 +96,23 @@ docker compose run --rm builder
 4. 测试 metadata 里的 `Binaries` 指向 Release 页面会被当 APK 下载而报错；
    已移除，不应写进真实 metadata。
 
-实际构建结果：`fdroid build` 已完成 Gradle 构建（26m15s），
-产物 `app/build/outputs/apk/release/app-arm64-v8a-release.apk`。
-最后失败仅来自测试 metadata 的错误 `Binaries` 引用；移除后待重跑确认。
+实际结果：**`fdroid build` 成功**（25m22s）：
+
+```text
+Successfully built version 0.2.21 of pub.miku.neuralstem from c5109be...
+success: pub.miku.neuralstem
+1 build succeeded
+```
+
+产物：`app/build/outputs/apk/release/app-arm64-v8a-release.apk`。
+
+注意：这是测试容器内**人工补了 fdroidserver 的 Gradle 9.8.2 hash** 后成功的。
+Debian trixie 的 fdroidserver 2.4.2 本身不识别该版本，官方 F-Droid
+buildserver 需要先升级 fdroidserver（或项目改用其已支持的 Gradle/AGP 组合）。
 
 ## 仍待解决
 
-- 用移除 `Binaries` 的 metadata 再跑一次完整 fdroid build。
-- 官方 F-Droid buildserver 的 fdroidserver 是否已支持 Gradle 9.8.2/API 37。
+- 官方 F-Droid buildserver 的 fdroidserver 何时支持 Gradle 9.8.2/API 37；本地 Debian 包 2.4.2 尚不支持。
 - Fastlane 元数据、fdroiddata 描述。
 - 模型许可与默认下载代理（UVR 权重许可不统一；`api.gitproxy.dev` 可能触发 NonFreeNet 标记）。
 - 官方签名切换导致 GitHub → F-Droid 无法原地升级。
