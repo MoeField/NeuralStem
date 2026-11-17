@@ -118,6 +118,13 @@
 - JVM **433/0**（M1 reducer 52 + M2 controller 7 + 原有 374）；
   真机 edge fast path、4-stem cache/启动、开关 off/on 通过。
 
+## v0.2.23：2→4 轨波形/开关修复
+
+- 修复 2 轨 edge 实时包络采集器把 4 轨 `stemWaveforms` 覆盖成 2 项的问题。
+- 分离开关关闭时兜底退出多轨：4 轨/2 轨结果直接 `loadMultiTrack` 的路径可能没有 Domain attachment，旧 detach 为 no-op。
+- 真机：2 轨→4 轨→清缓存→关开关，回到「当前：原曲」。
+- JVM **467/0**。
+
 ## v0.2.22：缓存提示布局 + F-Droid 自建源
 
 - 分离页「清理缓存」结果提示移到按钮下一行，横屏/窄屏不再被压成竖排。
