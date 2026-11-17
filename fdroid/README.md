@@ -2,7 +2,7 @@
 
 > **注意：`fdroid/local/` 只是本地生成目录，不是仓库地址。**
 > 用户应添加 GitHub Pages URL：
-> `https://moefield.github.io/NeuralStem/fdroid/repo/`
+> `https://neuralstem.miku.pub/fdroid/repo/`
 > 本地目录不会被 F-Droid 客户端访问，也不应该把绝对路径写进 F-Droid 配置。
 
 不依赖 F-Droid 官方 buildserver 或审核。用户手动添加仓库地址后，
@@ -51,7 +51,7 @@ FDROID_BIN=/tmp/fdroidvenv/bin/fdroid \
 已发布到本仓库的 `gh-pages` 分支：
 
 ```text
-https://moefield.github.io/NeuralStem/fdroid/repo/
+https://neuralstem.miku.pub/fdroid/repo/
 ```
 
 首次发布后，需要仓库管理员在 GitHub：

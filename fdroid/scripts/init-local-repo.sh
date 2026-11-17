@@ -46,7 +46,7 @@ def put(key, value):
         s = pat.sub(f'{key}: {value}', s, count=1)
     else:
         s += f'\n{key}: {value}\n'
-put('repo_url', '"https://moefield.github.io/NeuralStem/fdroid/repo"')
+put('repo_url', '"https://neuralstem.miku.pub/fdroid/repo"')
 put('repo_name', '"NeuralStem"')
 put('repo_description', '"NeuralStem 自建源：离线分轨、播放与导出"')
 p.write_text(s)
