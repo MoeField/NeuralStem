@@ -815,6 +815,9 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             while (isActive) {
                 delay(500)
                 if (!_state.value.isMultiTrack) continue
+                // ★只服务 2 轨 edge：4 轨 full 时如果继续把列表覆盖成 2 项，
+                //   外环就只剩两条 stem 波形。full 4 由 extractStemWaveforms(4) 负责。
+                if (_stemWaveforms.value.size != 2) continue
                 val v = session.snapshotEnvelope(0) ?: continue
                 val a = session.snapshotEnvelope(1) ?: continue
                 if (v.first.isEmpty()) continue
