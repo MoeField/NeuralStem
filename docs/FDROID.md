@@ -61,10 +61,50 @@ docker compose run --rm builder
 SRC_DIR=/Users/you/NeuralStem-docker docker compose run --rm builder
 ```
 
+## Docker / Debian 实测结果
+
+### 普通 release 构建
+
+命令：
+
+```bash
+cd fdroid
+docker compose run --rm builder
+```
+
+结果：**BUILD SUCCESSFUL（33m24s，amd64 模拟）**。
+
+- JDK 21（Debian）
+- SDK 37.0 / build-tools 36（37 不可用时回退）
+- NDK 30.0.16248370
+- CMake 4.1.2
+- 产物：`app/build/outputs/apk/release/app-arm64-v8a-release.apk`
+- 没有 keystore 时按设计回退 debug 签名（F-Droid 构建本身会重签）
+
+### fdroidserver 本地配方构建
+
+`fdroid/test-fdroid-build.sh` 从 GitHub 克隆源码，用 fdroiddata 风格 metadata 构建。
+
+已发现/处理：
+
+1. `fdroidserver 2.4.2` 的 `gradlew-fdroid` 只识别到 Gradle 8.14.2，
+   不识别项目的 Gradle 9.8.2；测试容器内临时补了 hash。
+   **官方 F-Droid buildserver 需要有支持 9.8.2 的 fdroidserver。**
+2. 容器需要 `curl`（gradlew-fdroid 下载 Gradle 用）；Dockerfile 已补。
+3. 首次构建需要 `build/<app>` 已存在 git clone（fdroidserver 2.4.2 的
+   `SOURCE_DATE_EPOCH` 顺序问题）；测试脚本已加兜底。
+4. 测试 metadata 里的 `Binaries` 指向 Release 页面会被当 APK 下载而报错；
+   已移除，不应写进真实 metadata。
+
+实际构建结果：`fdroid build` 已完成 Gradle 构建（26m15s），
+产物 `app/build/outputs/apk/release/app-arm64-v8a-release.apk`。
+最后失败仅来自测试 metadata 的错误 `Binaries` 引用；移除后待重跑确认。
+
 ## 仍待解决
 
-- Debian 容器内 release 构建是否完整通过（R8/lint/打包）。
-- `fdroid build` 用 fdroiddata 配方是否接受 AGP 9.5/Gradle 9.8/API 37 preview。
+- 用移除 `Binaries` 的 metadata 再跑一次完整 fdroid build。
+- 官方 F-Droid buildserver 的 fdroidserver 是否已支持 Gradle 9.8.2/API 37。
 - Fastlane 元数据、fdroiddata 描述。
 - 模型许可与默认下载代理（UVR 权重许可不统一；`api.gitproxy.dev` 可能触发 NonFreeNet 标记）。
 - 官方签名切换导致 GitHub → F-Droid 无法原地升级。
+- F-Droid 构建会顺带构建 `bench` 模块；不影响产物，但浪费时间，可在 metadata 中限制任务。
