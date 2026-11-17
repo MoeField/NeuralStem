@@ -1,0 +1,18 @@
+Categories:
+  - Multimedia
+License: MIT
+AuthorName: MoeField
+WebSite: https://github.com/MoeField/NeuralStem
+SourceCode: https://github.com/MoeField/NeuralStem
+IssueTracker: https://github.com/MoeField/NeuralStem/issues
+Summary: Offline source separation and multitrack playback
+Description: |
+  NeuralStem separates vocals and accompaniment (and four stems with
+  Spleeter/Demucs) entirely on-device. It can separate while playing,
+  mix stems in real time, and export WAV files.
+
+  Models are downloaded by the user after installation; they are not
+  bundled in the APK. Model and third-party licenses are documented in
+  the project NOTICE file.
+RepoType: git
+Repo: https://github.com/MoeField/NeuralStem
