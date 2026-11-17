@@ -470,7 +470,7 @@ class SeparationDomain private constructor(private val app: Application) {
             edgeBeforeStart = edge.seekInGrayZone,
             edgeStartMs = edge.startMs,
             backfillPercent = bf,
-            pendingBackfillMs = edge.pendingBackfillMs(),
+            pendingBackfillMs = edge.pendingBackfillHintMs(),
         )
     }
 

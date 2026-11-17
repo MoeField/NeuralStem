@@ -118,6 +118,12 @@
 - JVM **433/0**（M1 reducer 52 + M2 controller 7 + 原有 374）；
   真机 edge fast path、4-stem cache/启动、开关 off/on 通过。
 
+## v0.2.28：前段提示稳定 + 清缓存清完成提示
+
+- 前段缺口提示/「补齐前段」按钮改用 EdgeSeparationSession 的稳定 startFrame，不再因新 job coverage=0 闪一下。
+- 清缓存成功后立即取消 `lastEdgeDone` 的 5 秒 flash，不再残留「✓ 分离完成 · 全曲可播」。
+- JVM **471/0**。
+
 ## v0.2.27：自动 attach 后覆盖率继续更新
 
 - 修复 edge 自动 attach 后 `job.operation` 变为 null，`onCoverageUpdated` 仍要求 Separating/Backfilling → 覆盖率冻结在 15%/17%。

@@ -416,6 +416,25 @@ class EdgeSeparationSession private constructor() {
         }
     }
 
+    /**
+     * UI 用的稳定前段缺口时长。
+     *
+     * 与 [pendingBackfillMs] 的区别：后者只在成本门控“跳过自动补”后才有值；
+     * 这里的缺口从 beginFiles 起就存在，避免新建 edge job 瞬间 domain coverage=0
+     * 导致提示/按钮闪一下消失。进入 backfill 或补齐完成后返回 0。
+     */
+    fun pendingBackfillHintMs(): Long {
+        if (frontCovered || inBackfill.value) return 0L
+        val range = pendingBackfillRange
+        val frames = if (range != null) {
+            (range.last - range.first + 1).toLong()
+        } else {
+            startFrame.toLong()
+        }
+        if (frames <= 0) return 0L
+        return frames * 1000L / sampleRate.coerceAtLeast(1)
+    }
+
     /** 缺口时长（ms），供 UI 算展示文案。 */
     fun pendingBackfillMs(): Long {
         val r = pendingBackfillRange ?: return 0L

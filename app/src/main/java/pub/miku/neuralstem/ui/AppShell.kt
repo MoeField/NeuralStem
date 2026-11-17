@@ -513,7 +513,7 @@ fun AppShell(
                 // ★两阶段：补前段进度
                 backfillPercent = playerState.separationEdge.backfillPercent,
                 // ★B4：成本门控跳过的缺口 → 分离页显示“补齐前段”入口。
-                pendingBackfillMs = pendingBackfillMsOf(domainSnapshot),
+                pendingBackfillMs = playerState.separationEdge.pendingBackfillMs,
                 // ★G-3ux：无缓存时跳过来 → 自动开始分离（不用用户再点一次）。
                 autoStartToken = autoStartSeparate,
                 // ★无可用模型时的出口：跳设置页并直接打开模型库

@@ -611,6 +611,13 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun clearCache(): Int {
         val n = repo.clearCache()
+        if (n >= 0) {
+            // 清缓存后旧结果已完成的事实仍然存在，但“✓ 分离完成 · 全曲可播”
+            // 不应再等 5 秒 flash，否则用户会以为缓存没清干净。
+            edgeDoneFlashJob?.cancel()
+            edgeDoneFlashJob = null
+            _lastEdgeDone.value = null
+        }
         // PCM 缓存与分离缓存一起清；当前曲 pin 的文件由 PcmStore 保护。
         viewModelScope.launch {
             runCatching { PcmStoreProvider.get(getApplication()).clearUnpinned() }
