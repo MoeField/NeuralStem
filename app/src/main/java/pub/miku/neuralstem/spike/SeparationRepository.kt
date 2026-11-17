@@ -679,6 +679,12 @@ class SeparationRepository(private val app: Application) {
                                                     session.updateBackfillProgress((base + local).toInt())
                                                 }
                                             },
+                                            // ★补前段也写包络：否则音频补齐了，外环前段仍是 0。
+                                            onEnvelope = { stemIndex, absFrame, mn, mx, n ->
+                                                if (stillCurrent()) {
+                                                    session.appendEnvelope(stemIndex, absFrame, mn, mx, n)
+                                                }
+                                            },
                                             // 阶段 2 不产生“新可播区域”的 Gate 语义
                                             isCancelled = { !stillCurrent() },
                                         ).run()

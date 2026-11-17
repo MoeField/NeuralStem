@@ -118,6 +118,12 @@
 - JVM **433/0**（M1 reducer 52 + M2 controller 7 + 原有 374）；
   真机 edge fast path、4-stem cache/启动、开关 off/on 通过。
 
+## v0.2.25：快速模式补前段波形
+
+- 修复 edge/快速模式阶段 2（补前段缺口）漏传 `onEnvelope`：音频/manifest 已补齐，但外环前段包络一直为 0。
+- 补前段现在与阶段 1 一样写入 `session.appendEnvelope`，波形随补齐进度更新。
+- JVM **470/0**。
+
 ## v0.2.24：多轨/缓存状态收口
 
 - 2/4 轨结果播放优先走 `SeparationDomain.tryAttach`；兼容旧直接载入路径会同步 attachment。
