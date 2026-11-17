@@ -121,6 +121,8 @@ jobs:
           Path(config).write_text(
               "\n".join(f"{k}: {json.dumps(v)}" for k, v in fields.items()) + "\n"
           )
+          # fdroid 会警告 config 权限过宽；runner 上是临时的，顺手收紧。
+          Path(config).chmod(0o600)
           PY
 
       - name: Prepare repo from latest gh-pages
