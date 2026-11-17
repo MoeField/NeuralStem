@@ -527,15 +527,25 @@ fun AppShell(
                         val t = playerVm.state.value.fileName
                         scope.launch { snackbarHostState.showSnackbar("分离完成（$t），但你已切歌，未切换多轨") }
                     } else {
-                        playerVm.loadMultiTrack(
-                            listOf(
-                                Triple("vocals", "人声", done.vocalsFile),
-                                Triple("accompaniment", "伴奏", done.accompanimentFile),
-                            ),
-                        )
-                        playerVm.markStemsAvailable()
-                        // ★显式 play（幂等）: 后台分离期间原曲在播, 不能用 togglePlayPause（会暂停）。
-                        playerVm.play()
+                        // 正常路径必须经 Domain attach；旧直接 loadMultiTrack
+                        // 不产生 attachment，会让 detach 变成 no-op。
+                        val attached = separationDomain.tryAttach()
+                        if (attached) {
+                            Log.i("AppShell", "2-stem 播放经 Domain attach")
+                        }
+                        if (!attached) {
+                            val files = listOf(done.vocalsFile, done.accompanimentFile)
+                            Log.w("AppShell", "2-stem Domain 无附件，兼容直接载入并同步")
+                            playerVm.loadMultiTrack(
+                                listOf(
+                                    Triple("vocals", "人声", done.vocalsFile),
+                                    Triple("accompaniment", "伴奏", done.accompanimentFile),
+                                ),
+                            )
+                            playerVm.markStemsAvailable()
+                            playerVm.play()
+                            separationDomain.onExternalPlaybackStemsLoaded(files)
+                        }
                         // ★#3：延迟 0.8s 再跳页——让用户看到“✅ 分离完成”，
                         //   而不是从 79% 直接消失（观感像“卡住后突然没了”）。
                         scope.launch {
@@ -549,21 +559,23 @@ fun AppShell(
                         val t = playerVm.state.value.fileName
                         scope.launch { snackbarHostState.showSnackbar("分离完成（$t），但你已切歌，未切换多轨") }
                     } else {
-                        // ★2026-11-01 修「音轨错位」：**不能**用索引去贴 STEM_KINDS。
-                        //   两个引擎的 STEM_KINDS 顺序不同：
-                        //     Spleeter4Dsp: [vocals, drums, bass, other]
-                        //     Demucs:       [drums, bass, other, vocals]
-                        //   旧代码统一用 Spleeter4Dsp 的顺序贴标签 → 用 Demucs 时
-                        //   id/label 与实际文件全错位（实测 id=vocals 指向 drums.wav）。
-                        //   改为**按文件实际名**推导，与产出方顺序解耦。
-                        playerVm.loadMultiTrack(
-                            files.map { f ->
-                                val kind = f.nameWithoutExtension.lowercase()
-                                Triple(kind, stemLabel(kind), f)
-                            },
-                        )
-                        playerVm.markStemsAvailable()
-                        playerVm.play()
+                        // 正常路径经 Domain；4 文件的 label/顺序由 Bridge 统一按文件名推导。
+                        val attached = separationDomain.tryAttach()
+                        if (attached) {
+                            Log.i("AppShell", "4-stem 播放经 Domain attach")
+                        }
+                        if (!attached) {
+                            Log.w("AppShell", "4-stem Domain 无附件，兼容直接载入并同步")
+                            playerVm.loadMultiTrack(
+                                files.map { f ->
+                                    val kind = f.nameWithoutExtension.lowercase()
+                                    Triple(kind, stemLabel(kind), f)
+                                },
+                            )
+                            playerVm.markStemsAvailable()
+                            playerVm.play()
+                            separationDomain.onExternalPlaybackStemsLoaded(files)
+                        }
                         scope.launch {
                             delay(JUMP_DELAY_MS)
                             current = AppDestination.PLAYER

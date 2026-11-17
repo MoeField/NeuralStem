@@ -322,6 +322,8 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     private var stemExtractors: List<WaveformExtractor> = emptyList()
     private var stemWaveformJobs: List<Job> = emptyList()
     private val _stemWaveforms = MutableStateFlow<List<WaveformData?>>(emptyList())
+    /** 每次重建 stem 波形递增；旧提取器的回调必须丢弃。 */
+    private var stemWaveformToken = 0L
 
     /**
      * Task 3:变速变调(guide F2.x)。
@@ -1907,6 +1909,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
      */
     /** 取消上一次 stem 波形提取及其 collector，避免旧歌/旧多轨继续解码并写回 idx。 */
     private fun cancelStemWaveforms() {
+        stemWaveformToken++
         stemExtractors.forEach { it.cancel() }
         stemExtractors = emptyList()
         stemWaveformJobs.forEach { it.cancel() }
@@ -1915,6 +1918,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun extractStemWaveforms(stems: List<Triple<String, String, File>>) {
         cancelStemWaveforms()
+        val token = stemWaveformToken
         _stemWaveforms.value = List(stems.size) { null }
         _state.value = _state.value.copy(stemWaveforms = _stemWaveforms.value)
         val jobs = ArrayList<Job>(stems.size)
@@ -1925,6 +1929,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             // 收集：任一轨就绪即刷新列表（只重绘，不重组——由 DeckView 在 draw 阶段读）
             jobs += viewModelScope.launch {
                 ex.waveform.collect { wf ->
+                    if (token != stemWaveformToken) return@collect
                     val cur = _stemWaveforms.value.toMutableList()
                     if (idx < cur.size && cur[idx] !== wf) {
                         cur[idx] = wf

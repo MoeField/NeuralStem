@@ -242,6 +242,42 @@ class SeparationReducerTest {
         assertNull(r.snapshot.job!!.operation)
     }
 
+    @Test
+    fun external_playback_stems_loaded_syncs_attachment() {
+        val s = SeparationSnapshot(currentTrackKey = trackA)
+        val r = reduce(
+            s,
+            SeparationEvent.External.PlaybackStemsLoaded(trackA, jobId = null, files = fourStems),
+        )
+        assertEquals(
+            AttachmentState.Loaded(-1L, trackA, fourStems),
+            r.snapshot.attachment,
+        )
+        assertTrue(r.effects.isEmpty())
+    }
+
+    @Test
+    fun external_playback_stems_loaded_for_other_track_is_ignored() {
+        val s = SeparationSnapshot(currentTrackKey = trackA)
+        val r = reduce(
+            s,
+            SeparationEvent.External.PlaybackStemsLoaded(trackB, jobId = null, files = fourStems),
+        )
+        assertEquals(s, r.snapshot)
+    }
+
+    @Test
+    fun clear_cache_is_rejected_while_stems_are_attached() {
+        val attached = SeparationSnapshot(
+            currentTrackKey = trackA,
+            attachment = AttachmentState.Loaded(1L, trackA, vocalsAndAccomp),
+        )
+        val r = reduce(attached, SeparationEvent.User.ClearCache)
+        assertEquals(attached, r.snapshot)
+        assertTrue(r.effects.none { it is SeparationEffect.ClearCache })
+        assertTrue(r.effects.any { it is SeparationEffect.Notify })
+    }
+
     // ---------------- FULL 不自动 attach ----------------
 
     @Test

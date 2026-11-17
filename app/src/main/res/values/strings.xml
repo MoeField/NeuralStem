@@ -90,6 +90,7 @@
     <string name="sep_failed">❌ %1$s</string>
     <string name="sep_cancelled">分离已取消</string>
     <string name="sep_cache_cleared">已清理 %1$d 项缓存</string>
+    <string name="sep_cache_disable_in_multitrack">多轨播放中，请先关闭分离开关再清理缓存</string>
     <string name="sep_cache_busy">分离进行中，无法清理</string>
     <string name="sep_uri_unreadable">无法读取当前曲目（Uri 不可访问）</string>
     <string name="sep_none_title">尚无分离结果</string>

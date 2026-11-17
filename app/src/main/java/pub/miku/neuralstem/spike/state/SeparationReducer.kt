@@ -27,6 +27,7 @@ object SeparationReducer {
             is SeparationEvent.Domain.StemsLoaded -> onStemsLoaded(snapshot, event)
             is SeparationEvent.Domain.StemsLoadFailed -> onStemsLoadFailed(snapshot, event)
             is SeparationEvent.External.TrackChanged -> onTrackChanged(snapshot, event.trackKey)
+            is SeparationEvent.External.PlaybackStemsLoaded -> onPlaybackStemsLoaded(snapshot, event)
             SeparationEvent.External.PlaybackEnded -> onPlaybackEnded(snapshot)
             is SeparationEvent.External.ServiceLost -> onServiceLost(snapshot, event.service)
             SeparationEvent.External.ProcessRestored -> onProcessRestored(snapshot)
@@ -479,6 +480,26 @@ object SeparationReducer {
             }
         }
         return ReduceResult(next, effects)
+    }
+
+    /**
+     * 兼容路径：播放器已直接 loadMultiTrack，但 Domain 没收到 attach。
+     * 只同步 attachment 的“播放事实”，不伪造 job/files 生命周期。
+     */
+    private fun onPlaybackStemsLoaded(
+        s: SeparationSnapshot,
+        e: SeparationEvent.External.PlaybackStemsLoaded,
+    ): ReduceResult {
+        if (s.currentTrackKey == null || s.currentTrackKey != e.trackKey) {
+            return ReduceResult(s)
+        }
+        val attachedJobId = e.jobId ?: s.job?.jobId ?: -1L
+        return ReduceResult(
+            s.copy(
+                attachment = AttachmentState.Loaded(attachedJobId, e.trackKey, e.files),
+                lastError = null,
+            ),
+        )
     }
 
     private fun onPlaybackEnded(s: SeparationSnapshot): ReduceResult {

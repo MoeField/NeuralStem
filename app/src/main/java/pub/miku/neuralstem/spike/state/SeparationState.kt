@@ -229,6 +229,15 @@ sealed interface SeparationEvent {
 
     sealed interface External : SeparationEvent {
         data class TrackChanged(val trackKey: TrackKey) : External
+        /**
+         * 播放器已经直接载入 stem（兼容旧路径/进程恢复）。
+         * Domain 借此把 attachment 同步为 Loaded，避免开关 detach 变成 no-op。
+         */
+        data class PlaybackStemsLoaded(
+            val trackKey: TrackKey,
+            val jobId: Long?,
+            val files: StemFiles,
+        ) : External
         data object PlaybackEnded : External
         data class ServiceLost(val service: ServiceKind) : External
         data object ProcessRestored : External

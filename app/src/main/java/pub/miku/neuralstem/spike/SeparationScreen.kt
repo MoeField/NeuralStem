@@ -702,21 +702,33 @@ fun SeparationScreen(
                 },
                 enabled = exportableFiles != null,
             ) { Text(stringResource(R.string.sep_export)) }
-            Button(onClick = {
-                scope.launch(Dispatchers.IO) {
-                    val n = vm.clearCache()
-                    withContext(Dispatchers.Main) {
-                        cacheMsg = if (n < 0) app.getString(R.string.sep_cache_busy)
-                        else app.getString(R.string.sep_cache_cleared, n)
+            Button(
+                onClick = {
+                    scope.launch(Dispatchers.IO) {
+                        val n = vm.clearCache()
+                        withContext(Dispatchers.Main) {
+                            cacheMsg = if (n < 0) app.getString(R.string.sep_cache_busy)
+                            else app.getString(R.string.sep_cache_cleared, n)
+                        }
                     }
-                }
-            }) { Text(stringResource(R.string.sep_clear_cache)) }
+                },
+                // 多轨播放时正在读 stem WAV；先关开关再清，避免删掉在用文件。
+                enabled = !separationOn && !busy,
+            ) { Text(stringResource(R.string.sep_clear_cache)) }
         }
         // 清理结果放到按钮下一行：窄屏/横屏双栏时原来会被 Row 压成竖排。
         cacheMsg?.let {
             Text(
                 it,
                 style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        if (separationOn && cacheMsg == null) {
+            Text(
+                stringResource(R.string.sep_cache_disable_in_multitrack),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.fillMaxWidth(),
             )
         }

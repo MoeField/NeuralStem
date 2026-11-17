@@ -117,6 +117,44 @@ class SeparationDomain private constructor(private val app: Application) {
         controller.attach(jobId)
     }
 
+    /** 当前 snapshot 是否真的具备可 attach 的终态结果。 */
+    fun canAttach(jobId: Long? = null): Boolean {
+        val s = controller.snapshot.value
+        val job = s.job ?: return false
+        if (!job.isTerminal) return false
+        if (job.lifecycle is Lifecycle.Failed) return false
+        if (job.operation is Operation.LoadingStems) return false
+        if (jobId != null && jobId != job.jobId) return false
+        if (s.currentTrackKey == null || s.currentTrackKey != job.trackKey) return false
+        if (job.files == null) return false
+        val loaded = s.attachment as? AttachmentState.Loaded
+        if (loaded != null && loaded.jobId == job.jobId) return false
+        return true
+    }
+
+    /** 返回 false = snapshot 里没有可 attach 的结果，宿主可走兼容旧路径。 */
+    fun tryAttach(jobId: Long? = null): Boolean {
+        if (!canAttach(jobId)) return false
+        return controller.attach(jobId)
+    }
+
+    /**
+     * 兼容旧直接 loadMultiTrack 路径：把“播放器已经载入 stems”的事实同步回 Domain。
+     * 正常路径应优先 tryAttach，不应依赖此方法。
+     */
+    fun onExternalPlaybackStemsLoaded(files: List<File>) {
+        if (files.isEmpty()) return
+        val trackKey = controller.snapshot.value.currentTrackKey ?: return
+        val jobId = controller.snapshot.value.job?.jobId
+        controller.send(
+            SeparationEvent.External.PlaybackStemsLoaded(
+                trackKey = trackKey,
+                jobId = jobId,
+                files = StemFiles(files.map { it.absolutePath }),
+            ),
+        )
+    }
+
     fun detach() {
         controller.detach()
     }
