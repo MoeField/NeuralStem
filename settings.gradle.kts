@@ -22,6 +22,9 @@ dependencyResolutionManagement {
         google()
         mavenCentral()
         maven("https://maven.aliyun.com/repository/google")
+        // F-Droid 可信 Maven 来源（sherpa-onnx 通过 JitPack 发布 AAR）。
+        // 固定 tag v1.13.8；不要用 -SNAPSHOT/master。
+        maven("https://jitpack.io")
     }
 }
 

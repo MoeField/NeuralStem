@@ -1,0 +1,9 @@
+.git
+.gradle
+app/build
+bench/build
+build
+*.iml
+local.properties
+keystore.properties
+*.jks

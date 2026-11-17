@@ -6,9 +6,16 @@ cmake_minimum_required(VERSION 3.22)
 #   加上 CXX 后 AGP 会自动把它放进 APK。
 project(neuralstem_spike LANGUAGES C CXX)
 
-set(SHERPA_LIB_DIR ${CMAKE_SOURCE_DIR}/sherpa-libs/${ANDROID_ABI})
+# JitPack AAR 由 Gradle extractSherpaNativeLibs 解包到 app/build/native-deps/jni/<abi>。
+# 源码仓库不再保存 .so，避免 F-Droid 把 tracked 预编译库视为不可信来源。
+set(NATIVE_DEPS_DIR ${CMAKE_SOURCE_DIR}/../../../build/native-deps/jni/${ANDROID_ABI})
+set(SHERPA_LIB_DIR ${NATIVE_DEPS_DIR})
 
-# sherpa-onnx c-api 预编译库(来自官方 AAR 解包,版本 1.13.8)
+if(NOT EXISTS ${SHERPA_LIB_DIR}/libsherpa-onnx-c-api.so)
+    message(FATAL_ERROR "缺少 ${SHERPA_LIB_DIR}/libsherpa-onnx-c-api.so；先运行 :app:extractSherpaNativeLibs")
+endif()
+
+# sherpa-onnx c-api 预编译库(来自 JitPack AAR 解包,版本 1.13.8)
 add_library(sherpa-onnx-c-api SHARED IMPORTED)
 set_target_properties(sherpa-onnx-c-api PROPERTIES IMPORTED_LOCATION
     ${SHERPA_LIB_DIR}/libsherpa-onnx-c-api.so)
@@ -33,7 +40,7 @@ set_target_properties(neuralstem_spike PROPERTIES LINK_FLAGS "-Wl,--allow-shlib-
 # 链接的是 **sherpa AAR 自带的那份 libonnxruntime.so**（1.28.2）——
 # 这样符号版本与 sherpa 一致，避开 Maven Java 绑定(1.22.0)的 dlopen 冲突。
 # 运行时需先 System.loadLibrary("onnxruntime") 再加载本库。
-set(ORT_LIB_DIR ${CMAKE_SOURCE_DIR}/ort-libs/${ANDROID_ABI})
+set(ORT_LIB_DIR ${NATIVE_DEPS_DIR})
 
 if(EXISTS ${ORT_LIB_DIR}/libonnxruntime.so)
     add_library(onnxruntime SHARED IMPORTED)
@@ -46,7 +53,7 @@ if(EXISTS ${ORT_LIB_DIR}/libonnxruntime.so)
     target_link_libraries(neuralstem_ort onnxruntime log)
     target_compile_options(neuralstem_ort PRIVATE -O2)
 else()
-    message(WARNING "ort-libs/${ANDROID_ABI}/libonnxruntime.so 不存在，跳过 neuralstem_ort 目标")
+    message(WARNING "build/native-deps/jni/${ANDROID_ABI}/libonnxruntime.so 不存在，跳过 neuralstem_ort 目标")
 endif()
 
 # ============================================================================

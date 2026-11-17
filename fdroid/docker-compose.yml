@@ -1,0 +1,35 @@
+# Debian (F-Droid buildserver 基线) 上的 Android 构建复核环境。
+#
+#   cd fdroid
+#   docker compose run --rm builder          # setup SDK + assembleRelease
+#   docker compose run --rm builder bash     # 交互排查
+#
+# 如果 Docker Desktop 无法 bind mount 当前外置卷（/Volumes/...），
+# 先把源码 rsync 到用户目录，再：
+#   SRC_DIR=/Users/you/NeuralStem-docker docker compose run --rm builder
+#
+# 首次 setup-sdk 会下载 SDK 37/build-tools/NDK/CMake，放在命名卷 android-sdk；
+# 之后复用。Gradle 缓存放 gradle-cache。源码目录挂载为 /workspace。
+services:
+  builder:
+    platform: linux/amd64
+    build:
+      context: .
+      dockerfile: Dockerfile
+    working_dir: /workspace
+    environment:
+      ANDROID_HOME: /opt/android-sdk
+      ANDROID_SDK_ROOT: /opt/android-sdk
+      JAVA_HOME: /usr/lib/jvm/java-21-openjdk-amd64
+      GRADLE_USER_HOME: /root/.gradle
+    volumes:
+      - ${SRC_DIR:-..}:/workspace
+      - android-sdk:/opt/android-sdk
+      - gradle-cache:/root/.gradle
+      - fdroid-work:/workspace/fdroid/work
+    command: ["bash", "-lc", "/usr/local/bin/setup-sdk && ./gradlew :app:assembleRelease"]
+
+volumes:
+  android-sdk:
+  gradle-cache:
+  fdroid-work:

@@ -6,6 +6,35 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+// ==================== ★JitPack sherpa-onnx（F-Droid 可信 Maven） ====================
+//
+// 旧 app/libs/sherpa-onnx-1.13.8.aar 是 GitHub release 的 tracked 预编译 AAR，
+// F-Droid 官方审核会要求可信 Maven 来源。JitPack 同一 tag 的 AAR 与旧文件 SHA-256
+// 完全一致（633c2432…d13bd96），因此改用 JitPack 依赖；native .so 在构建时解包，
+// 不再进入源码仓库。
+//
+// 任务必须在 android {} 之外注册；用 preBuild 依赖保证 CMake configure 前已解包。
+val SHERPA_ONNX_VERSION = "v1.13.8"
+
+val sherpaNative by configurations.creating {
+    isCanBeConsumed = false
+    isCanBeResolved = true
+    isTransitive = false
+}
+
+dependencies {
+    sherpaNative("com.github.k2-fsa.sherpa-onnx:sherpa-onnx:$SHERPA_ONNX_VERSION@aar")
+}
+
+// 用 Copy 任务 + zipTree，而不是 doLast 里捕获 Configuration/脚本对象：
+// 后者会和 gradle.properties 的 configuration-cache=true 冲突。
+val extractSherpaNativeLibs = tasks.register<Copy>("extractSherpaNativeLibs") {
+    from(zipTree(sherpaNative.singleFile)) { include("jni/**") }
+    into(layout.buildDirectory.dir("native-deps"))
+}
+
+tasks.named("preBuild").configure { dependsOn(extractSherpaNativeLibs) }
+
 // ==================== ★签名配置（2026-10-20） ====================
 //
 // ## 为何需要
@@ -276,9 +305,11 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.ktx)
 
     // --- Task 0b Spike: sherpa-onnx ONNX 音轨分离(选型切换理由见 docs/STEP_HISTORY.md §5) ---
-    // sherpa-onnx 未发布到 Maven Central;官方用法是直接引用 release 里的 AAR(已下载到 app/libs/,
-    // 含 onnxruntime + c-api/cxx-api/jni 的 .so,覆盖 arm64-v8a/armeabi-v7a/x86/x86_64)
-    implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar", "*.jar"))))
+    // AAR 来自 JitPack（F-Droid 可信 Maven 来源），固定 tag v1.13.8。
+    // 旧 app/libs AAR 已删除；transitive 关闭，避免拉入桌面 native-lib artifacts。
+    implementation("com.github.k2-fsa.sherpa-onnx:sherpa-onnx:$SHERPA_ONNX_VERSION") {
+        isTransitive = false
+    }
     // TFLite 回退路线已废弃(Task 0g 后归档):其 so 仅 4KB 对齐,不兼容 Android 15+ 的
     // 16KB 页设备;sherpa-onnx 路线实测全胜(18–25× 实时)。代码存档在
     // app/src/deprecated/(不参与编译),恢复方法见该目录 README.md
