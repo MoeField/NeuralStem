@@ -3,6 +3,7 @@ import java.util.Properties
 
 plugins {
     alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
 }
 
@@ -77,9 +78,8 @@ val hasReleaseSigning = listOf(
 
 android {
     namespace = "pub.miku.neuralstem"
-    compileSdk {
-        version = release(37)
-    }
+    // F-Droid 降级 spike：AGP 8.13 最高支持 API 36.1。
+    compileSdk = 36
 
     signingConfigs {
         if (hasReleaseSigning) {
@@ -98,7 +98,7 @@ android {
     defaultConfig {
         applicationId = "pub.miku.neuralstem"
         minSdk = 23
-        targetSdk = 37
+        targetSdk = 36
         // ★版本号（2026-10-20 修正）：之前停在 10 / 0.1.0-alpha，但已发到 v0.2.1。
         //   versionCode 必须**严格递增**，否则 F-Droid/Obtainium 看不到更新。
         //   当前规则：semver 的 minor*10 + patch = 41（0.2.21 → 41）。
@@ -119,13 +119,13 @@ android {
 
     buildTypes {
         release {
-            optimization {
-                enable = true
-                keepRules {
-                    includeDefault = true
-                    files.add(file("proguard-rules.pro"))
-                }
-            }
+            // AGP 8 DSL（AGP 9 的 optimization {} 块不存在）
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                file("proguard-rules.pro"),
+            )
             /**
              * 有正式密钥 → 用正式签名（可跨机覆盖安装、可自动更新）。
              * 无 → 回退 debug（保证 CI/本地不挂；产物不能用于发布）。
@@ -151,6 +151,12 @@ android {
      * `isUniversalApk = true` → 额外产一个合包，保证**本地开发仍能一包直装**
      * （`app-universal-debug.apk`），不影响现有 adb 调试流程。
      */
+    // F-Droid 会拒绝带 Google DependencyInfoBlock 的 APK。
+    dependenciesInfo {
+        includeInApk = false
+        includeInBundle = false
+    }
+
     splits {
         abi {
             isEnable = true
@@ -160,8 +166,12 @@ android {
         }
     }
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+    // AGP 8 + Kotlin Android plugin: align Kotlin JVM target with Java.
+    kotlinOptions {
+        jvmTarget = "17"
     }
     buildFeatures {
         compose = true

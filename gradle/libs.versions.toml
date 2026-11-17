@@ -1,18 +1,18 @@
 [versions]
-agp = "9.5.0"
-coreKtx = "1.19.0"
+agp = "8.13.0"
+coreKtx = "1.16.0"
 documentFile = "1.0.1"
 junit = "4.13.2"
 junitVersion = "1.3.0"
 espressoCore = "3.7.0"
-lifecycleRuntimeKtx = "2.11.0"
-activityCompose = "1.13.0"
+lifecycleRuntimeKtx = "2.9.4"
+activityCompose = "1.10.1"
 kotlin = "2.2.10"
-composeBom = "2026.02.01"
+composeBom = "2025.09.00"
 tensorflowLite = "2.17.0"
 tensorflowLiteSelectTfOps = "2.16.1"
-coroutinesAndroid = "1.11.0"
-lifecycleViewmodelCompose = "2.11.0"
+coroutinesAndroid = "1.10.2"
+lifecycleViewmodelCompose = "2.9.4"
 media3 = "1.11.1"
 # M4/S2: Demucs 4-stem 走自建 ORT 管线（sherpa 不支持 4-stem）
 onnxruntimeAndroid = "1.22.0"
@@ -54,4 +54,5 @@ onnxruntime-android-qnn = { group = "com.microsoft.onnxruntime", name = "onnxrun
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 
