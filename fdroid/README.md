@@ -43,20 +43,30 @@ FDROID_BIN=/tmp/fdroidvenv/bin/fdroid \
 
 ## 发布
 
-把 `fdroid/local/repo/` 内容放到静态 HTTPS 托管，例如
-GitHub Pages 的 `gh-pages` 分支下的 `fdroid/repo/`。
-
-仓库 URL（示例）：
+已发布到本仓库的 `gh-pages` 分支：
 
 ```text
 https://moefield.github.io/NeuralStem/fdroid/repo/
 ```
+
+首次发布后，需要仓库管理员在 GitHub：
+
+```text
+Settings → Pages → Build and deployment
+Source: Deploy from a branch
+Branch: gh-pages  /  (root)
+```
+
+启用后上面的 URL 才可访问。`gh-pages` 根目录已加 `.nojekyll`。
 
 用户流程：
 
 1. 安装 F-Droid 客户端
 2. 设置 → 仓库 → 添加上述 URL
 3. 刷新后从自建源安装/更新
+
+注意：不要使用 `raw.githubusercontent.com` 作为仓库 URL；
+index 里的 APK 地址按 Pages 地址生成。
 
 ## 安全
 
