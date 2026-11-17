@@ -118,6 +118,14 @@
 - JVM **433/0**（M1 reducer 52 + M2 controller 7 + 原有 374）；
   真机 edge fast path、4-stem cache/启动、开关 off/on 通过。
 
+## v0.2.22：缓存提示布局 + F-Droid 自建源
+
+- 分离页「清理缓存」结果提示移到按钮下一行，横屏/窄屏不再被压成竖排。
+- 包名/版本规则：`0.2.22 (42)`。
+- F-Droid 自建源正式地址：`https://neuralstem.miku.pub/fdroid/repo/`。
+- repo 分类改为 `Local Media Player`；保留原包名与 release 签名。
+- JVM **467/0**；无新增业务逻辑。
+
 ## v0.2.21：PCM 缓存设置页
 
 - 设置页新增「PCM 缓存」：占用、文件数、12GB 上限、清理未使用。
