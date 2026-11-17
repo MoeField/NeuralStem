@@ -13,11 +13,10 @@ if [ ! -d "$LOCAL/repo" ]; then
   exit 1
 fi
 
-git -C "$ROOT" worktree add --detach "$TMP" >/dev/null
-git -C "$TMP" checkout gh-pages >/dev/null 2>&1 || {
-  echo "没有 gh-pages 分支；先创建并推送一次" >&2
-  exit 1
-}
+# 始终基于远端最新 gh-pages，避免本地分支落后导致 non-fast-forward；
+# CNAME/.nojekyll 等文件会被保留。
+git -C "$ROOT" fetch origin gh-pages >/dev/null
+git -C "$ROOT" worktree add --detach "$TMP" origin/gh-pages >/dev/null
 
 rm -rf "$TMP/fdroid/repo"
 mkdir -p "$TMP/fdroid/repo"
@@ -30,5 +29,5 @@ if git -C "$TMP" diff --cached --quiet; then
 fi
 git -C "$TMP" -c user.name='MoeField' -c user.email='moe@example.invalid' \
   commit -m "publish: NeuralStem F-Droid repo"
-git -C "$TMP" push origin gh-pages
+git -C "$TMP" push origin HEAD:gh-pages
 echo "published gh-pages"
