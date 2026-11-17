@@ -118,6 +118,14 @@
 - JVM **433/0**（M1 reducer 52 + M2 controller 7 + 原有 374）；
   真机 edge fast path、4-stem cache/启动、开关 off/on 通过。
 
+## v0.2.24：多轨/缓存状态收口
+
+- 2/4 轨结果播放优先走 `SeparationDomain.tryAttach`；兼容旧直接载入路径会同步 attachment。
+- 清缓存按钮在多轨播放/分离中禁用，避免删除正在读取的 stem。
+- stem 波形增加 session token；旧的 2 轨/旧会话回调不能覆盖新 4 轨。
+- Reducer 增加 external PlaybackStemsLoaded / clear cache guard 测试。
+- JVM **470/0**。
+
 ## v0.2.23：2→4 轨波形/开关修复
 
 - 修复 2 轨 edge 实时包络采集器把 4 轨 `stemWaveforms` 覆盖成 2 项的问题。
