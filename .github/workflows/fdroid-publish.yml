@@ -1,0 +1,167 @@
+name: Publish F-Droid repo
+
+# 发布 GitHub Release 后，自动用 release 里的 arm64 APK 更新自建 F-Droid 源。
+#
+# 需要的 Repository Secrets：
+#   FDROID_KEYSTORE_BASE64   repo 签名 keystore（fdroid/local/keystore.p12）的 base64
+#   FDROID_KEYSTORE_PASSWORD repo keystore 密码
+#   FDROID_KEY_ALIAS         repo key alias（fdroid/local/config.yml 的 repo_keyalias）
+#   FDROID_KEY_PASSWORD      repo key 密码；省略时回退到 FDROID_KEYSTORE_PASSWORD
+#
+# 没有 secret 时会在第一步直接失败，不会生成/替换签名 key。
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "要发布的 release tag，例如 v0.2.28"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fdroid-repo-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      FDROID_KEYSTORE_BASE64: ${{ secrets.FDROID_KEYSTORE_BASE64 }}
+      FDROID_KEYSTORE_PASSWORD: ${{ secrets.FDROID_KEYSTORE_PASSWORD }}
+      FDROID_KEY_ALIAS: ${{ secrets.FDROID_KEY_ALIAS }}
+      FDROID_KEY_PASSWORD: ${{ secrets.FDROID_KEY_PASSWORD }}
+
+    steps:
+      - name: Validate tag/secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${TAG:-}" || { echo "::error::TAG 为空"; exit 1; }
+          [[ "$TAG" == v* ]] || { echo "::error::tag 必须以 v 开头：$TAG"; exit 1; }
+          test -n "${FDROID_KEYSTORE_BASE64:-}" || { echo "::error::缺少 Secret FDROID_KEYSTORE_BASE64"; exit 1; }
+          test -n "${FDROID_KEYSTORE_PASSWORD:-}" || { echo "::error::缺少 Secret FDROID_KEYSTORE_PASSWORD"; exit 1; }
+          test -n "${FDROID_KEY_ALIAS:-}" || { echo "::error::缺少 Secret FDROID_KEY_ALIAS"; exit 1; }
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download release APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/apk"
+          # release 创建和 asset 上传有短暂窗口；最多等 2 分钟。
+          for i in $(seq 1 24); do
+            if gh release download "$TAG" \
+                --pattern "app-arm64-v8a-release.apk" \
+                --dir "$RUNNER_TEMP/apk" --clobber; then
+              break
+            fi
+            echo "release asset 尚未可用，等待重试 ($i/24)"
+            sleep 5
+          done
+          test -f "$RUNNER_TEMP/apk/app-arm64-v8a-release.apk"
+          ls -lh "$RUNNER_TEMP/apk/app-arm64-v8a-release.apk"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install fdroidserver + build-tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install "fdroidserver==2.4.5"
+          sdkmanager "build-tools;35.0.0" >/dev/null
+          echo "$ANDROID_HOME/build-tools/35.0.0" >> "$GITHUB_PATH"
+          test -x "$ANDROID_HOME/build-tools/35.0.0/aapt"
+
+      - name: Restore repo signing key + config
+        shell: bash
+        run: |
+          set -euo pipefail
+          KEYSTORE="$RUNNER_TEMP/fdroid-keystore.p12"
+          echo "$FDROID_KEYSTORE_BASE64" | base64 -d > "$KEYSTORE"
+          chmod 600 "$KEYSTORE"
+          mkdir -p "$RUNNER_TEMP/fdroid-work/repo" "$RUNNER_TEMP/fdroid-work/metadata"
+          python3 - "$KEYSTORE" "$RUNNER_TEMP/fdroid-work/config.yml" <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          keystore, config = sys.argv[1], sys.argv[2]
+          key_password = os.environ.get("FDROID_KEY_PASSWORD") or os.environ["FDROID_KEYSTORE_PASSWORD"]
+          fields = {
+              "sdk_path": os.environ["ANDROID_HOME"],
+              "repo_url": "https://neuralstem.miku.pub/fdroid/repo",
+              "repo_name": "NeuralStem",
+              "repo_description": "NeuralStem 自建源：离线分轨、播放与导出",
+              "repo_keyalias": os.environ["FDROID_KEY_ALIAS"],
+              "keystore": keystore,
+              "keystorepass": os.environ["FDROID_KEYSTORE_PASSWORD"],
+              "keypass": key_password,
+              "keydname": "CN=neuralstem-repo, OU=F-Droid",
+          }
+          # JSON 字符串是合法 YAML 标量，同时避免密码里的 :/# 等字符破坏 YAML。
+          Path(config).write_text(
+              "\n".join(f"{k}: {json.dumps(v)}" for k, v in fields.items()) + "\n"
+          )
+          PY
+
+      - name: Prepare repo from latest gh-pages
+        shell: bash
+        run: |
+          set -euo pipefail
+          PAGES="$RUNNER_TEMP/fdroid-pages"
+          WORK="$RUNNER_TEMP/fdroid-work"
+          git fetch origin gh-pages
+          git worktree add --detach "$PAGES" origin/gh-pages
+          # 保留已有图标/index；只替换 APK，避免同版本重复。
+          cp -a "$PAGES/fdroid/repo/." "$WORK/repo/"
+          find "$WORK/repo" -maxdepth 1 -name 'pub.miku.neuralstem_*.apk' -delete
+          cp "$RUNNER_TEMP/apk/app-arm64-v8a-release.apk" "$WORK/repo/"
+          cp fdroid/metadata/*.yml "$WORK/metadata/"
+          ls -lh "$WORK/repo" | head
+
+      - name: Generate signed index
+        shell: bash
+        working-directory: ${{ runner.temp }}/fdroid-work
+        run: |
+          set -euo pipefail
+          fdroid update --create-metadata --rename-apks
+
+      - name: Publish gh-pages
+        shell: bash
+        run: |
+          set -euo pipefail
+          PAGES="$RUNNER_TEMP/fdroid-pages"
+          WORK="$RUNNER_TEMP/fdroid-work"
+          rm -rf "$PAGES/fdroid/repo"
+          mkdir -p "$PAGES/fdroid/repo"
+          cp -a "$WORK/repo/." "$PAGES/fdroid/repo/"
+          cd "$PAGES"
+          git config user.name "NeuralStem F-Droid Bot"
+          git config user.email "fdroid-bot@users.noreply.github.com"
+          git add fdroid/repo
+          if git diff --cached --quiet; then
+            echo "repo 无变化，跳过提交"
+            exit 0
+          fi
+          git commit -m "publish: NeuralStem F-Droid repo $TAG"
+          git push origin HEAD:gh-pages
+          echo "published: $TAG"

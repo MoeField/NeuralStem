@@ -95,3 +95,75 @@ Branch: gh-pages / (root)
 - repo signing key 与 App release key 是两把不同密钥。
 - repo key 丢失后无法继续给老用户签同一个源；必须备份。
 - 自建源没有官方审核，模型/第三方许可责任仍在发布者。
+
+---
+
+## 自动发布（GitHub Actions）
+
+workflow 文件：
+
+```text
+.github/workflows/fdroid-publish.yml
+```
+
+触发方式：
+
+- GitHub Release **published** 后自动执行
+- 或在 Actions 页面手动 `Run workflow`，输入 `v0.2.28` 这类 tag
+
+流程：
+
+```text
+release asset: app-arm64-v8a-release.apk
+  → 从 gh-pages 取当前 repo
+  → 删除旧 NeuralStem APK
+  → fdroid update（用 repo signing key 签 index）
+  → 把 fdroid/repo/ 推回 gh-pages
+```
+
+不会生成新 key；没有 secret 时直接失败，不会污染现有源。
+
+### 第一次配置 Secrets
+
+在仓库：
+
+```text
+Settings → Secrets and variables → Actions → Repository secrets
+```
+
+添加：
+
+| Secret | 内容 |
+|---|---|
+| `FDROID_KEYSTORE_BASE64` | `fdroid/local/keystore.p12` 的 base64，单行 |
+| `FDROID_KEYSTORE_PASSWORD` | repo keystore 密码（`keystorepass`） |
+| `FDROID_KEY_ALIAS` | `fdroid/local/config.yml` 里的 `repo_keyalias` |
+| `FDROID_KEY_PASSWORD` | repo key 密码（`keypass`）；与上面相同可省略 |
+
+生成 base64：
+
+```bash
+base64 < fdroid/local/keystore.p12 | tr -d '\n'
+```
+
+不要把 keystore、密码、base64 贴到 issue/聊天/仓库。
+
+### 验证 workflow
+
+加完 secrets 后：
+
+1. Actions → `Publish F-Droid repo` → `Run workflow`
+2. 输入已有 release tag，例如 `v0.2.28`
+3. 成功后检查：
+
+```text
+https://neuralstem.miku.pub/fdroid/repo/index-v2.json
+```
+
+里面的 versionCode 应与该 release 一致。
+
+### 注意
+
+- `gh-pages` 的 `CNAME` / `.nojekyll` 不会被覆盖；workflow 只替换 `fdroid/repo/`。
+- 自动源只保留最新 APK；旧版本从 index 中移除，但已安装用户仍能正常升级。
+- repo signing key 丢失会导致老用户无法继续从同一源更新；请继续备份 `fdroid/local/keystore.p12` 和 `config.yml`。
