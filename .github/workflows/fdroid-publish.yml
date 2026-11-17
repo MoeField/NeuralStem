@@ -102,8 +102,20 @@ jobs:
         run: |
           set -euo pipefail
           KEYSTORE="$RUNNER_TEMP/fdroid-keystore.p12"
-          echo "$FDROID_KEYSTORE_BASE64" | base64 -d > "$KEYSTORE"
+          # secret 在复制/粘贴时可能带 CRLF 或空格；base64 解码前去掉。
+          if ! printf '%s' "$FDROID_KEYSTORE_BASE64" | tr -d ' \r\n\t' | base64 -d > "$KEYSTORE"; then
+            echo "::error::FDROID_KEYSTORE_BASE64 不是合法 base64（请填 keystore.p12 的 base64，不要填文件路径/密码）"
+            exit 1
+          fi
+          test -s "$KEYSTORE" || { echo "::error::keystore 解码结果为空"; exit 1; }
           chmod 600 "$KEYSTORE"
+          echo "keystore decoded: $(wc -c < "$KEYSTORE") bytes"
+          # 提前验证密码和 alias，避免直到 fdroid update 才报模糊错误。
+          if ! keytool -list -keystore "$KEYSTORE" -storetype PKCS12 \
+              -storepass:env FDROID_KEYSTORE_PASSWORD -alias "$FDROID_KEY_ALIAS" >/dev/null; then
+            echo "::error::keystore 密码或 FDROID_KEY_ALIAS 不正确"
+            exit 1
+          fi
           mkdir -p "$RUNNER_TEMP/fdroid-work/repo" "$RUNNER_TEMP/fdroid-work/metadata"
           python3 - "$KEYSTORE" "$RUNNER_TEMP/fdroid-work/config.yml" <<'PY'
           import json
