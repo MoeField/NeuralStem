@@ -108,8 +108,14 @@ jobs:
         run: |
           set -euo pipefail
           KEYSTORE="$RUNNER_TEMP/fdroid-keystore.p12"
-          # secret 在复制/粘贴时可能带 CRLF 或空格；base64 解码前去掉。
-          if ! printf '%s' "$FDROID_KEYSTORE_BASE64" | tr -d ' \r\n\t' | base64 -d > "$KEYSTORE"; then
+          # secret 在复制/粘贴时可能带 CRLF/空格/URL-safe 字符或丢掉 padding。
+          B64=$(printf '%s' "$FDROID_KEYSTORE_BASE64" | tr -d ' \r\n\t' | tr '_-' '/+')
+          case $(( ${#B64} % 4 )) in
+            2) B64="${B64}==" ;;
+            3) B64="${B64}=" ;;
+          esac
+          echo "base64 chars: ${#B64}"
+          if ! printf '%s' "$B64" | base64 -d > "$KEYSTORE"; then
             echo "::error::FDROID_KEYSTORE_BASE64 不是合法 base64（请填 keystore.p12 的 base64，不要填文件路径/密码）"
             exit 1
           fi
