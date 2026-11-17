@@ -118,6 +118,12 @@
 - JVM **433/0**（M1 reducer 52 + M2 controller 7 + 原有 374）；
   真机 edge fast path、4-stem cache/启动、开关 off/on 通过。
 
+## v0.2.26：补前段进度显示
+
+- 快速模式阶段 2（补前段）时，分离页 RUNNING 分支仍显示阶段 1 覆盖率（如 15%），看起来进度卡死。
+- RUNNING 且 `backfillPercent != null` 时改用补前段进度条和「已可完整播放 · 正在补前段 X%」文案。
+- 播放器/波形继续正常更新；JVM **470/0**。
+
 ## v0.2.25：快速模式补前段波形
 
 - 修复 edge/快速模式阶段 2（补前段缺口）漏传 `onEnvelope`：音频/manifest 已补齐，但外环前段包络一直为 0。

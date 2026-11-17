@@ -184,7 +184,9 @@ fun SeparationScreen(
         SeparationUi.Phase.DECODING ->
             if (backfillPercent != null) "backfilling($backfillPercent%)" else "decoding"
         SeparationUi.Phase.RUNNING ->
-            if (edgePercent != null) {
+            if (backfillPercent != null) {
+                "playable·backfilling($backfillPercent%)"
+            } else if (edgePercent != null) {
                 (if (separationOn) "playable" else "waiting") + "·separating(${domainUi?.percent ?: 0}%)"
             } else {
                 "separating(${domainUi?.percent ?: 0}%)"
@@ -612,28 +614,41 @@ fun SeparationScreen(
             }
             SeparationUi.Phase.RUNNING -> {
                 val percent = domainUi?.percent ?: 0
-                LinearProgressIndicator(
-                    progress = { percent / 100f },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                if (edgePercent != null) {
+                if (backfillPercent != null) {
+                    // ★快速模式阶段 2：前半段覆盖率（例如 15%）已经固定，
+                    //   继续显示它会让进度看起来卡死；改用 backfill 进度。
+                    LinearProgressIndicator(
+                        progress = { backfillPercent / 100f },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                     Text(
-                        stringResource(
-                            if (separationOn) R.string.sep_running_playable
-                            else R.string.sep_running_waiting,
-                            percent,
-                        ),
+                        stringResource(R.string.sep_backfilling, backfillPercent),
                         color = MaterialTheme.colorScheme.primary,
                     )
-                    if (edgeStarved) {
-                        Text(
-                            stringResource(R.string.sep_edge_starved_paused, percent),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error,
-                        )
-                    }
                 } else {
-                    Text(stringResource(R.string.sep_running_pct, percent))
+                    LinearProgressIndicator(
+                        progress = { percent / 100f },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    if (edgePercent != null) {
+                        Text(
+                            stringResource(
+                                if (separationOn) R.string.sep_running_playable
+                                else R.string.sep_running_waiting,
+                                percent,
+                            ),
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                        if (edgeStarved) {
+                            Text(
+                                stringResource(R.string.sep_edge_starved_paused, percent),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                    } else {
+                        Text(stringResource(R.string.sep_running_pct, percent))
+                    }
                 }
             }
             SeparationUi.Phase.DONE -> {
