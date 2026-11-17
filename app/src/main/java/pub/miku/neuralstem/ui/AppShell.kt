@@ -230,7 +230,15 @@ fun AppShell(
                 false
             }
         } else {
+            // Domain 的 attachment 可能为空：2/4 轨结果播放有直接
+            // PlayerViewModel.loadMultiTrack 的路径，没有经过 Domain.attach。
+            // 这时 separationDomain.detach() 是 no-op，旧实现会让开关停在“开”。
             separationDomain.detach()
+            if (playerVm.state.value.isMultiTrack) {
+                Log.i("AppShell", "domain detach 无播放器 attachment，兜底退出多轨")
+                playerVm.toggleSeparation(false)
+                playerVm.play()
+            }
             true
         }
     }
