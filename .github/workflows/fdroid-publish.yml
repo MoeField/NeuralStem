@@ -109,7 +109,7 @@ jobs:
           set -euo pipefail
           KEYSTORE="$RUNNER_TEMP/fdroid-keystore.p12"
           # secret 在复制/粘贴时可能带 CRLF/空格/URL-safe 字符或丢掉 padding。
-          B64=$(printf '%s' "$FDROID_KEYSTORE_BASE64" | tr -d ' \r\n\t' | tr '_-' '/+')
+          B64=$(printf '%s' "$FDROID_KEYSTORE_BASE64" | tr -d ' %\r\n\t' | tr '_-' '/+')
           case $(( ${#B64} % 4 )) in
             2) B64="${B64}==" ;;
             3) B64="${B64}=" ;;
