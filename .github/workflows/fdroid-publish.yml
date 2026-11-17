@@ -50,7 +50,7 @@ jobs:
           test -n "${FDROID_KEYSTORE_PASSWORD:-}" || { echo "::error::缺少 Secret FDROID_KEYSTORE_PASSWORD"; exit 1; }
           test -n "${FDROID_KEY_ALIAS:-}" || { echo "::error::缺少 Secret FDROID_KEY_ALIAS"; exit 1; }
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -74,11 +74,9 @@ jobs:
           test -f "$RUNNER_TEMP/apk/app-arm64-v8a-release.apk"
           ls -lh "$RUNNER_TEMP/apk/app-arm64-v8a-release.apk"
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
-
-      - uses: android-actions/setup-android@v3
 
       - name: Install fdroidserver + build-tools
         shell: bash
@@ -86,9 +84,18 @@ jobs:
           set -euo pipefail
           python -m pip install --upgrade pip
           python -m pip install "fdroidserver==2.4.5"
-          sdkmanager "build-tools;35.0.0" >/dev/null
-          echo "$ANDROID_HOME/build-tools/35.0.0" >> "$GITHUB_PATH"
-          test -x "$ANDROID_HOME/build-tools/35.0.0/aapt"
+          # GitHub hosted runner 自带 Android SDK，和 android-ci.yml 用同一路径；
+          # 不再依赖 android-actions/setup-android（Node 20 action 已失效）。
+          SDKM=$(ls "$ANDROID_SDK_ROOT"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | head -1)
+          test -n "$SDKM" || { echo "::error::找不到 sdkmanager"; exit 1; }
+          "$SDKM" --version
+          if [ ! -x "$ANDROID_SDK_ROOT/build-tools/35.0.0/aapt" ]; then
+            yes | "$SDKM" --licenses >/dev/null 2>&1 || true
+            "$SDKM" "build-tools;35.0.0" >/dev/null
+          fi
+          AAPT_DIR=$(find "$ANDROID_SDK_ROOT/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
+          test -x "$AAPT_DIR/aapt"
+          echo "$AAPT_DIR" >> "$GITHUB_PATH"
 
       - name: Restore repo signing key + config
         shell: bash
