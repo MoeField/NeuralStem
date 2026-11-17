@@ -222,7 +222,7 @@ android {
     }
 
     // Task 0b Spike: JNI 胶水层(sherpa-onnx C API → Kotlin)
-    // 本机已装 NDK 30.0.16248370(SA500 盘),AGP 首选 28.2 未安装,显式指定现有版本
+    // 本机已装 NDK 30.0.16248370；AGP 首选 28.2 未安装，显式指定现有版本
     ndkVersion = "30.0.16248370"
     externalNativeBuild {
         cmake {

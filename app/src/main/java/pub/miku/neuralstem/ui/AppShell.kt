@@ -196,7 +196,6 @@ fun AppShell(
                     )
                 }
                 playerVm.loadMultiTrack(stems, startPositionMs = playerVm.progress.positionMs)
-                playerVm.markStemsAvailable()
                 playerVm.play()
                 return true
             }
@@ -380,7 +379,6 @@ fun AppShell(
                     ),
                     startPositionMs = posMs,
                 )
-                playerVm.markStemsAvailable()
                 playerVm.play()
             } else {
                 // 回退路径（旧 ring buffer 模式）：保持原有行为。
@@ -542,7 +540,6 @@ fun AppShell(
                                     Triple("accompaniment", "伴奏", done.accompanimentFile),
                                 ),
                             )
-                            playerVm.markStemsAvailable()
                             playerVm.play()
                             separationDomain.onExternalPlaybackStemsLoaded(files)
                         }
@@ -572,7 +569,6 @@ fun AppShell(
                                     Triple(kind, stemLabel(kind), f)
                                 },
                             )
-                            playerVm.markStemsAvailable()
                             playerVm.play()
                             separationDomain.onExternalPlaybackStemsLoaded(files)
                         }
@@ -777,15 +773,6 @@ private fun edgePercentOf(snapshot: pub.miku.neuralstem.spike.state.SeparationSn
     val total = job.coverage.totalFrames
     if (total <= 0L) return null
     return ((job.coverage.coveredFrames.coerceIn(0L, total) * 100L) / total).toInt()
-}
-
-private fun pendingBackfillMsOf(
-    snapshot: pub.miku.neuralstem.spike.state.SeparationSnapshot,
-): Long {
-    val job = snapshot.job ?: return 0L
-    val total = job.coverage.totalFrames
-    if (total <= 0L) return 0L
-    return job.coverage.frontGapFrames * 1000L / 44_100L
 }
 
 private fun stemLabel(kind: String): String = when (kind) {

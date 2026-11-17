@@ -1944,10 +1944,6 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         stemWaveformJobs = jobs
     }
 
-    /** ★U3：标记“已有可用分离结果”（宿主传入分离产物后调用）。 */
-    fun markStemsAvailable() {
-    }
-
     /**
      * ★U3/★R-b：切换“分离开关”。
      * - on=true：若已有分离结果（[lastStems]）→ **`loadMultiTrack` 恢复多轨**
