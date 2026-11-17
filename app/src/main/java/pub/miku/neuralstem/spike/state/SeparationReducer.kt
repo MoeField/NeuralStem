@@ -250,7 +250,11 @@ object SeparationReducer {
         val job = s.job ?: return ReduceResult(s)
         if (job.jobId != e.jobId) return ReduceResult(s)
         if (job.lifecycle !is Lifecycle.Running) return ReduceResult(s)
-        if (job.operation !is Operation.Separating && job.operation !is Operation.Backfilling) {
+        // ★自动 attach 后 operation 会变成 null（StemsLoaded 清掉 LoadingStems），
+        //   但分离还在继续。旧条件只接受 Separating/Backfilling → 覆盖率被冻结，
+        //   UI 停在 attach 那一刻的 15%/17%。null 也是合法的“运行中已 attach”状态。
+        val op = job.operation
+        if (op != null && op !is Operation.Separating && op !is Operation.Backfilling) {
             return ReduceResult(s)
         }
 

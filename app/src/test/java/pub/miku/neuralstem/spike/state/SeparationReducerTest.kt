@@ -278,6 +278,33 @@ class SeparationReducerTest {
         assertTrue(r.effects.any { it is SeparationEffect.Notify })
     }
 
+    @Test
+    fun coverage_keeps_updating_after_stems_are_attached() {
+        val attached = SeparationSnapshot(
+            currentTrackKey = trackA,
+            job = JobState(
+                jobId = 1L,
+                trackKey = trackA,
+                kind = SeparationKind.EDGE,
+                lifecycle = Lifecycle.Running,
+                operation = null,
+                coverage = Coverage(totalFrames = 1000L, watermarkFrame = 170L),
+                files = vocalsAndAccomp,
+            ),
+            attachment = AttachmentState.Loaded(1L, trackA, vocalsAndAccomp),
+        )
+        val next = Coverage(
+            totalFrames = 1000L,
+            watermarkFrame = 850L,
+            coveredRanges = listOf(170L..999L),
+        )
+        val r = reduce(
+            attached,
+            SeparationEvent.Domain.CoverageUpdated(1L, next, gateReady = true),
+        )
+        assertEquals(next, r.snapshot.job!!.coverage)
+    }
+
     // ---------------- FULL 不自动 attach ----------------
 
     @Test

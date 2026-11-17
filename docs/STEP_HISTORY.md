@@ -118,6 +118,12 @@
 - JVM **433/0**（M1 reducer 52 + M2 controller 7 + 原有 374）；
   真机 edge fast path、4-stem cache/启动、开关 off/on 通过。
 
+## v0.2.27：自动 attach 后覆盖率继续更新
+
+- 修复 edge 自动 attach 后 `job.operation` 变为 null，`onCoverageUpdated` 仍要求 Separating/Backfilling → 覆盖率冻结在 15%/17%。
+- 运行中已 attach（operation=null）也接受 coverage 更新；播放器/波形/分离页进度保持同步。
+- 新增 reducer 回归测试；JVM **471/0**。
+
 ## v0.2.26：补前段进度显示
 
 - 快速模式阶段 2（补前段）时，分离页 RUNNING 分支仍显示阶段 1 覆盖率（如 15%），看起来进度卡死。
