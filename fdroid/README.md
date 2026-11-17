@@ -68,6 +68,22 @@ Branch: gh-pages  /  (root)
 注意：不要使用 `raw.githubusercontent.com` 作为仓库 URL；
 index 里的 APK 地址按 Pages 地址生成。
 
+## 发布到 GitHub Pages
+
+```bash
+FDROID_BIN=/tmp/fdroidvenv/bin/fdroid \
+  ./fdroid/scripts/update-local-repo.sh \
+  app/build/outputs/apk/release/app-arm64-v8a-release.apk
+./fdroid/scripts/publish-gh-pages.sh
+```
+
+首次需要在 GitHub 仓库设置里启用 Pages：
+
+```text
+Settings → Pages → Deploy from a branch
+Branch: gh-pages / (root)
+```
+
 ## 安全
 
 - `fdroid/local/` 已在 `.gitignore` 中。
