@@ -711,9 +711,22 @@ fun SeparationScreen(
                     }
                 }
             }) { Text(stringResource(R.string.sep_clear_cache)) }
-            cacheMsg?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
         }
-        exportMsg?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+        // 清理结果放到按钮下一行：窄屏/横屏双栏时原来会被 Row 压成竖排。
+        cacheMsg?.let {
+            Text(
+                it,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        exportMsg?.let {
+            Text(
+                it,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
     }
 
     // ★⑬：横屏 = 左右两栏（左=body；右=档位）；竖屏 = 单列（body 内含档位）。
