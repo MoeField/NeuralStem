@@ -78,6 +78,12 @@ jobs:
         with:
           python-version: "3.11"
 
+      # keytool（校验 keystore）和 fdroid 索引签名都需要 Java。
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
       - name: Install fdroidserver + build-tools
         shell: bash
         run: |
