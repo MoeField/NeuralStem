@@ -95,4 +95,4 @@ adb logcat -s SepUI EdgeSession SepRepo SepDomain
 - **过渡状态**：v0.2.29 的自建源已用本地脚本更新到 **0.2.29 (49)**；下一次 tag 再验证新的 `workflow_run` 触发器。
 - **P2.2 已修**：清缓存成功后 Domain `job.files/lastFinished` 与 PlayerVM `lastStems/波形` 同步失效，reducer 增加 `StemsCacheCleared` 回归测试；发布 **0.2.30 (50)**。commit `2b577fd`。
 - **自动发布已完整验证**：run `44210175726` 成功，包含 APK 版本/签名校验；F-Droid 源已到 0.2.31。
-- **P2.1 仍未动**：`autoSwitchEnabled` 旧旁路留到下一次。分支清理也留到下一次。
+- **P2.1 验证结论：保留旧 fallback**。v0.2.31 真机正常 edge 路径是 `SepDomain startEngine` + `PlayerVm.loadMultiTrack`，没有旧 fallback 的 `AppShell edge gate=... 文件模式播`。但 fallback 仍覆盖 Domain bridge 尚未设置的竞态、edge 取消/失败回退；删除收益低、风险高，因此**有意保留**，不再当死代码删除。分支清理仍待维护者确认。
