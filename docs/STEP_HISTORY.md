@@ -118,6 +118,12 @@
 - JVM **433/0**（M1 reducer 52 + M2 controller 7 + 原有 374）；
   真机 edge fast path、4-stem cache/启动、开关 off/on 通过。
 
+## v0.2.31：补前段文案也保持总进度
+
+- 补前段期间文案从「正在补前段 X%」改为「总进度 Y% · 补前段 X%」，数字不再从 83% 跳到 0%。
+- 进度条与文案统一使用整体覆盖率；v0.2.29 只修了进度条，文案仍会跳。
+- JVM **472/0**。
+
 ## v0.2.30：清缓存后旧 stem 引用失效
 
 - 清缓存成功后通知 Domain：旧 `job.files` / `lastFinished` 置空；PlayerVM 同步清 `lastStems` 和波形。

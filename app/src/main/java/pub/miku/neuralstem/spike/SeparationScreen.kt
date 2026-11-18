@@ -606,7 +606,11 @@ fun SeparationScreen(
                         modifier = Modifier.fillMaxWidth(),
                     )
                     Text(
-                        stringResource(R.string.sep_backfilling, backfillPercent),
+                        stringResource(
+                            R.string.sep_backfilling,
+                            combinedBackfillPercent(base, backfillPercent),
+                            backfillPercent,
+                        ),
                         color = MaterialTheme.colorScheme.primary,
                     )
                 } else {
@@ -629,7 +633,11 @@ fun SeparationScreen(
                         modifier = Modifier.fillMaxWidth(),
                     )
                     Text(
-                        stringResource(R.string.sep_backfilling, backfillPercent),
+                        stringResource(
+                            R.string.sep_backfilling,
+                            combinedBackfillPercent(percent, backfillPercent),
+                            backfillPercent,
+                        ),
                         color = MaterialTheme.colorScheme.primary,
                     )
                 } else {
@@ -827,8 +835,12 @@ private fun TwoTierButton(tc: TierChoices2, enabled: Boolean, onClick: () -> Uni
  * base = 阶段 1 已经覆盖的百分比；backfill = 剩余缺口里已补的比例。
  * 直接画 backfill 会让进度条从 85% 跳回 0%，看起来像分离重置。
  */
-private fun combinedBackfillProgress(base: Int, backfill: Int): Float {
+private fun combinedBackfillPercent(base: Int, backfill: Int): Int {
     val b = base.coerceIn(0, 100)
     val f = backfill.coerceIn(0, 100)
-    return (b + (100 - b) * (f / 100f)) / 100f
+    return (b + (100 - b) * f / 100).coerceIn(0, 100)
 }
+
+private fun combinedBackfillProgress(base: Int, backfill: Int): Float =
+    combinedBackfillPercent(base, backfill) / 100f
+
