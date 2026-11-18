@@ -86,3 +86,11 @@ adb logcat -s SepUI EdgeSession SepRepo SepDomain
 - JVM：**471/0**
 - F-Droid：`https://neuralstem.miku.pub/fdroid/repo/`
 - 本地 Markdown 链接：0 断链
+
+## 更新（2026-11-18 早间）
+
+- **P1.1 已修**：`fdroid-publish.yml` 现在校验 release tag == APK `versionName`，并校验 APK 签名证书；不匹配直接拒绝发布。commit `7c2e648`。
+- **P1.2 已做第一版修复**：补前段时进度条不再从阶段 1 的覆盖率重置为 0，而是按剩余缺口合成整体覆盖率。commit `0f1fdd4`，发布 **0.2.29 (49)**。
+- **发现并修复自动触发问题**：Android CI 用 `GITHUB_TOKEN` 创建 Release 时不会再次触发 `release: published`；改为监听 Android CI 在 `v*` tag 上成功完成。commit `9efa33b`。
+- **过渡状态**：v0.2.29 的自建源已用本地脚本更新到 **0.2.29 (49)**；下一次 tag 再验证新的 `workflow_run` 触发器。
+- **P2 仍未动**：`autoSwitchEnabled` 旧旁路、清缓存统一走 Domain、分支清理留在下一次。
