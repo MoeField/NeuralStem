@@ -118,6 +118,13 @@
 - JVM **433/0**（M1 reducer 52 + M2 controller 7 + 原有 374）；
   真机 edge fast path、4-stem cache/启动、开关 off/on 通过。
 
+## v0.2.29：补前段进度不再假跳
+
+- 进度条从“阶段 1 覆盖率”切到补前段时，不再重置为 0；改为按剩余缺口合成整体覆盖率。
+- 保留「正在补前段 X%」文字，但进度条不会出现 85% → 0% 的假跳变。
+- F-Droid workflow 增加 release tag/versionName 与 APK 签名证书校验。
+- JVM **471/0**。
+
 ## v0.2.28：前段提示稳定 + 清缓存清完成提示
 
 - 前段缺口提示/「补齐前段」按钮改用 EdgeSeparationSession 的稳定 startFrame，不再因新 job coverage=0 闪一下。

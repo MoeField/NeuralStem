@@ -594,8 +594,10 @@ fun SeparationScreen(
         when (domainPhase) {
             SeparationUi.Phase.PREPARING, SeparationUi.Phase.DECODING -> {
                 if (backfillPercent != null) {
+                    // 补前段不是从 0 重新开始：阶段 1 已覆盖的部分要继续保留。
+                    val base = edgePercent ?: domainUi?.percent ?: 0
                     LinearProgressIndicator(
-                        progress = { backfillPercent / 100f },
+                        progress = { combinedBackfillProgress(base, backfillPercent) },
                         modifier = Modifier.fillMaxWidth(),
                     )
                     Text(
@@ -615,10 +617,10 @@ fun SeparationScreen(
             SeparationUi.Phase.RUNNING -> {
                 val percent = domainUi?.percent ?: 0
                 if (backfillPercent != null) {
-                    // ★快速模式阶段 2：前半段覆盖率（例如 15%）已经固定，
-                    //   继续显示它会让进度看起来卡死；改用 backfill 进度。
+                    // ★快速模式阶段 2：保留阶段 1 已覆盖部分，只把剩余缺口
+                    //   按 backfillPercent 补进去，避免 85% → 0% 的假跳变。
                     LinearProgressIndicator(
-                        progress = { backfillPercent / 100f },
+                        progress = { combinedBackfillProgress(percent, backfillPercent) },
                         modifier = Modifier.fillMaxWidth(),
                     )
                     Text(
@@ -813,3 +815,14 @@ private fun TwoTierButton(tc: TierChoices2, enabled: Boolean, onClick: () -> Uni
     }
 }
 
+/**
+ * 补前段期间的整体覆盖率。
+ *
+ * base = 阶段 1 已经覆盖的百分比；backfill = 剩余缺口里已补的比例。
+ * 直接画 backfill 会让进度条从 85% 跳回 0%，看起来像分离重置。
+ */
+private fun combinedBackfillProgress(base: Int, backfill: Int): Float {
+    val b = base.coerceIn(0, 100)
+    val f = backfill.coerceIn(0, 100)
+    return (b + (100 - b) * (f / 100f)) / 100f
+}
