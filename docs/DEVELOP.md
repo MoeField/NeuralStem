@@ -173,7 +173,9 @@ FDROID_KEY_ALIAS
 FDROID_KEY_PASSWORD（可省略，默认同 keystore 密码）
 ```
 
-不要和 App APK 的 `KEYSTORE_*` secrets 混用。详细恢复/手动流程见
+不要和 App APK 的 `KEYSTORE_*` secrets 混用。workflow 会校验 release tag 与 APK
+`versionName` 一致，并校验 APK 签名证书；release key 轮换时更新
+`EXPECTED_APK_CERT_SHA256` Repository variable。详细恢复/手动流程见
 [`fdroid/README.md`](../fdroid/README.md)。
 
 ## 7. 已知限制

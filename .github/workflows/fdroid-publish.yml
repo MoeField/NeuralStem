@@ -38,6 +38,8 @@ jobs:
       FDROID_KEYSTORE_PASSWORD: ${{ secrets.FDROID_KEYSTORE_PASSWORD }}
       FDROID_KEY_ALIAS: ${{ secrets.FDROID_KEY_ALIAS }}
       FDROID_KEY_PASSWORD: ${{ secrets.FDROID_KEY_PASSWORD }}
+      # 当前 App release 证书 SHA-256；如需轮换 release key，同时更新这个 variable。
+      EXPECTED_APK_CERT_SHA256: ${{ vars.EXPECTED_APK_CERT_SHA256 || '85a5c9ebbfc867d01ccdac83a49411aad17c6fb7c42fef9b7d3a2e9b861e0d6e' }}
 
     steps:
       - name: Validate tag/secrets
@@ -102,6 +104,30 @@ jobs:
           AAPT_DIR=$(find "$ANDROID_SDK_ROOT/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
           test -x "$AAPT_DIR/aapt"
           echo "$AAPT_DIR" >> "$GITHUB_PATH"
+          echo "AAPT_DIR=$AAPT_DIR" >> "$GITHUB_ENV"
+
+      - name: Validate release APK identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$RUNNER_TEMP/apk/app-arm64-v8a-release.apk"
+          EXPECTED_VERSION="${TAG#v}"
+          APK_VERSION=$("$AAPT_DIR/aapt" dump badging "$APK" \
+            | sed -n "s/^package:.* versionName='\([^']*\)'.*/\1/p" | head -1)
+          echo "release tag: $TAG"
+          echo "APK versionName: $APK_VERSION"
+          if [ "$APK_VERSION" != "$EXPECTED_VERSION" ]; then
+            echo "::error::APK versionName ($APK_VERSION) != tag ($EXPECTED_VERSION)"
+            exit 1
+          fi
+          CERT_SHA=$("$AAPT_DIR/apksigner" verify --print-certs "$APK" \
+            | sed -n 's/.*certificate SHA-256 digest: \([0-9a-f]*\).*/\1/p' | head -1)
+          echo "APK signer: $CERT_SHA"
+          if [ "$CERT_SHA" != "$EXPECTED_APK_CERT_SHA256" ]; then
+            echo "::error::APK 签名证书不匹配（期望 $EXPECTED_APK_CERT_SHA256）"
+            echo "::error::很可能是 release secrets 缺失导致 debug 签名；拒绝发布"
+            exit 1
+          fi
 
       - name: Restore repo signing key + config
         shell: bash

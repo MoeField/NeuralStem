@@ -52,6 +52,14 @@ gh-pages commit 1fc4b79: publish: NeuralStem F-Droid repo v0.2.28
 
 自动发布不会生成新 key；secret 缺失或校验失败时直接失败，不会污染现有源。
 
+workflow 在生成 index 前还会校验：
+
+- release tag 必须等于 APK 的 `versionName`
+- APK 签名证书必须是当前 App release 证书（默认 `85a5c9...`）
+
+若 release secrets 缺失导致 CI 回退 debug 签名，这一步会直接拒绝发布。
+证书轮换时同时更新 Repository variable `EXPECTED_APK_CERT_SHA256`。
+
 ### Repository Secrets
 
 仓库已配置以下 secrets；如需恢复/迁移，参见此表：
