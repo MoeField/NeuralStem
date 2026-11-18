@@ -305,6 +305,33 @@ class SeparationReducerTest {
         assertEquals(next, r.snapshot.job!!.coverage)
     }
 
+    @Test
+    fun stems_cache_cleared_invalidates_old_job_files() {
+        val finishedJob = JobState(
+            jobId = 1L,
+            trackKey = trackA,
+            kind = SeparationKind.FULL_2,
+            lifecycle = Lifecycle.Finished,
+            coverage = Coverage(totalFrames = 1000L, complete = true, watermarkFrame = 1000L),
+            files = vocalsAndAccomp,
+        )
+        val s = SeparationSnapshot(
+            currentTrackKey = trackA,
+            job = finishedJob,
+            lastFinished = FinishedJob(
+                jobId = 1L,
+                trackKey = trackA,
+                kind = SeparationKind.FULL_2,
+                files = vocalsAndAccomp,
+                coverage = finishedJob.coverage,
+            ),
+        )
+        val r = reduce(s, SeparationEvent.External.StemsCacheCleared)
+        assertNull(r.snapshot.job!!.files)
+        assertNull(r.snapshot.lastFinished)
+        assertEquals(finishedJob.copy(files = null), r.snapshot.job)
+    }
+
     // ---------------- FULL 不自动 attach ----------------
 
     @Test

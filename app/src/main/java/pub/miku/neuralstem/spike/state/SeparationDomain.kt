@@ -171,6 +171,11 @@ class SeparationDomain private constructor(private val app: Application) {
         controller.send(SeparationEvent.User.ClearCache)
     }
 
+    /** 宿主已完成磁盘删除后调用，让 Domain 失效旧结果引用。 */
+    fun onStemsCacheCleared() {
+        controller.send(SeparationEvent.External.StemsCacheCleared)
+    }
+
     fun onTrackChanged(trackKey: TrackKey?) {
         if (trackKey == null) return
         controller.send(SeparationEvent.External.TrackChanged(trackKey))

@@ -1945,6 +1945,20 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
+     * 宿主清空 stem 磁盘缓存后调用：旧 File 引用/波形必须立即失效。
+     *
+     * 正常路径清缓存前已经禁止重新 attach，所以这里不改变当前播放；
+     * 只防止关掉开关后再开时拿已删除的文件。
+     */
+    fun invalidateStemCacheReferences() {
+        if (isMultiTrackLoaded) return
+        lastStems = null
+        cancelStemWaveforms()
+        _stemWaveforms.value = emptyList()
+        _state.value = _state.value.copy(stemWaveforms = emptyList())
+    }
+
+    /**
      * ★U3/★R-b：切换“分离开关”。
      * - on=true：若已有分离结果（[lastStems]）→ **`loadMultiTrack` 恢复多轨**
      *   （不再要求“当前正载入多轨”，修复“关掉后必须重跑分离”的 bug）；

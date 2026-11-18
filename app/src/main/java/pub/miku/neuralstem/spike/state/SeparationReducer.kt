@@ -29,6 +29,7 @@ object SeparationReducer {
             is SeparationEvent.External.TrackChanged -> onTrackChanged(snapshot, event.trackKey)
             is SeparationEvent.External.PlaybackStemsLoaded -> onPlaybackStemsLoaded(snapshot, event)
             SeparationEvent.External.PlaybackEnded -> onPlaybackEnded(snapshot)
+            SeparationEvent.External.StemsCacheCleared -> onStemsCacheCleared(snapshot)
             is SeparationEvent.External.ServiceLost -> onServiceLost(snapshot, event.service)
             SeparationEvent.External.ProcessRestored -> onProcessRestored(snapshot)
             SeparationEvent.External.ConfigChanged -> ReduceResult(snapshot)
@@ -502,6 +503,26 @@ object SeparationReducer {
             s.copy(
                 attachment = AttachmentState.Loaded(attachedJobId, e.trackKey, e.files),
                 lastError = null,
+            ),
+        )
+    }
+
+    /**
+     * 清缓存成功后的失效：不删除当前 job 的展示态（避免 UI 闪成 Idle），
+     * 但不能再用旧 files 去 attach/导出。
+     */
+    private fun onStemsCacheCleared(s: SeparationSnapshot): ReduceResult {
+        if (s.attachment is AttachmentState.Loaded) {
+            // 防御：正常 UI 在多轨时不允许清；这里也不主动把播放踢掉。
+            return ReduceResult(s)
+        }
+        return ReduceResult(
+            s.copy(
+                job = s.job?.copy(files = null, operation = null),
+                lastFinished = null,
+                lastError = null,
+                autoAttachSuppressedFor = null,
+                autoAttachAttemptedFor = null,
             ),
         )
     }

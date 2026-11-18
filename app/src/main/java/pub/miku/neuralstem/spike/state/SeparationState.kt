@@ -239,6 +239,8 @@ sealed interface SeparationEvent {
             val files: StemFiles,
         ) : External
         data object PlaybackEnded : External
+        /** 磁盘 stem 缓存已清理；旧 job.files/lastFinished 必须失效。 */
+        data object StemsCacheCleared : External
         data class ServiceLost(val service: ServiceKind) : External
         data object ProcessRestored : External
         data object ConfigChanged : External

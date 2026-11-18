@@ -123,6 +123,11 @@ fun SeparationScreen(
      */
     onBackfillNow: (() -> Unit)? = null,
     /**
+     * 磁盘缓存清理成功后回调（参数 = 删除目录数）。
+     * 宿主据此让 Domain/PlayerVM 失效旧 stem 引用。
+     */
+    onCacheCleared: ((Int) -> Unit)? = null,
+    /**
      * ★G-3ux：自动开始分离的触发 token。
      *
      * 使用递增整数而非布尔：同一值不重复触发，新值（+1）才触发 →
@@ -726,6 +731,7 @@ fun SeparationScreen(
                         withContext(Dispatchers.Main) {
                             cacheMsg = if (n < 0) app.getString(R.string.sep_cache_busy)
                             else app.getString(R.string.sep_cache_cleared, n)
+                            if (n >= 0) onCacheCleared?.invoke(n)
                         }
                     }
                 },

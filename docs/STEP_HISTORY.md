@@ -118,6 +118,12 @@
 - JVM **433/0**（M1 reducer 52 + M2 controller 7 + 原有 374）；
   真机 edge fast path、4-stem cache/启动、开关 off/on 通过。
 
+## v0.2.30：清缓存后旧 stem 引用失效
+
+- 清缓存成功后通知 Domain：旧 `job.files` / `lastFinished` 置空；PlayerVM 同步清 `lastStems` 和波形。
+- 领域新增 `StemsCacheCleared` 事件与回归测试；避免清完缓存后开关还能用旧文件 attach。
+- JVM **472/0**。
+
 ## v0.2.29：补前段进度不再假跳
 
 - 进度条从“阶段 1 覆盖率”切到补前段时，不再重置为 0；改为按剩余缺口合成整体覆盖率。
