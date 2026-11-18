@@ -69,3 +69,5 @@ NeuralStem — 第三方组件与模型许可声明
 - UWA AVS3-P3 参考实现/预编译库**不随仓库分发**，由 `tools/fetch-avs3.sh` 在本地获取；
   详见 `docs/LICENSING.md`。
 - `avs3_audio_bridge.c` / `Avs3Bridge.kt` 是原创 JNI/反射桥接代码，不包含 UWA 实现。
+- AV3A parser/demux/mux（例如 OpenHarmony FFmpeg）不等于 AV3A decoder；
+  上游 FFmpeg 仍无 AV3A 解码器。详见 `docs/AV3A_INVESTIGATION.md`。

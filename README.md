@@ -256,6 +256,9 @@ CI 用 Repository Secrets（`KEYSTORE_BASE64` / `KEYSTORE_PASSWORD` / `KEY_ALIAS
 ## AVS3-P3（Audio Vivid）支持状态
 
 > **实验性，需自行编译，不随发布版分发。**
+>
+> AV3A 的 FFmpeg/OpenHarmony/Media3 支持边界与许可调查见
+> [`docs/AV3A_INVESTIGATION.md`](docs/AV3A_INVESTIGATION.md)。
 
 网易云音乐下载的音频大量使用 **AVS3-P3** 编码（MP4 里 codec tag 为 `av3a`），
 Android 原生不支持。实测一个典型的网易云私有目录（1001 个文件）：

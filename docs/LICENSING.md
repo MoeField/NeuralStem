@@ -25,6 +25,13 @@ AVS3-P3（`av3a`）的 UWA 参考实现受 **UWA Code Sharing Policy** 限制，
 
 `app/src/ncm/.../Avs3AudioDecoder.kt` 等 AVS3 封装是**本项目原创的接口/封装代码**，不是 UWA 参考实现源码；它只在 `-Pwith_ncm=true` 且本地有参考库时才可用。
 
+### AV3A 的“能解封装”不等于“能解码”
+
+- FFmpeg 上游没有 AV3A decoder；只有 AVS3-P2 视频的 `libuavs3d`。
+- OpenHarmony 的 FFmpeg patch 包含 AV3A parser/demux/mux，但**不含 decoder**。
+- 带 AV3A 解码的 FFmpeg/Media3 fork 仍依赖央视频 SO、`libav3adec`、`libarcdav3a` 等外部/非自由库，不能因为 fork 代码是 Apache/LGPL 就当作可再分发。
+- 详细调查、许可矩阵与建议见 [`AV3A_INVESTIGATION.md`](AV3A_INVESTIGATION.md)。
+
 ## 3. 第三方运行时/模型
 
 - sherpa-onnx：Apache-2.0
