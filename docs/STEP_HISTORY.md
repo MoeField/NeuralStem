@@ -118,6 +118,14 @@
 - JVM **433/0**（M1 reducer 52 + M2 controller 7 + 原有 374）；
   真机 edge fast path、4-stem cache/启动、开关 off/on 通过。
 
+## v0.2.32：实时进度单源 + 清缓存立即清完成提示
+
+- EDGE 阶段 1 不再同时接受 Repo `Running` coverage 与 `tickEdge` coverage；两套百分比公式交替会导致实时进度回跳/乱跳。
+- 清缓存成功后直接清空旧 job（不是保留 files=null 的 Finished job），Domain 不会再重新点亮「✓ 分离完成 · 全曲可播」。
+- 完成提示按 jobId 去重；清缓存触发的 snapshot 不会再次显示。
+- 真机：实时进度 `17→37→45→55→78→95` 单调；清缓存后绿色完成提示立即消失。
+- JVM **472/0**。
+
 ## v0.2.31：补前段文案也保持总进度
 
 - 补前段期间文案从「正在补前段 X%」改为「总进度 Y% · 补前段 X%」，数字不再从 83% 跳到 0%。

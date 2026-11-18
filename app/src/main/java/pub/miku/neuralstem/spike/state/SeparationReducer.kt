@@ -518,7 +518,9 @@ object SeparationReducer {
         }
         return ReduceResult(
             s.copy(
-                job = s.job?.copy(files = null, operation = null),
+                // 旧结果已被删除：保留 Finished job 会让 snapshot 继续发完成态，
+                // 清缓存提示可能被重新点亮；直接回到无 job 状态。
+                job = null,
                 lastFinished = null,
                 lastError = null,
                 autoAttachSuppressedFor = null,

@@ -144,6 +144,8 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
     private val _lastEdgeDone = MutableStateFlow<EdgeDoneUi?>(null)
     val lastEdgeDone: StateFlow<EdgeDoneUi?> = _lastEdgeDone.asStateFlow()
     private var edgeDoneFlashJob: Job? = null
+    /** 防止清缓存触发的 Domain snapshot 再次点亮同一个完成提示。 */
+    private var lastEdgeDoneJobId: Long? = null
 
     /** Task 4.2:分离任务宿主(进程级单例),切页面/切后台不中断 */
     private val repo = SeparationRepository.get(app)
@@ -427,15 +429,20 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
                 val metrics = job.metrics ?: JobMetrics()
                 when (job.kind) {
                     SeparationKind.EDGE -> {
-                        _lastEdgeDone.value = EdgeDoneUi(
-                            complete = job.coverage.complete,
-                            inferTimeMs = metrics.inferTimeMs,
-                            audioDurationMs = metrics.audioDurationMs,
-                        )
-                        edgeDoneFlashJob?.cancel()
-                        edgeDoneFlashJob = viewModelScope.launch {
-                            delay(5_000)
-                            _lastEdgeDone.value = null
+                        // 同一个 job 的重复 snapshot 不再重新点亮；清缓存时
+                        // onStemsCacheCleared 会触发 snapshot，但提示已被 clearCache 清掉。
+                        if (lastEdgeDoneJobId != job.jobId) {
+                            lastEdgeDoneJobId = job.jobId
+                            _lastEdgeDone.value = EdgeDoneUi(
+                                complete = job.coverage.complete,
+                                inferTimeMs = metrics.inferTimeMs,
+                                audioDurationMs = metrics.audioDurationMs,
+                            )
+                            edgeDoneFlashJob?.cancel()
+                            edgeDoneFlashJob = viewModelScope.launch {
+                                delay(5_000)
+                                _lastEdgeDone.value = null
+                            }
                         }
                     }
                     SeparationKind.FULL_2 -> {
@@ -534,6 +541,7 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
      * 启动后由 Domain snapshot 驱动页面显示。
      */
     fun startOption(source: File, opt: SepOption, ownerUri: String? = null) {
+        lastEdgeDoneJobId = null
         _lastEdgeDone.value = null   // 新一轮开始，清掉上一次的完成提示
         when (opt) {
             is SepOption.Sherpa -> {
@@ -579,6 +587,7 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
      * 与 [startOption] 同构（先驱动状态机），但走 [SeparationRepository.startEdge]。
      */
     fun startEdgeOption(source: File, fromPositionMs: Long, ownerUri: String? = null) {
+        lastEdgeDoneJobId = null
         _lastEdgeDone.value = null   // 新一轮开始，清掉上一次的完成提示
         engineOverride = true
         engineMode = SherpaSourceSeparation.MODE_SPLEETER

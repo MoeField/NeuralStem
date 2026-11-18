@@ -327,9 +327,8 @@ class SeparationReducerTest {
             ),
         )
         val r = reduce(s, SeparationEvent.External.StemsCacheCleared)
-        assertNull(r.snapshot.job!!.files)
+        assertNull(r.snapshot.job)
         assertNull(r.snapshot.lastFinished)
-        assertEquals(finishedJob.copy(files = null), r.snapshot.job)
     }
 
     // ---------------- FULL 不自动 attach ----------------
