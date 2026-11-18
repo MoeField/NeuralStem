@@ -90,9 +90,9 @@ adb logcat -s SepUI EdgeSession SepRepo SepDomain
 ## 更新（2026-11-18 早间）
 
 - **P1.1 已修**：`fdroid-publish.yml` 现在校验 release tag == APK `versionName`，并校验 APK 签名证书；不匹配直接拒绝发布。commit `7c2e648`。
-- **P1.2 已做第一版修复**：补前段时进度条不再从阶段 1 的覆盖率重置为 0，而是按剩余缺口合成整体覆盖率。commit `0f1fdd4`，发布 **0.2.29 (49)**。
+- **P1.2 已修**：补前段进度条和文案都改为整体覆盖率（总进度 Y% · 补前段 X%），不再出现 83% → 0%。commit `0eff07d`，发布 **0.2.31 (51)**。
 - **发现并修复自动触发问题**：Android CI 用 `GITHUB_TOKEN` 创建 Release 时不会再次触发 `release: published`；改为监听 Android CI 在 `v*` tag 上成功完成。commit `9efa33b`。
 - **过渡状态**：v0.2.29 的自建源已用本地脚本更新到 **0.2.29 (49)**；下一次 tag 再验证新的 `workflow_run` 触发器。
 - **P2.2 已修**：清缓存成功后 Domain `job.files/lastFinished` 与 PlayerVM `lastStems/波形` 同步失效，reducer 增加 `StemsCacheCleared` 回归测试；发布 **0.2.30 (50)**。commit `2b577fd`。
-- **自动发布已完整验证**：run `44208492993` 成功，包含 APK 版本/签名校验；F-Droid 源已到 0.2.30。
+- **自动发布已完整验证**：run `44210175726` 成功，包含 APK 版本/签名校验；F-Droid 源已到 0.2.31。
 - **P2.1 仍未动**：`autoSwitchEnabled` 旧旁路留到下一次。分支清理也留到下一次。
