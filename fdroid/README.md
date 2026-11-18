@@ -30,8 +30,11 @@ workflow：
 
 触发：
 
-- GitHub Release **published** 后自动执行
+- Android CI 在 `v*` tag 上构建成功并发布 Release 后自动执行
 - 或 Actions → `Publish F-Droid repo` → `Run workflow`，输入 release tag
+
+> 不监听 `release: published`：Android CI 用 `GITHUB_TOKEN` 创建 Release 时，
+> 该事件不会再触发新的 workflow（GitHub 防递归）。
 
 流程：
 

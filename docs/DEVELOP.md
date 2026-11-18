@@ -152,11 +152,13 @@ apksigner verify --print-certs app/build/outputs/apk/release/app-arm64-v8a-relea
 
 ### F-Droid 自建源自动发布
 
-Release published 后，`.github/workflows/fdroid-publish.yml` 会自动：
+Android CI 在 `v*` tag 上构建成功并发布 Release 后，`.github/workflows/fdroid-publish.yml` 会自动：
 
 1. 下载 `app-arm64-v8a-release.apk`
 2. 用 `gh-pages` 现有 repo + `fdroid/metadata/*.yml` 重新生成签名 index
 3. 只替换 `gh-pages` 的 `fdroid/repo/`，保留 `CNAME` / `.nojekyll`
+
+不监听 `release: published`：Release 由 `GITHUB_TOKEN` 创建时该事件不会再触发 workflow。
 
 地址：
 
