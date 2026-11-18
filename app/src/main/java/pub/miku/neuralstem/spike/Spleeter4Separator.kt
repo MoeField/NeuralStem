@@ -42,6 +42,8 @@ class Spleeter4Separator(
      */
     private val blockFrames: Int = DEFAULT_BLOCK_FRAMES,
     private val onProgress: ((doneFrames: Int, totalFrames: Int) -> Unit)? = null,
+    /** 块级取消检查；返回 true 时在下一块开始前抛出 CancellationException。 */
+    private val isCancelled: (() -> Boolean)? = null,
 ) {
     init {
         require(writers.size == 4) { "需要 4 个 writer，当前 ${writers.size}" }
@@ -72,6 +74,9 @@ class Spleeter4Separator(
         var blocks = 0
         var written = 0
         while (start < total) {
+            if (isCancelled?.invoke() == true) {
+                throw java.util.concurrent.CancellationException("spleeter4 cancelled")
+            }
             val core = minOf(blockFrames, total - start)          // 本块要输出的帧
             // 读取范围含上下文
             val readStart = (start - context).coerceAtLeast(0)

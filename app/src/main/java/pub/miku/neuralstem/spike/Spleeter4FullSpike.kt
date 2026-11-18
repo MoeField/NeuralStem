@@ -39,7 +39,8 @@ object Spleeter4FullSpike {
             reader = WavFrameSource(WavReader(input))
             val ch = reader.channels
             val sr = reader.sampleRate
-            for (f in outFiles) writers.add(WavWriter(f, channels = ch, sampleRate = sr))
+            // 4-stem 输出恒为交织立体声；不能跟随单声道输入，否则时长翻倍。
+            for (f in outFiles) writers.add(WavWriter(f, channels = 2, sampleRate = sr))
 
             val t1 = System.currentTimeMillis()
             val est = estimator ?: error("estimator null")

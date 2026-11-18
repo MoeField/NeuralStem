@@ -34,6 +34,8 @@ class DemucsSeparator(
     /** overlap 帧数，默认窗的 25%。 */
     private val overlap: Int = DEFAULT_OVERLAP,
     private val onProgress: ((doneFrames: Int, totalFrames: Int) -> Unit)? = null,
+    /** 块级取消检查；返回 true 时在下一块开始前抛出 CancellationException。 */
+    private val isCancelled: (() -> Boolean)? = null,
 ) {
     init {
         require(writers.size == 4) { "需要 4 个 writer，当前 ${writers.size}" }
@@ -64,9 +66,12 @@ class DemucsSeparator(
         // iSTFT 并行池（4 个 stem 并行）。用完即关。
         val isttfPool = Executors.newFixedThreadPool(4)
         // 落盘用交织缓冲（每次 flush 的区域）
-        val outInter = Array(4) { FloatArray(step * 2) }
+        val outInter = Array(4) { FloatArray(W * 2) }
         try {
             while (s < total || (total < WAVE && b == 0)) {
+                if (isCancelled?.invoke() == true) {
+                    throw java.util.concurrent.CancellationException("demucs cancelled")
+                }
                 var start = s
                 if (start + WAVE > total) start = (total - WAVE).coerceAtLeast(0)   // 末块向前对齐
                 // 注：末块“向前对齐”时 start 可能小于上一块的 s+step → 需保证 base 连续性。
@@ -126,7 +131,8 @@ class DemucsSeparator(
                 // ★ flush：把 [base, base+step) （相对 [0, step)）归一化 + 写盘（仅当不会被后续块触碰）。
                 //   是否 safe：下一块 start = base + step（末块除外）。末块（start+WAVE>=total）后直接 flush 剩余。
                 val isLast = (start + WAVE >= total)
-                val flushLen = if (isLast) minOf(W, total - base) else step
+                val flushLen = flushFramesFor(total, base, isLast, step, W)
+                require(flushLen in 0..W) { "flushLen=$flushLen 超出窗口 W=$W" }
                 if (flushLen > 0) {
                     for (src in 0 until 4) {
                         val inter = outInter[src]
@@ -188,6 +194,19 @@ class DemucsSeparator(
     companion object {
         private const val TAG = "DemucsSep"
         const val WAVE = 343_980
+
+        /**
+         * 末块 flush 长度。单独抽出来是因为 5.85–7.8s 输入会让
+         * flushLen > step；调用方必须按 W（而不是 step）准备缓冲。
+         */
+        internal fun flushFramesFor(
+            total: Int,
+            base: Int,
+            isLast: Boolean,
+            step: Int,
+            window: Int,
+        ): Int = if (isLast) minOf(window, (total - base).coerceAtLeast(0)) else step
+
         const val DEFAULT_OVERLAP = WAVE / 4            // 25%
         val STEM_KINDS = listOf("drums", "bass", "other", "vocals")
     }

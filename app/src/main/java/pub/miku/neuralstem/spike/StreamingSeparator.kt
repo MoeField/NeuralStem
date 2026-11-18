@@ -107,6 +107,8 @@ class StreamingSeparator(
     private val chunkSchedule: List<Int>? = null,
     /** 块级进度回调(已完成帧 / 总帧),供 F3.2 进度条使用。 */
     private val onProgress: ((doneFrames: Int, totalFrames: Int) -> Unit)? = null,
+    /** 块级取消检查；返回 true 时在下一块开始前抛出 CancellationException。 */
+    private val isCancelled: (() -> Boolean)? = null,
 ) {
 
     /**
@@ -193,6 +195,9 @@ class StreamingSeparator(
         )
 
         plan.forEachIndexed { idx, chunk ->
+            if (isCancelled?.invoke() == true) {
+                throw java.util.concurrent.CancellationException("streaming cancelled")
+            }
             val start = chunk.start
             val isFirst = idx == 0
             val isLast = idx == plan.lastIndex

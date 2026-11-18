@@ -238,7 +238,7 @@ class SeparationRepository(private val app: Application) {
                     return@launchSeparation
                 }
 
-                val result = separate(source, engine, uvrModelName, chunkOverrideFrames, outDir)
+                val result = separate(source, engine, uvrModelName, chunkOverrideFrames, outDir, myGen)
                 writeCacheManifest(outDir, result)
                 if (generation.get() == myGen) {
                     _state.value = result.copy(sourcePath = source.absolutePath)
@@ -812,7 +812,7 @@ class SeparationRepository(private val app: Application) {
                     return@launchSeparation
                 }
 
-                val result = separate4(source, dir, outDir)
+                val result = separate4(source, dir, outDir, myGen)
                 writeCacheManifest4(outDir, result)
                 if (generation.get() == myGen) {
                     _state.value = result.copy(sourcePath = source.absolutePath)
@@ -838,6 +838,7 @@ class SeparationRepository(private val app: Application) {
         source: File,
         modelDir: File,
         outDir: File,
+        myGen: Long,
     ): State.Done4 = withContext(Dispatchers.IO) {
         val frameSource = openFrameSource(source)
         var estimator: Spleeter4Estimator? = null
@@ -849,21 +850,24 @@ class SeparationRepository(private val app: Application) {
             var peak = currentPssMb()
             val inferStart = System.currentTimeMillis()
 
-            val writers = outFiles.map { WavWriter(it, frameSource.channels, frameSource.sampleRate) }
+            val writers = outFiles.map { WavWriter(it, 2, frameSource.sampleRate) }
             try {
                 Spleeter4Separator(
                     reader = frameSource,
                     writers = writers,
                     estimator = estimator!!,
                     onProgress = { done, total ->
-                        peak = maxOf(peak, currentPssMb())
-                        _state.value = State.Running(
-                            doneFrames = done,
-                            totalFrames = total,
-                            elapsedMs = System.currentTimeMillis() - inferStart,
-                            peakPssMb = peak,
-                        )
+                        if (generation.get() == myGen) {
+                            peak = maxOf(peak, currentPssMb())
+                            _state.value = State.Running(
+                                doneFrames = done,
+                                totalFrames = total,
+                                elapsedMs = System.currentTimeMillis() - inferStart,
+                                peakPssMb = peak,
+                            )
+                        }
                     },
+                    isCancelled = { generation.get() != myGen },
                 ).run()
             } finally {
                 writers.forEach { runCatching { it.close() } }
@@ -939,7 +943,7 @@ class SeparationRepository(private val app: Application) {
                     }
                     return@launchSeparation
                 }
-                val result = separateDemucs(source, mdl, outDir, threads, useNnapi)
+                val result = separateDemucs(source, mdl, outDir, threads, useNnapi, myGen)
                 writeCacheManifest4(outDir, result)
                 if (generation.get() == myGen) {
                     _state.value = result.copy(sourcePath = source.absolutePath)
@@ -967,6 +971,7 @@ class SeparationRepository(private val app: Application) {
         outDir: File,
         threads: Int,
         useNnapi: Boolean,
+        myGen: Long,
     ): State.Done4 = withContext(Dispatchers.IO) {
         val frameSource = openFrameSource(source)
         var estimator: DemucsEstimator? = null
@@ -977,21 +982,24 @@ class SeparationRepository(private val app: Application) {
             var peak = currentPssMb()
             val inferStart = System.currentTimeMillis()
 
-            val writers = outFiles.map { WavWriter(it, frameSource.channels, frameSource.sampleRate) }
+            val writers = outFiles.map { WavWriter(it, 2, frameSource.sampleRate) }
             try {
                 DemucsSeparator(
                     reader = frameSource,
                     writers = writers,
                     estimator = estimator!!,
                     onProgress = { done, total ->
-                        peak = maxOf(peak, currentPssMb())
-                        _state.value = State.Running(
-                            doneFrames = done,
-                            totalFrames = total,
-                            elapsedMs = System.currentTimeMillis() - inferStart,
-                            peakPssMb = peak,
-                        )
+                        if (generation.get() == myGen) {
+                            peak = maxOf(peak, currentPssMb())
+                            _state.value = State.Running(
+                                doneFrames = done,
+                                totalFrames = total,
+                                elapsedMs = System.currentTimeMillis() - inferStart,
+                                peakPssMb = peak,
+                            )
+                        }
                     },
+                    isCancelled = { generation.get() != myGen },
                 ).run()
             } finally {
                 writers.forEach { runCatching { it.close() } }
@@ -1073,6 +1081,7 @@ class SeparationRepository(private val app: Application) {
         uvrModelName: String,
         chunkOverrideFrames: Int?,
         outDir: File,
+        myGen: Long,
     ): State.Done = withContext(Dispatchers.IO) {
         val started = System.currentTimeMillis()
 
@@ -1133,14 +1142,17 @@ class SeparationRepository(private val app: Application) {
                             separator = sep::separate,
                             chunkFrames = chunk,
                             onProgress = { done, total ->
-                                peak = maxOf(peak, currentPssMb())
-                                _state.value = State.Running(
-                                    doneFrames = done,
-                                    totalFrames = total,
-                                    elapsedMs = System.currentTimeMillis() - inferStart,
-                                    peakPssMb = peak,
-                                )
+                                if (generation.get() == myGen) {
+                                    peak = maxOf(peak, currentPssMb())
+                                    _state.value = State.Running(
+                                        doneFrames = done,
+                                        totalFrames = total,
+                                        elapsedMs = System.currentTimeMillis() - inferStart,
+                                        peakPssMb = peak,
+                                    )
+                                }
                             },
+                            isCancelled = { generation.get() != myGen },
                         ).run()
                     }
                 }

@@ -118,6 +118,15 @@
 - JVM **433/0**（M1 reducer 52 + M2 controller 7 + 原有 374）；
   真机 edge fast path、4-stem cache/启动、开关 off/on 通过。
 
+## v0.2.33：修复三个已复现的分离 P1
+
+- **P1.2 Demucs 短音频越界**：`outInter` 从 `step*2` 扩到 `W*2`，并加 `flushLen <= W` 断言；7s 输入真机验证不再抛 `ArrayIndexOutOfBoundsException`。
+- **P1.5 单声道 4-stem 时长翻倍**：4-stem 的 `WavWriter` 固定 2 声道，不再跟随 mono 输入；单声道 10s 导出现在是 `2ch / 10.000s`。
+- **P1.4 FULL 分离取消无效**：`StreamingSeparator` / `Spleeter4Separator` / `DemucsSeparator` 增加块级 `isCancelled`；Repository 传入 generation，进度回调也做 generation 校验，避免把 `Cancelled` 覆盖回 `Running`。
+- 新增回归：`DemucsFlushBoundsTest`、`StreamingSeparatorCancellationTest`。
+- 真机：取消后当前 native 块结束即停，CPU 从 ~400% 降到 0%，不再跑完整首。
+- JVM **475/0**。
+
 ## v0.2.32：实时进度单源 + 清缓存立即清完成提示
 
 - EDGE 阶段 1 不再同时接受 Repo `Running` coverage 与 `tickEdge` coverage；两套百分比公式交替会导致实时进度回跳/乱跳。
