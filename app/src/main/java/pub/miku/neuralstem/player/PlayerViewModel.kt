@@ -152,6 +152,13 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
      */
     private var decodeJob: Job? = null
 
+    /**
+     * ★P1.1：每次 loadAndPlay 递增。AVS3/NCM 解码完成时必须同时满足
+     * 「session 目标仍是本曲」且「generation 未变」，否则丢弃结果。
+     * 只校验 URI 不够：普通曲目路径不会改写 session.avs3Decode。
+     */
+    private var loadGeneration = 0L
+
     // ============================ ★3b：派生字段化（状态机收敛收尾）============================
     /**
      * ★3b：把**状态机派生量**注入 [PlayerState]（唯一注入点；“能派生就不存储”）。
@@ -997,6 +1004,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
          */
         clearQueue: Boolean = true,
     ) {
+        val generation = ++loadGeneration
         if (clearQueue) {
             currentListId = null
             session.clearQueue()
@@ -1021,12 +1029,12 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             if (realPath == null) {
                 Log.w(TAG, "netease:// 解析失败：$uri")
             } else if (realPath.endsWith(".ncm", ignoreCase = true)) {
-                loadNcm(Uri.fromFile(java.io.File(realPath)), displayName, startPositionMs)
+                loadNcm(Uri.fromFile(java.io.File(realPath)), displayName, startPositionMs, generation)
                 return
             } else {
                 val realUri = Uri.fromFile(java.io.File(realPath))
                 if (Avs3Bridge.shouldIntercept(getApplication(), realUri)) {
-                    loadAvs3(realUri, displayName, startPositionMs)
+                    loadAvs3(realUri, displayName, startPositionMs, generation)
                     return
                 }
                 Log.i(TAG, "netease:// 非 AVS3：$realPath（原生播需权限，暂不支持）")
@@ -1041,20 +1049,24 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         if (uri.scheme == "content") {
             val lower = displayName.lowercase()
             if (lower.endsWith(".ncm")) {
-                loadNcm(uri, displayName, startPositionMs)
+                loadNcm(uri, displayName, startPositionMs, generation)
                 return
             }
             if (lower.endsWith(".m4a") && Avs3Bridge.shouldIntercept(getApplication(), uri)) {
-                loadAvs3(uri, displayName, startPositionMs)
+                loadAvs3(uri, displayName, startPositionMs, generation)
                 return
             }
             // 其余内容（mp3/flac 等）：ExoPlayer 原生支持 content://，直接放行。
         }
 
         if (Avs3Bridge.shouldIntercept(getApplication(), uri)) {
-            loadAvs3(uri, displayName, startPositionMs)
+            loadAvs3(uri, displayName, startPositionMs, generation)
             return
         }
+
+        // ★P1.1：切到普通曲目（或无法拦截的 uri）时，旧 AVS3 解码必须停止，
+        // 否则它完成后会凭旧的 session 目标把播放器抢回去。
+        cancelStaleAvs3Decode("native track: $displayName")
 
         val p = mediaController
         if (p == null) {
@@ -1081,10 +1093,28 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
      * ```
      * 若反过来（先 begin 再 request），request 会把刚建的新任务当成旧的。
      */
-    private fun loadAvs3(uri: Uri, displayName: String, startPositionMs: Long) {
+    /**
+     * 普通曲目开始载入时，取消可能还在跑的 AVS3/NCM 解码。
+     *
+     * 只 cancel Job 不够：session.avs3Decode 仍可能停在 Running，
+     * 旧协程完成时 `isDecodingFor(oldUri)` 仍为 true，于是 doLoad(old) 把新曲抢掉。
+     */
+    private fun cancelStaleAvs3Decode(reason: String) {
+        val hadJob = decodeJob != null
+        decodeJob?.cancel()
+        decodeJob = null
+        if (hadJob || session.avs3Decode !is Avs3Decode.Idle) {
+            Log.i(TAG, "AVS3: cancel stale decode ($reason)")
+            session.cancelAvs3Decode()
+            syncAvs3ToUi()
+        }
+    }
+
+    private fun loadAvs3(uri: Uri, displayName: String, startPositionMs: Long, generation: Long) {
         decodeJob?.cancel()
         decodeJob = viewModelScope.launch {
             val app = getApplication<Application>()
+            if (generation != loadGeneration) return@launch
 
             // 1) 先决策旧任务（收尾 vs 立即取消）
             //    ★顺序不能反：request 必须在 begin 之前，
@@ -1105,15 +1135,20 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                     app = app,
                     srcUri = uri,
                     onProgress = { id, pct ->
-                        session.onAvs3Progress(id, pct)
-                        syncAvs3ToUi()
+                        if (generation == loadGeneration) {
+                            session.onAvs3Progress(id, pct)
+                            syncAvs3ToUi()
+                        }
                     },
                     shouldCancel = { !isActive },
                 )
             }
 
-            // 3) 解码期间用户可能已经切走了 —— 只有目标没变才继续播
-            if (!isActive) return@launch
+            // 3) 解码期间用户可能已经切走了 —— generation 与目标都必须没变
+            if (!isActive || generation != loadGeneration) {
+                Log.i(TAG, "AVS3 解码完成但 load generation 已变，丢弃 $displayName")
+                return@launch
+            }
             if (!session.isDecodingFor(uri.toString())) {
                 Log.i(TAG, "AVS3 解码完成但目标已切走，丢弃 $displayName")
                 return@launch
@@ -1153,10 +1188,11 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
      * 那时就是“解密 + 解码”，进度条画的是解码那段。
      * 解出 flac/mp3 时几乎瞬完（100–200ms 解密），进度条一闪而过。
      */
-    private fun loadNcm(srcUri: Uri, displayName: String, startPositionMs: Long) {
+    private fun loadNcm(srcUri: Uri, displayName: String, startPositionMs: Long, generation: Long) {
         decodeJob?.cancel()
         decodeJob = viewModelScope.launch {
             val app = getApplication<Application>()
+            if (generation != loadGeneration) return@launch
             val fakeUri = "ncm:$srcUri"   // 仅用作状态机里的标识
 
             val letOldFinish = session.requestAvs3Decode()
@@ -1169,14 +1205,19 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                     app = app,
                     srcUri = srcUri,
                     onProgress = { pct ->
-                        session.onAvs3Progress(fakeUri, pct)
-                        syncAvs3ToUi()
+                        if (generation == loadGeneration) {
+                            session.onAvs3Progress(fakeUri, pct)
+                            syncAvs3ToUi()
+                        }
                     },
                     shouldCancel = { !isActive },
                 )
             }
 
-            if (!isActive) return@launch
+            if (!isActive || generation != loadGeneration) {
+                Log.i(TAG, "NCM 处理完成但 load generation 已变，丢弃 $displayName")
+                return@launch
+            }
             if (!session.isDecodingFor(fakeUri)) {
                 Log.i(TAG, "NCM 处理完成但目标已切走，丢弃 $displayName")
                 return@launch

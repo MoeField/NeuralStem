@@ -118,6 +118,14 @@
 - JVM **433/0**（M1 reducer 52 + M2 controller 7 + 原有 374）；
   真机 edge fast path、4-stem cache/启动、开关 off/on 通过。
 
+## v0.2.34：修复 AVS3/NCM 切歌后旧解码抢播
+
+- `loadAndPlay` 每次请求递增 `loadGeneration`；`loadAvs3`/`loadNcm` 完成后必须同时满足 generation 与 session 目标都未变，才允许 `doLoad`。
+- 切到普通曲目时调用 `cancelStaleAvs3Decode()`：取消旧 `decodeJob`、清空 `session.avs3Decode`、同步 UI；不再只依赖 URI 判断。
+- 旧协程的进度回调也校验 generation，避免旧进度写入新曲的 UI。
+- 当前包不是 NCM 构建，无法真机复现 AVS3 路径；静态链路和编译/JVM 回归通过。
+- JVM **475/0**。
+
 ## v0.2.33：修复三个已复现的分离 P1
 
 - **P1.2 Demucs 短音频越界**：`outInter` 从 `step*2` 扩到 `W*2`，并加 `flushLen <= W` 断言；7s 输入真机验证不再抛 `ArrayIndexOutOfBoundsException`。
