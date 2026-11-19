@@ -46,6 +46,42 @@ val hasReleaseSigning = listOf(
     signingStoreFile, signingStorePassword, signingKeyAlias, signingKeyPassword,
 ).all { it != null } && File(signingStoreFile!!).exists()
 
+// ==================== ★版本号从 tag/CI 派生（P2.7） ====================
+//
+// 之前 versionCode 手写，tag 只覆盖 versionName；打 tag 忘了改 code 时
+// F-Droid/Obtainium 会把它当同一版本，自动更新静默失效。
+// 规则：major*10000 + minor*100 + patch（0.2.36 → 236，0.3.0 → 300）。
+// CI 的 tag 构建同时传 -PversionName 和 -PversionCode；本地不传则用这里的默认值。
+val defaultVersionName = "0.2.36"
+
+fun semverCode(name: String): Int {
+    val parts = name.split(".")
+    require(parts.size == 3) { "versionName 必须是 X.Y.Z：$name" }
+    val major = parts[0].toIntOrNull() ?: error("非法 major：$name")
+    val minor = parts[1].toIntOrNull() ?: error("非法 minor：$name")
+    val patch = parts[2].toIntOrNull() ?: error("非法 patch：$name")
+    require(listOf(major, minor, patch).all { it >= 0 }) { "versionName 不能为负：$name" }
+    return major * 10_000 + minor * 100 + patch
+}
+
+val resolvedVersionName = (project.findProperty("versionName") as String?)
+    ?.takeIf { it.isNotBlank() } ?: defaultVersionName
+val resolvedVersionCode = (project.findProperty("versionCode") as String?)
+    ?.toIntOrNull() ?: semverCode(resolvedVersionName)
+
+/**
+ * 只有 CI 的 tag 构建会传 `-PrequireReleaseSigning=true`。
+ * 本地 `assembleRelease` 仍允许 debug 回退（仅供调试），但正式发布链路不允许。
+ */
+val requireReleaseSigning = (project.findProperty("requireReleaseSigning") as String?)
+    ?.toBoolean() ?: false
+if (requireReleaseSigning && !hasReleaseSigning) {
+    throw IllegalStateException(
+        "tag/release 构建要求正式签名，但缺少 keystore.properties 或 KEYSTORE_* 环境变量。" +
+            "拒绝生成 debug 签名的发布包。",
+    )
+}
+
 android {
     namespace = "pub.miku.neuralstem"
     compileSdk {
@@ -70,14 +106,10 @@ android {
         applicationId = "pub.miku.neuralstem"
         minSdk = 23
         targetSdk = 37
-        // ★版本号（2026-10-20 修正）：之前停在 10 / 0.1.0-alpha，但已发到 v0.2.1。
-        //   versionCode 必须**严格递增**，否则 F-Droid/Obtainium 看不到更新。
-        //   当前规则：semver 的 minor*10 + patch = 55（0.2.35 → 55）。
-        versionCode = 55
-        // ★versionName 可由 CI 覆盖（`-PversionName=0.2.5`，从 tag 名解出）。
-        //   为何需要：tag 与 build.gradle 里的版本号容易不同步；
-        //   以 tag 为准能保证“Release 页显示的版本 = 代码里的版本”。
-        versionName = (project.findProperty("versionName") as String?) ?: "0.2.35"
+        // ★版本号（P2.7）：由 tag/CI 派生，避免忘改 code 导致自动更新失效。
+        //   versionCode 规则：major*10000 + minor*100 + patch。
+        versionCode = resolvedVersionCode
+        versionName = resolvedVersionName
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 

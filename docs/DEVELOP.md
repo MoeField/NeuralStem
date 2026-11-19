@@ -96,7 +96,7 @@ AVS3-P3 参考实现受 UWA 政策限制，**不随仓库分发**，release APK 
 
 ## 5. 测试与调试
 
-当前基线：JVM **475** 条（v0.2.35）。
+当前基线：JVM **475** 条（v0.2.36）。
 
 ```bash
 # JVM
@@ -131,7 +131,7 @@ adb shell run-as pub.miku.neuralstem cat files/edge_probe.txt
 
 ## 6. 发布
 
-版本号规则：`versionCode` 严格递增；`versionName` 用 `vX.Y.Z` tag 驱动。
+版本号规则：`versionName` 用 `vX.Y.Z` tag 驱动；`versionCode = major*10000 + minor*100 + patch`（如 `v0.2.36` → 236），由 CI 从 tag 计算。
 
 CI（`.github/workflows/android-ci.yml`）需要四个 Repository Secrets：
 

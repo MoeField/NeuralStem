@@ -118,6 +118,18 @@
 - JVM **433/0**（M1 reducer 52 + M2 controller 7 + 原有 374）；
   真机 edge fast path、4-stem cache/启动、开关 off/on 通过。
 
+## v0.2.36：发布门禁 P2.7
+
+- `versionCode` 改为 `major*10000 + minor*100 + patch`，由 tag/CI 派生；`v0.2.36` → 236。
+- tag 构建强制 `-PrequireReleaseSigning=true`：缺 keystore/密钥环境变量时 Gradle 直接失败，不再回退 debug 签名。
+- CI 在 tag 构建校验：
+  - APK `versionName` == tag
+  - APK `versionCode` == tag 派生值
+  - APK 证书 SHA-256 == `EXPECTED_APK_CERT_SHA256`
+- 本地无密钥构建仍可 debug 回退（仅供调试）。
+- 验证：`-PversionName=0.2.36 -PversionCode=236` 产出 code 236；无密钥 + 强制签名时构建失败。
+- JVM **475/0**。
+
 ## v0.2.35：StemMixer 关闭顺序
 
 - `StemMixer.stopThread()` 改为先 `pause/flush` 解开可能阻塞的 `AudioTrack.write`，再 `interrupt/join`；避免主线程白等 800ms。

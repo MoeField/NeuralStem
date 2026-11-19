@@ -199,11 +199,16 @@ jobs:
         run: |
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             V="${GITHUB_REF#refs/tags/v}"
+            IFS=. read -r MAJOR MINOR PATCH <<< "$V"
+            VCODE=$((10#$MAJOR * 10000 + 10#$MINOR * 100 + 10#$PATCH))
+            echo "resolved version: '$V' (code $VCODE)"
           else
             V=""
+            VCODE=""
+            echo "resolved version: '(default)'"
           fi
           echo "name=$V" >> "$GITHUB_OUTPUT"
-          echo "resolved version: '$V'"
+          echo "code=$VCODE" >> "$GITHUB_OUTPUT"
 
       # ★正式签名（2026-10-20）：从 Repository Secrets 解出 keystore。
       #
@@ -218,6 +223,17 @@ jobs:
       #
       # 缺失时**不报错**：app/build.gradle.kts 会回退 debug 签名并打印警告
       # （保证 fork / PR 的 CI 仍能跑）。
+      - name: Require release signing for tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "${KEYSTORE_BASE64:-}" ]; then
+            echo "::error::tag 构建必须配置 KEYSTORE_BASE64；拒绝生成 debug 签名的发布包"
+            exit 1
+          fi
+          echo "release signing secret present"
+
       - name: Decode release keystore
         if: env.KEYSTORE_BASE64 != ''
         run: |
@@ -246,12 +262,14 @@ jobs:
         run: |
           set +e
           EXTRA=""
+          SIGNING=""
           if [ -n "${{ steps.ver.outputs.name }}" ]; then
-            EXTRA="-PversionName=${{ steps.ver.outputs.name }}"
+            EXTRA="-PversionName=${{ steps.ver.outputs.name }} -PversionCode=${{ steps.ver.outputs.code }}"
+            SIGNING="-PrequireReleaseSigning=true"
           fi
           # -x lintVital*：release 默认会跑 lintVital（需额外下载 lint-gradle 依赖，
           #   与本流水线目的无关，且会增加一次网络失败点）。
-          ./gradlew :app:assembleRelease $EXTRA \
+          ./gradlew :app:assembleRelease $EXTRA $SIGNING \
             -x lintVitalAnalyzeRelease -x lintVitalRelease \
             --no-daemon --stacktrace \
             -Porg.gradle.java.installations.auto-download=false 2>&1 | tee /tmp/build.log
@@ -271,15 +289,44 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
 
-      - name: Verify APK signature
-        # 把指纹写进 CI 日志 —— 以后排查“用户装不上更新”时可直接对比。
+      - name: Verify APK version/signature
+        # tag 构建不只是“打印证书”：versionCode/versionName 必须与 tag 一致，
+        # 且签名必须是正式 release 证书；任何一项不匹配都拒绝发布。
         run: |
+          set -euo pipefail
           APKSIGNER=$(find "$ANDROID_SDK_ROOT/build-tools" -name apksigner 2>/dev/null | sort | tail -1)
+          AAPT=$(find "$ANDROID_SDK_ROOT/build-tools" -name aapt 2>/dev/null | sort | tail -1)
           APK=$(find app/build/outputs/apk/release -name "*arm64*v8a*.apk" | head -1)
-          if [ -n "$APKSIGNER" ] && [ -n "$APK" ]; then
-            "$APKSIGNER" verify --print-certs "$APK" 2>&1 | grep -E "certificate (DN|SHA-256)" || true
-          else
-            echo "::warning::未能定位 apksigner 或 APK，跳过签名校验"
+          if [ -z "$APKSIGNER" ] || [ -z "$AAPT" ] || [ -z "$APK" ]; then
+            echo "::error::无法定位 apksigner/aapt/APK"
+            exit 1
+          fi
+
+          BADGING=$("$AAPT" dump badging "$APK" | head -1)
+          APK_VERSION=$(echo "$BADGING" | sed -n "s/^package:.* versionName='\([^']*\)'.*/\1/p")
+          APK_CODE=$(echo "$BADGING" | sed -n "s/^package:.* versionCode='\([^']*\)'.*/\1/p")
+          echo "APK versionName=$APK_VERSION versionCode=$APK_CODE"
+
+          CERTS=$("$APKSIGNER" verify --print-certs "$APK" 2>&1)
+          echo "$CERTS" | grep -E "certificate (DN|SHA-256)" || true
+
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            if [ "$APK_VERSION" != "${{ steps.ver.outputs.name }}" ]; then
+              echo "::error::APK versionName ($APK_VERSION) != tag (${{ steps.ver.outputs.name }})"
+              exit 1
+            fi
+            if [ "$APK_CODE" != "${{ steps.ver.outputs.code }}" ]; then
+              echo "::error::APK versionCode ($APK_CODE) != tag-derived code (${{ steps.ver.outputs.code }})"
+              exit 1
+            fi
+            CERT_SHA=$(echo "$CERTS" | sed -n 's/.*certificate SHA-256 digest: \([0-9a-f]*\).*/\1/p' | head -1)
+            EXPECTED_SHA="${{ vars.EXPECTED_APK_CERT_SHA256 || '85a5c9ebbfc867d01ccdac83a49411aad17c6fb7c42fef9b7d3a2e9b861e0d6e' }}"
+            if [ "$CERT_SHA" != "$EXPECTED_SHA" ]; then
+              echo "::error::APK 证书 SHA-256 ($CERT_SHA) != 期望 ($EXPECTED_SHA)"
+              echo "::error::tag 构建必须是正式 release key，不能用 debug 签名"
+              exit 1
+            fi
+            echo "tag APK identity/signature verified"
           fi
 
       - name: Collect APKs
