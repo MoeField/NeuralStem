@@ -232,6 +232,11 @@ class StemMixer(
         renderGeneration++
         val t = thread
         thread = null
+
+        // ★P1.3：先 pause/flush 解开 renderLoop 里可能阻塞的 AudioTrack.write，
+        // 再 join；否则 interrupt 对阻塞写无效，主线程会白等满 800ms。
+        runCatching { track?.pause() }
+        runCatching { track?.flush() }
         t?.interrupt()
         t?.let { runCatching { it.join(800) } }
         if (t?.isAlive == true) {
@@ -240,7 +245,6 @@ class StemMixer(
             thread = t
             Log.w(TAG, "stopThread: 旧渲染线程未在 800ms 内退出，延迟复用")
         }
-        runCatching { track?.pause(); track?.flush() }
     }
 
     private fun ensureTrack() {

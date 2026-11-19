@@ -118,6 +118,12 @@
 - JVM **433/0**（M1 reducer 52 + M2 controller 7 + 原有 374）；
   真机 edge fast path、4-stem cache/启动、开关 off/on 通过。
 
+## v0.2.35：StemMixer 关闭顺序
+
+- `StemMixer.stopThread()` 改为先 `pause/flush` 解开可能阻塞的 `AudioTrack.write`，再 `interrupt/join`；避免主线程白等 800ms。
+- 真机 2-stem 多轨退出：`EXIT_MT` → `StemMixer closed` 约 11ms，无回归。
+- JVM **475/0**。
+
 ## v0.2.34：修复 AVS3/NCM 切歌后旧解码抢播
 
 - `loadAndPlay` 每次请求递增 `loadGeneration`；`loadAvs3`/`loadNcm` 完成后必须同时满足 generation 与 session 目标都未变，才允许 `doLoad`。
