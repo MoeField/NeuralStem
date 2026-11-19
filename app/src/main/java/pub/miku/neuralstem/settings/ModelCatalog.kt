@@ -104,6 +104,8 @@ data class ModelFile(
     val fileName: String,
     /** 期望字节数（用于进度与完整性初判）；0 = 未知。 */
     val expectedBytes: Long = 0L,
+    /** 官方 SHA-256（小写 hex）。空 = 旧数据未提供，下载时不校验。 */
+    val sha256: String = "",
 )
 
 /** 一个模型包的完整描述。 */
@@ -170,6 +172,36 @@ object ModelCatalog {
     private const val UVR_SMALL_BYTES = 29_704_738L   // 9482 / KARA
     private const val UVR_LARGE_BYTES = 66_759_522L   // Voc_FT / Inst_HQ_3 / Main
 
+    // ==================== 官方 SHA-256 ====================
+    // 来源：HF LFS 元数据（lfs.oid）与 GitHub Release asset digest。
+    // 下载器会在 .part 完整写入后校验，再 rename；不匹配直接失败。
+    private const val SHA_SPLEETER2_VOCALS = "24cef84aedcd1fe87c0b743ef3370ad34dc1fabf6c9014d6128a75a538c7b668"
+    private const val SHA_SPLEETER2_ACCOMP = "d14cea55793cc531a5875f5f4da08207d1c5ab9292e8e0099a104eecb014fcc0"
+    private const val SHA_SPLEETER4_VOCALS = "db47148ab1c52709ce694893f532c91abfe3edc4d46238939570e036a22878ca"
+    private const val SHA_SPLEETER4_DRUMS = "7ae4002e5633634674f74dc3356d5875b0da894d59ce0f60e844bb8f9cb8aa92"
+    private const val SHA_SPLEETER4_BASS = "ba4c4949a27222492cca49859901a873b4b71461dc48c7c5a51f93d31eb11f55"
+    private const val SHA_SPLEETER4_OTHER = "3cc59116cb7195946ab9596d8ca25984d09c0f8a70db8cf85d063132f97bc61d"
+    private const val SHA_DEMUCS = "e5e425c17683f163a472462eb5f5a4ffcd11c31858d57fbd0833b012d8b88077"
+
+    private const val SHA_UVR_9482 = "9d78f8566fa8198065214ab628be1de966a500c57786695aa4b13e2b27a7727d"
+    private const val SHA_UVR_KARA = "4e1cddd765cac6a55785cf28938d02b4ca100cf9ad84d9d86ff1118a50fff8fe"
+    private const val SHA_UVR_VOC_FT = "e411182ce2c53541fefdcc99a8f46f2fe03978eb22038b9497c1d9d95a00fad4"
+    private const val SHA_UVR_INST_HQ_3 = "c207b845d51dc1303c543503f6f5a8b596da5d7de97bead77b3e16ec38e8d5b3"
+    private const val SHA_UVR_MAIN = "900fb63c1a2405fe860316ca03c831ce4c7a4129ff1fbc55f99aee4422b98592"
+
+    private const val SHA_UVR_INST_1 = "63e8c20b1fd31250bf841ff6974365397bc5091f6c0a846e17d4ae0da2612d58"
+    private const val SHA_UVR_INST_2 = "4e341695ff5b6d90e8fa391b8916562fedd78b40f089a678f7ab0c9dc6e84926"
+    private const val SHA_UVR_INST_3 = "ac776034718c9df1c3cc6ab41408642d65671e903851a4876273dfef46307b69"
+    private const val SHA_UVR_INST_HQ_1 = "f3d1546ed6ca7257ec1c324e72bf2932e8339588c348f6cbda126e728cdd2f8a"
+    private const val SHA_UVR_INST_HQ_2 = "9e0f425c4b797920ab9421f58db743adcc7bc1b48798a946e268b6d9e0b8e235"
+    private const val SHA_UVR_INST_HQ_4 = "af6de857b80f3ea7c4fd7b0380e7138f5ecf91da3e5f140c463b5aa6d927636f"
+    private const val SHA_UVR_INST_HQ_5 = "487e35ae87ed9af9914c85c357e60800c07b8196949e274fe884c18a0c620dbb"
+    private const val SHA_UVR_INST_MAIN = "628d621d64a06237949de109571cad488c977ab1b34f53d852428d44e492f198"
+    private const val SHA_UVR_KARA_2 = "c05b3b7a3ab73362c85511dd0386ad173f28570e23ce1d8d3f87391396a85c08"
+    private const val SHA_UVR_9703 = "1edd6f6891afd845cdc5b325d008075007ccffa6965861ae88411396d60fcc03"
+    private const val SHA_UVR_9682 = "27b90a8b3a30969072b366c417ed95df4072c6fc05dadfae8561a451fee51b4a"
+    private const val SHA_UVR_9662 = "2139f8df7302e33ca8d3b36bbe20509e6e2a5cf959f79cde5698177683cd9c70"
+
     val ALL: List<ModelPackInfo> = listOf(
         ModelPackInfo(
             pack = ModelPack.SPLEETER_2STEM,
@@ -182,10 +214,12 @@ object ModelCatalog {
                 ModelFile(
                     "/$HF_SPLEETER2/resolve/main/vocals.fp16.onnx",
                     "sherpa", "vocals.fp16.onnx", SPLEETER2_VOCALS_BYTES,
+                    SHA_SPLEETER2_VOCALS,
                 ),
                 ModelFile(
                     "/$HF_SPLEETER2/resolve/main/accompaniment.fp16.onnx",
                     "sherpa", "accompaniment.fp16.onnx", SPLEETER2_ACCOMP_BYTES,
+                    SHA_SPLEETER2_ACCOMP,
                 ),
             ),
         ),
@@ -197,10 +231,10 @@ object ModelCatalog {
                 "体积 4 × 19.7MB，音质与 2 轨同代（只提升粒度）。",
             sourceUrl = "https://huggingface.co/$HF_SPLEETER4",
             files = listOf(
-                ModelFile("/$HF_SPLEETER4/resolve/main/vocals.fp16.onnx", "spleeter4", "vocals.fp16.onnx", SPLEETER4_BYTES),
-                ModelFile("/$HF_SPLEETER4/resolve/main/drums.fp16.onnx", "spleeter4", "drums.fp16.onnx", SPLEETER4_BYTES),
-                ModelFile("/$HF_SPLEETER4/resolve/main/bass.fp16.onnx", "spleeter4", "bass.fp16.onnx", SPLEETER4_BYTES),
-                ModelFile("/$HF_SPLEETER4/resolve/main/other.fp16.onnx", "spleeter4", "other.fp16.onnx", SPLEETER4_BYTES),
+                ModelFile("/$HF_SPLEETER4/resolve/main/vocals.fp16.onnx", "spleeter4", "vocals.fp16.onnx", SPLEETER4_BYTES, SHA_SPLEETER4_VOCALS),
+                ModelFile("/$HF_SPLEETER4/resolve/main/drums.fp16.onnx", "spleeter4", "drums.fp16.onnx", SPLEETER4_BYTES, SHA_SPLEETER4_DRUMS),
+                ModelFile("/$HF_SPLEETER4/resolve/main/bass.fp16.onnx", "spleeter4", "bass.fp16.onnx", SPLEETER4_BYTES, SHA_SPLEETER4_BASS),
+                ModelFile("/$HF_SPLEETER4/resolve/main/other.fp16.onnx", "spleeter4", "other.fp16.onnx", SPLEETER4_BYTES, SHA_SPLEETER4_OTHER),
             ),
         ),
         ModelPackInfo(
@@ -212,7 +246,10 @@ object ModelCatalog {
                 "⚠️ 体积 172MB，仅建议旗舰机；中端机分离慢于播放。",
             sourceUrl = "https://huggingface.co/$HF_DEMUCS",
             files = listOf(
-                ModelFile("/$HF_DEMUCS/resolve/main/htdemucs_embedded.onnx", "demucs", "htdemucs_embedded.onnx", 180_534_758L),
+                ModelFile(
+                    "/$HF_DEMUCS/resolve/main/htdemucs_embedded.onnx",
+                    "demucs", "htdemucs_embedded.onnx", 180_534_758L, SHA_DEMUCS,
+                ),
             ),
         ),
     ) + uvrPacks()
@@ -244,6 +281,7 @@ object ModelCatalog {
             file: String,
             bytes: Long,
             speedNote: String,
+            sha: String,
         ) = ModelPackInfo(
             pack = p,
             displayName = title,
@@ -260,6 +298,7 @@ object ModelCatalog {
                     targetSubdir = "uvr",
                     fileName = file.substringAfterLast('/'),
                     expectedBytes = bytes,
+                    sha256 = sha,
                 ),
             ),
         )
@@ -267,23 +306,23 @@ object ModelCatalog {
         return listOf(
             pack(
                 ModelPack.UVR_9482, "UVR 9482（UVR 里最快）",
-                "$GH_UVR_BASE/UVR_MDXNET_9482.onnx", UVR_SMALL_BYTES, "实测 1.03×",
+                "$GH_UVR_BASE/UVR_MDXNET_9482.onnx", UVR_SMALL_BYTES, "实测 1.03×", SHA_UVR_9482,
             ),
             pack(
                 ModelPack.UVR_KARA, "UVR KARA（伴奏/卡拉OK 导向）",
-                "$GH_UVR_BASE/UVR_MDXNET_KARA.onnx", UVR_SMALL_BYTES, "实测 1.03×",
+                "$GH_UVR_BASE/UVR_MDXNET_KARA.onnx", UVR_SMALL_BYTES, "实测 1.03×", SHA_UVR_KARA,
             ),
             pack(
                 ModelPack.UVR_VOC_FT, "UVR Voc_FT（人声导向）",
-                "$GH_UVR_BASE/UVR-MDX-NET-Voc_FT.onnx", UVR_LARGE_BYTES, "实测 0.34×，4 分钟歌约 12 分钟",
+                "$GH_UVR_BASE/UVR-MDX-NET-Voc_FT.onnx", UVR_LARGE_BYTES, "实测 0.34×，4 分钟歌约 12 分钟", SHA_UVR_VOC_FT,
             ),
             pack(
                 ModelPack.UVR_INST_HQ_3, "UVR Inst_HQ_3（去人声最强）",
-                "$GH_UVR_BASE/UVR-MDX-NET-Inst_HQ_3.onnx", UVR_LARGE_BYTES, "实测 0.34×，4 分钟歌约 12 分钟",
+                "$GH_UVR_BASE/UVR-MDX-NET-Inst_HQ_3.onnx", UVR_LARGE_BYTES, "实测 0.34×，4 分钟歌约 12 分钟", SHA_UVR_INST_HQ_3,
             ),
             pack(
                 ModelPack.UVR_MAIN, "UVR Main（通用）",
-                "$GH_UVR_BASE/UVR_MDXNET_Main.onnx", UVR_LARGE_BYTES, "实测 0.34×，4 分钟歌约 12 分钟",
+                "$GH_UVR_BASE/UVR_MDXNET_Main.onnx", UVR_LARGE_BYTES, "实测 0.34×，4 分钟歌约 12 分钟", SHA_UVR_MAIN,
             ),
         ) + experimentalPacks()
     }
@@ -313,6 +352,7 @@ object ModelCatalog {
             file: String,
             bytes: Long,
             speedNote: String,
+            sha: String,
         ) = ModelPackInfo(
             pack = p,
             displayName = "【实验】$title",
@@ -331,27 +371,28 @@ object ModelCatalog {
                     targetSubdir = "uvr",
                     fileName = file,
                     expectedBytes = bytes,
+                    sha256 = sha,
                 ),
             ),
         )
 
         return listOf(
             // ---- Inst 系：64MB（≈0.35×）----
-            exp(ModelPack.UVR_INST_1, "UVR Inst_1", "UVR-MDX-NET-Inst_1.onnx", 66_759_519L, "实测 ~0.35×"),
-            exp(ModelPack.UVR_INST_2, "UVR Inst_2", "UVR-MDX-NET-Inst_2.onnx", 66_759_519L, "实测 ~0.35×"),
-            exp(ModelPack.UVR_INST_3, "UVR Inst_3", "UVR-MDX-NET-Inst_3.onnx", 66_759_519L, "实测 ~0.35×"),
-            exp(ModelPack.UVR_INST_HQ_1, "UVR Inst_HQ_1", "UVR-MDX-NET-Inst_HQ_1.onnx", 66_759_522L, "实测 ~0.35×"),
-            exp(ModelPack.UVR_INST_HQ_2, "UVR Inst_HQ_2", "UVR-MDX-NET-Inst_HQ_2.onnx", 66_759_522L, "实测 ~0.35×"),
+            exp(ModelPack.UVR_INST_1, "UVR Inst_1", "UVR-MDX-NET-Inst_1.onnx", 66_759_519L, "实测 ~0.35×", SHA_UVR_INST_1),
+            exp(ModelPack.UVR_INST_2, "UVR Inst_2", "UVR-MDX-NET-Inst_2.onnx", 66_759_519L, "实测 ~0.35×", SHA_UVR_INST_2),
+            exp(ModelPack.UVR_INST_3, "UVR Inst_3", "UVR-MDX-NET-Inst_3.onnx", 66_759_519L, "实测 ~0.35×", SHA_UVR_INST_3),
+            exp(ModelPack.UVR_INST_HQ_1, "UVR Inst_HQ_1", "UVR-MDX-NET-Inst_HQ_1.onnx", 66_759_522L, "实测 ~0.35×", SHA_UVR_INST_HQ_1),
+            exp(ModelPack.UVR_INST_HQ_2, "UVR Inst_HQ_2", "UVR-MDX-NET-Inst_HQ_2.onnx", 66_759_522L, "实测 ~0.35×", SHA_UVR_INST_HQ_2),
             // ---- Inst 系：56MB（≈0.41×，比 HQ_3 快 20%）----
-            exp(ModelPack.UVR_INST_HQ_4, "UVR Inst_HQ_4", "UVR-MDX-NET-Inst_HQ_4.onnx", 59_074_650L, "实测 ~0.41×"),
-            exp(ModelPack.UVR_INST_HQ_5, "UVR Inst_HQ_5", "UVR-MDX-NET-Inst_HQ_5.onnx", 59_074_650L, "实测 ~0.41×"),
+            exp(ModelPack.UVR_INST_HQ_4, "UVR Inst_HQ_4", "UVR-MDX-NET-Inst_HQ_4.onnx", 59_074_650L, "实测 ~0.41×", SHA_UVR_INST_HQ_4),
+            exp(ModelPack.UVR_INST_HQ_5, "UVR Inst_HQ_5", "UVR-MDX-NET-Inst_HQ_5.onnx", 59_074_650L, "实测 ~0.41×", SHA_UVR_INST_HQ_5),
             // ---- Inst 系：50MB（≈0.52×）----
-            exp(ModelPack.UVR_INST_MAIN, "UVR Inst_Main", "UVR-MDX-NET-Inst_Main.onnx", 52_787_034L, "实测 ~0.52×"),
-            exp(ModelPack.UVR_KARA_2, "UVR KARA_2", "UVR_MDXNET_KARA_2.onnx", 52_787_030L, "实测 ~0.52×"),
+            exp(ModelPack.UVR_INST_MAIN, "UVR Inst_Main", "UVR-MDX-NET-Inst_Main.onnx", 52_787_034L, "实测 ~0.52×", SHA_UVR_INST_MAIN),
+            exp(ModelPack.UVR_KARA_2, "UVR KARA_2", "UVR_MDXNET_KARA_2.onnx", 52_787_030L, "实测 ~0.52×", SHA_UVR_KARA_2),
             // ---- 28MB 系（≈1.0×，UVR 里最快）----
-            exp(ModelPack.UVR_9703, "UVR 1_9703", "UVR_MDXNET_1_9703.onnx", 29_704_740L, "实测 ~1.00×"),
-            exp(ModelPack.UVR_9682, "UVR 2_9682", "UVR_MDXNET_2_9682.onnx", 29_704_740L, "实测 ~1.00×"),
-            exp(ModelPack.UVR_9662, "UVR 3_9662", "UVR_MDXNET_3_9662.onnx", 29_704_740L, "实测 ~1.00×"),
+            exp(ModelPack.UVR_9703, "UVR 1_9703", "UVR_MDXNET_1_9703.onnx", 29_704_740L, "实测 ~1.00×", SHA_UVR_9703),
+            exp(ModelPack.UVR_9682, "UVR 2_9682", "UVR_MDXNET_2_9682.onnx", 29_704_740L, "实测 ~1.00×", SHA_UVR_9682),
+            exp(ModelPack.UVR_9662, "UVR 3_9662", "UVR_MDXNET_3_9662.onnx", 29_704_740L, "实测 ~1.00×", SHA_UVR_9662),
         )
     }
 

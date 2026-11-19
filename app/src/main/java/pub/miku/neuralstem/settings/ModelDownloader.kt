@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
+import java.security.MessageDigest
 import kotlin.math.abs
 
 /**
@@ -183,15 +184,15 @@ class ModelDownloader(private val filesDir: File) {
                 val dir = File(filesDir, f.targetSubdir).apply { mkdirs() }
                 val target = File(dir, f.fileName)
 
-                // 已存在且大小合理 → 跳过（已下完的文件不重下）
-                // 容差同 ModelCatalog.isInstalled（fp16 头部长度会差几十字节）
-                if (target.exists() && target.length() > 0L &&
-                    (f.expectedBytes <= 0L ||
-                        abs(target.length() - f.expectedBytes) <= 64L * 1024)
-                ) {
+                // 已存在且大小/哈希都匹配 → 跳过；哈希不匹配则删掉重下。
+                if (isUsableExisting(target, f)) {
                     done += target.length()
                     setState(pack, State.Downloading(done, total, f.fileName))
                     continue
+                }
+                if (target.exists()) {
+                    Log.w(TAG, "existing model failed integrity check, re-download: ${target.name}")
+                    if (!target.delete()) throw IOException("无法删除损坏文件 ${target.name}")
                 }
 
                 val part = File(dir, "${f.fileName}.part")
@@ -203,6 +204,7 @@ class ModelDownloader(private val filesDir: File) {
                     done += delta
                     setState(pack, State.Downloading(done, total, f.fileName))
                 }
+                verifySha256(part, f)
                 if (!part.renameTo(target)) {
                     throw IOException("无法重命名 ${part.name} → ${target.name}")
                 }
@@ -281,6 +283,32 @@ class ModelDownloader(private val filesDir: File) {
         return ok
     }
 
+    /** 已有文件：大小容差 + 官方 SHA-256 都匹配才算可复用。 */
+    internal fun isUsableExisting(target: File, f: ModelFile): Boolean {
+        if (!target.exists() || target.length() <= 0L) return false
+        if (f.expectedBytes > 0L &&
+            abs(target.length() - f.expectedBytes) > 64L * 1024
+        ) {
+            return false
+        }
+        if (f.sha256.isBlank()) return true
+        return sha256Hex(target).equals(f.sha256, ignoreCase = true)
+    }
+
+    /** 校验刚下载完的 .part；失败删除临时文件并抛错。 */
+    internal fun verifySha256(part: File, f: ModelFile) {
+        if (f.sha256.isBlank()) return
+        val actual = sha256Hex(part)
+        if (!actual.equals(f.sha256, ignoreCase = true)) {
+            runCatching { part.delete() }
+            throw IOException(
+                "模型文件 SHA-256 校验失败：${f.fileName} " +
+                    "expected=${f.sha256} actual=$actual",
+            )
+        }
+        Log.i(TAG, "SHA-256 ok: ${f.fileName}")
+    }
+
     /**
      * 下载单个文件到 [dest]，按块回调增量字节。
      *
@@ -344,4 +372,19 @@ class ModelDownloader(private val filesDir: File) {
         const val READ_TIMEOUT_MS = 30_000
         const val BUF_SIZE = 1 shl 16
     }
+}
+
+
+/** 流式 SHA-256（小写 hex）；供下载校验与单测共用。 */
+internal fun sha256Hex(file: File): String {
+    val md = MessageDigest.getInstance("SHA-256")
+    file.inputStream().use { input ->
+        val buf = ByteArray(1 shl 16)
+        while (true) {
+            val n = input.read(buf)
+            if (n <= 0) break
+            md.update(buf, 0, n)
+        }
+    }
+    return md.digest().joinToString("") { "%02x".format(it) }
 }

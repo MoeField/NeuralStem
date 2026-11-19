@@ -118,6 +118,15 @@
 - JVM **433/0**（M1 reducer 52 + M2 controller 7 + 原有 374）；
   真机 edge fast path、4-stem cache/启动、开关 off/on 通过。
 
+## v0.2.37：模型供应链 P2.6
+
+- `ModelFile` 增加官方 `sha256`；覆盖 20 个模型包共 24 个文件（HF LFS `lfs.oid` / GitHub Release asset digest）。
+- 下载到 `.part` 后先校验 SHA-256，再原子 rename；不匹配删除临时文件并报错。
+- 已有文件复用前也做大小 + SHA-256 校验；损坏文件自动删除并重下。
+- 新增 `ModelCatalogIntegrityTest`、`ModelDownloaderIntegrityTest`；JVM **481/0**。
+- 真实 HF 文件已复核：`vocals.fp16.onnx` = `24cef8...c7b668`，与目录一致。
+- 设备侧真实 UVR 下载被 `api.gitproxy.dev` DNS 拦截，未能完成端到端下载；属于网络问题。
+
 ## v0.2.36：发布门禁 P2.7
 
 - `versionCode` 改为 `major*10000 + minor*100 + patch`，由 tag/CI 派生；`v0.2.36` → 236。
