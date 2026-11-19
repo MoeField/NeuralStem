@@ -4,6 +4,7 @@ import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.io.FileOutputStream
 
 /**
  * ★边播两阶段（2026-10-20）：**已分离区间清单**。
@@ -191,12 +192,17 @@ data class RangeManifest(
         runCatching {
             dir.mkdirs()
             val tmp = File(dir, "$FILE_NAME.tmp")
-            tmp.writeText(o.toString())
+            val text = o.toString()
+            // 先 fsync tmp，再 rename；POSIX rename 可直接覆盖 target，
+            // 不要先 delete target（delete 与 rename 之间被杀会丢整个 manifest）。
+            FileOutputStream(tmp).use { out ->
+                out.write(text.toByteArray(Charsets.UTF_8))
+                out.fd.sync()
+            }
             val target = File(dir, FILE_NAME)
-            if (target.exists()) target.delete()
             if (!tmp.renameTo(target)) {
-                // renameTo 在某些文件系统上会失败 → 回退到直接写
-                target.writeText(o.toString())
+                // 极少数文件系统不支持同目录 rename → 退化为覆盖写（仍比先删后写安全）
+                target.writeText(text)
                 tmp.delete()
             }
         }.onFailure { Log.w(TAG, "manifest 写入失败", it) }

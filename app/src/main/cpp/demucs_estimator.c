@@ -117,6 +117,11 @@ Java_pub_miku_neuralstem_spike_DemucsEstimator_nativeEstimate(
     if (!wave || !spec) { LOGE("malloc failed"); free(wave); free(spec); return NULL; }
     (*env)->GetFloatArrayRegion(env, j_wave, 0, 2 * WAVE_LEN, wave);
     (*env)->GetFloatArrayRegion(env, j_spec, 0, SPEC_LEN, spec);
+    if ((*env)->ExceptionCheck(env)) {
+        LOGE("GetFloatArrayRegion failed");
+        free(wave); free(spec);
+        return NULL;
+    }
 
     const int64_t shapeWave[3] = {1, 2, WAVE_LEN};
     const int64_t shapeSpec[4] = {1, 4, 2048, 336};
@@ -144,18 +149,36 @@ Java_pub_miku_neuralstem_spike_DemucsEstimator_nativeEstimate(
 
     // 拷回 Java
     jclass floatArrCls = (*env)->FindClass(env, "[F");
+    if (!floatArrCls) goto cleanup;
     jobjectArray result = (*env)->NewObjectArray(env, 2, floatArrCls, NULL);
+    if (!result) {
+        LOGE("NewObjectArray failed");
+        goto cleanup;
+    }
     {
         float *p = NULL;
-        api->GetTensorMutableData(outputs[0], (void **)&p);
+        if (!outputs[0] || api->GetTensorMutableData(outputs[0], (void **)&p) != NULL || !p) {
+            LOGE("GetTensorMutableData(output) failed");
+            goto cleanup;
+        }
         jfloatArray a = (*env)->NewFloatArray(env, OUT_SPEC_LEN);
+        if (!a) { LOGE("NewFloatArray spec failed"); goto cleanup; }
         (*env)->SetFloatArrayRegion(env, a, 0, OUT_SPEC_LEN, p);
+        if ((*env)->ExceptionCheck(env)) { LOGE("Set spec failed"); goto cleanup; }
         (*env)->SetObjectArrayElement(env, result, 0, a);
+        (*env)->DeleteLocalRef(env, a);
 
-        api->GetTensorMutableData(outputs[1], (void **)&p);
+        p = NULL;
+        if (!outputs[1] || api->GetTensorMutableData(outputs[1], (void **)&p) != NULL || !p) {
+            LOGE("GetTensorMutableData(add_67) failed");
+            goto cleanup;
+        }
         jfloatArray b = (*env)->NewFloatArray(env, OUT_WAVE_LEN);
+        if (!b) { LOGE("NewFloatArray wave failed"); goto cleanup; }
         (*env)->SetFloatArrayRegion(env, b, 0, OUT_WAVE_LEN, p);
+        if ((*env)->ExceptionCheck(env)) { LOGE("Set wave failed"); goto cleanup; }
         (*env)->SetObjectArrayElement(env, result, 1, b);
+        (*env)->DeleteLocalRef(env, b);
     }
 
     free(wave); free(spec);

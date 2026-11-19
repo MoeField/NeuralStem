@@ -239,9 +239,15 @@ class WavReader private constructor(
     constructor(file: File) : this(WavRandomAccess.fromFile(file), file.name)
 
     init {
-        header = WavIo.parseHeader(src, label)
-        val actualDataLen = minOf(header.dataLen, src.length - header.dataPos).toInt()
-        info = WavIo.WavInfo(header.channels, header.sampleRate, actualDataLen / (2 * header.channels))
+        try {
+            header = WavIo.parseHeader(src, label)
+            val actualDataLen = minOf(header.dataLen, src.length - header.dataPos).toInt()
+            info = WavIo.WavInfo(header.channels, header.sampleRate, actualDataLen / (2 * header.channels))
+        } catch (t: Throwable) {
+            // 构造失败（损坏/截断 WAV）时源 fd 已打开；不在这里 close 会泄漏到 GC。
+            runCatching { src.close() }
+            throw t
+        }
     }
 
     val channels: Int get() = info.channels

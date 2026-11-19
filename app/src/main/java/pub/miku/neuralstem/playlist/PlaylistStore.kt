@@ -238,6 +238,37 @@ class PlaylistStore internal constructor(private val dir: File) {
         }
     }
 
+    /**
+     * ★P2.2：用 VM 的编辑快照落盘，但**进度字段以磁盘为准**。
+     *
+     * 场景：播放器直接 `recordProgress()` 写盘；PlaylistViewModel 随后用旧 `_lists`
+     * 整份 save，会把刚写入的续播位置覆盖回旧值。这里在 IO_LOCK 内重新 load，
+     * 只把磁盘上仍存在的进度合并回来（曲目被删/清空时自然清除）。
+     */
+    fun saveMerged(incoming: List<Playlist>) {
+        // 空快照永远不是合法状态（默认歌单不可删）；防止“加载完成前误保存”清空歌单。
+        if (incoming.isEmpty()) {
+            Log.w(TAG, "saveMerged refused: empty snapshot")
+            return
+        }
+        synchronized(IO_LOCK) {
+            val disk = load()
+            save(mergeDiskProgress(incoming, disk))
+        }
+    }
+
+    /** 纯函数，便于 JVM 单测：incoming 控制歌单/曲目；progress 从 disk 保留。 */
+    internal fun mergeDiskProgress(
+        incoming: List<Playlist>,
+        disk: List<Playlist>,
+    ): List<Playlist> = incoming.map { p ->
+        val d = disk.firstOrNull { it.id == p.id } ?: return@map p
+        val last = d.lastPlayedUri?.takeIf { uri -> p.tracks.any { it.uri == uri } }
+        val pos = if (last != null) d.lastPositionMs else 0L
+        if (p.lastPlayedUri == last && p.lastPositionMs == pos) p
+        else p.copy(lastPlayedUri = last, lastPositionMs = pos)
+    }
+
     fun save(list: List<Playlist>) {
         // ★2026-11-09（P0-2）：tmp + fsync + rename 原子替换 + 进程内串行化。
         //   旧实现直接 `file.writeText`，多写者（进度落盘/歌单编辑）或被杀会截断 JSON；

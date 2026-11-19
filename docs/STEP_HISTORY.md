@@ -118,6 +118,18 @@
 - JVM **433/0**（M1 reducer 52 + M2 controller 7 + 原有 374）；
   真机 edge fast path、4-stem cache/启动、开关 off/on 通过。
 
+## v0.2.38：A 阶段数据完整性
+
+- **P2.2 歌单陈旧快照**：`PlaylistStore.saveMerged()` 在 IO_LOCK 内重新 load，磁盘进度优先；VM 异步 persist；空快照/未加载完成拒绝落盘。
+- **P2.1 主线程 I/O**：歌单 load/save 移到单线程 IO；新增 `PlaylistStoreMergeTest`。
+- **P2.11 RangeManifest**：先 fsync tmp 再 rename，不再先 delete target；JVM 覆盖写入测试因 Android JSON stub 未纳入。
+- **P2.12 fd 泄漏**：`WavReader` 构造失败 close source；`decodeToTempWav` writer 放 finally。
+- **P2.4 JNI 判空**：sherpa/demucs C 层补数组/指针/异常检查；Kotlin 检查 native null。
+- **P2.5 流式 PCM**：流式路径按 `KEY_PCM_ENCODING` 支持 16-bit/float，不再一律 asShortBuffer。
+- **P2.3 多轨失败**：`onCustomCommand` 整体捕获，失败时 abort 多轨并回错误，不冒到 MediaSession 主线程。
+- JVM **483/0**；设备 smoke：歌单异步加载正常。
+- 说明：RangeManifest 文件写入单测受 Android `org.json` stub 限制，未加入 JVM；P2.4 OOM 路径未做真机注入。
+
 ## v0.2.37：模型供应链 P2.6
 
 - `ModelFile` 增加官方 `sha256`；覆盖 20 个模型包共 24 个文件（HF LFS `lfs.oid` / GitHub Release asset digest）。

@@ -31,8 +31,24 @@ JNIEXPORT jlong JNICALL
 Java_pub_miku_neuralstem_spike_SherpaSourceSeparation_nativeCreate(
     JNIEnv *env, jclass clazz, jstring j_vocals, jstring j_accomp,
     jint num_threads, jint mode) {
+  if (!j_vocals) {
+    LOGE("nativeCreate: j_vocals is null");
+    return (jlong)0;
+  }
   const char *vocals = (*env)->GetStringUTFChars(env, j_vocals, NULL);
-  const char *accomp = j_accomp ? (*env)->GetStringUTFChars(env, j_accomp, NULL) : NULL;
+  if (!vocals) {
+    LOGE("nativeCreate: GetStringUTFChars(vocals) failed");
+    return (jlong)0;
+  }
+  const char *accomp = NULL;
+  if (j_accomp) {
+    accomp = (*env)->GetStringUTFChars(env, j_accomp, NULL);
+    if (!accomp) {
+      LOGE("nativeCreate: GetStringUTFChars(accomp) failed");
+      (*env)->ReleaseStringUTFChars(env, j_vocals, vocals);
+      return (jlong)0;
+    }
+  }
 
   SherpaOnnxOfflineSourceSeparationModelConfig model;
   memset(&model, 0, sizeof(model));
@@ -80,7 +96,7 @@ Java_pub_miku_neuralstem_spike_SherpaSourceSeparation_nativeCreate(
 
 // 把 C stems 结果封装为 Kotlin SeparationResult(vocals/accompaniment 交织)
 static jobject MakeResult(JNIEnv *env, const SherpaOnnxSourceSeparationOutput *out) {
-  if (!out || out->num_stems < 2) {
+  if (!out || out->num_stems < 2 || !out->stems) {
     LOGE("unexpected stems count=%d", out ? out->num_stems : -1);
     return NULL;
   }
@@ -103,13 +119,24 @@ static jobject MakeResult(JNIEnv *env, const SherpaOnnxSourceSeparationOutput *o
     const SherpaOnnxSourceSeparationStem *stem = &out->stems[s];
     int channels = stem->num_channels;
     int frames = stem->n;
+    if (!stem->samples || channels <= 0 || frames <= 0) {
+      LOGE("invalid stem[%d]: channels=%d frames=%d samples=%p", s, channels, frames, (void*)stem->samples);
+      goto fail;
+    }
 
     jfloatArray j_inter = (*env)->NewFloatArray(env, frames * channels);
-    if (!j_inter) return NULL;
+    if (!j_inter) {
+      LOGE("NewFloatArray failed (stem=%d len=%d)", s, frames * channels);
+      goto fail;
+    }
 
     // planar → 交织
-    float *inter = (float *)malloc(sizeof(float) * frames * channels);
-    if (!inter) return NULL;
+    float *inter = (float *)malloc(sizeof(float) * (size_t)frames * (size_t)channels);
+    if (!inter) {
+      LOGE("malloc inter failed (stem=%d)", s);
+      (*env)->DeleteLocalRef(env, j_inter);
+      goto fail;
+    }
     for (int f = 0; f < frames; ++f) {
       for (int c = 0; c < channels; ++c) {
         inter[f * channels + c] = stem->samples[c][f];
@@ -117,6 +144,11 @@ static jobject MakeResult(JNIEnv *env, const SherpaOnnxSourceSeparationOutput *o
     }
     (*env)->SetFloatArrayRegion(env, j_inter, 0, frames * channels, inter);
     free(inter);
+    if ((*env)->ExceptionCheck(env)) {
+      LOGE("SetFloatArrayRegion failed (stem=%d)", s);
+      (*env)->DeleteLocalRef(env, j_inter);
+      goto fail;
+    }
 
     if (s == 0) j_vocals = j_inter; else j_accomp = j_inter;
   }
@@ -124,7 +156,15 @@ static jobject MakeResult(JNIEnv *env, const SherpaOnnxSourceSeparationOutput *o
 
   jobject result = (*env)->NewObject(env, cls, ctor,
       j_vocals, j_accomp, out->sample_rate);
+  if (!result) {
+    LOGE("NewObject SeparationResult failed");
+  }
   return result;
+
+fail:
+  if (j_vocals) (*env)->DeleteLocalRef(env, j_vocals);
+  if (j_accomp) (*env)->DeleteLocalRef(env, j_accomp);
+  return NULL;
 }
 
 JNIEXPORT jobject JNICALL
@@ -139,17 +179,43 @@ Java_pub_miku_neuralstem_spike_SherpaSourceSeparation_nativeSeparate(
   }
 
   // j_planar: float[][] → 稳定内存的 float* const[](拷贝一份,避免 pin JVM 数组跑长推理)
+  if (!j_planar || channels <= 0 || frames <= 0) {
+    LOGE("invalid separate args: planar=%p channels=%d frames=%d", (void*)j_planar, channels, frames);
+    return NULL;
+  }
+  if ((*env)->GetArrayLength(env, j_planar) < channels) {
+    LOGE("planar length %d < channels %d", (int)(*env)->GetArrayLength(env, j_planar), channels);
+    return NULL;
+  }
   const float **samples = (const float **)malloc(sizeof(float *) * channels);
   if (!samples) return NULL;
   for (int c = 0; c < channels; ++c) {
+    samples[c] = NULL;
     jfloatArray j_ch = (jfloatArray)(*env)->GetObjectArrayElement(env, j_planar, c);
-    jfloat *ch = (*env)->GetFloatArrayElements(env, j_ch, NULL);
-    float *copy = (float *)malloc(sizeof(float) * frames);
-    if (!copy) {
-      (*env)->ReleaseFloatArrayElements(env, j_ch, ch, JNI_ABORT);
-      return NULL;
+    if (!j_ch) {
+      LOGE("planar[%d] is null", c);
+      goto input_fail;
     }
-    memcpy(copy, ch, sizeof(float) * frames);
+    jfloat *ch = (*env)->GetFloatArrayElements(env, j_ch, NULL);
+    if (!ch) {
+      LOGE("GetFloatArrayElements failed (ch=%d)", c);
+      (*env)->DeleteLocalRef(env, j_ch);
+      goto input_fail;
+    }
+    if ((*env)->GetArrayLength(env, j_ch) < frames) {
+      LOGE("planar[%d] length %d < frames %d", c, (int)(*env)->GetArrayLength(env, j_ch), frames);
+      (*env)->ReleaseFloatArrayElements(env, j_ch, ch, JNI_ABORT);
+      (*env)->DeleteLocalRef(env, j_ch);
+      goto input_fail;
+    }
+    float *copy = (float *)malloc(sizeof(float) * (size_t)frames);
+    if (!copy) {
+      LOGE("malloc copy failed (ch=%d)", c);
+      (*env)->ReleaseFloatArrayElements(env, j_ch, ch, JNI_ABORT);
+      (*env)->DeleteLocalRef(env, j_ch);
+      goto input_fail;
+    }
+    memcpy(copy, ch, sizeof(float) * (size_t)frames);
     (*env)->ReleaseFloatArrayElements(env, j_ch, ch, JNI_ABORT);
     (*env)->DeleteLocalRef(env, j_ch);
     samples[c] = copy;
@@ -171,6 +237,11 @@ Java_pub_miku_neuralstem_spike_SherpaSourceSeparation_nativeSeparate(
   jobject result = MakeResult(env, out);
   SherpaOnnxDestroySourceSeparationOutput(out);
   return result;
+
+input_fail:
+  for (int c = 0; c < channels; ++c) free((void *)samples[c]);
+  free(samples);
+  return NULL;
 }
 
 // ---------- release ----------

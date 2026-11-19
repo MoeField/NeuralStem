@@ -35,6 +35,7 @@ class SherpaSourceSeparation private constructor(
         }
 
         val stems = nativeSeparate(nativeHandle, planar, channels, frames, sampleRate)
+            ?: error("nativeSeparate returned null (JNI 失败/OOM)")
         return stems
     }
 
@@ -63,7 +64,7 @@ class SherpaSourceSeparation private constructor(
         channels: Int,
         frames: Int,
         sampleRate: Int,
-    ): SeparationResult
+    ): SeparationResult?
 
     private external fun nativeRelease(handle: Long)
 

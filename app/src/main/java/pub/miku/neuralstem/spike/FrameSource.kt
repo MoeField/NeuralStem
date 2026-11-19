@@ -337,7 +337,7 @@ object SeparationInput {
                 var guard = 0
                 var writer: WavWriter? = null
                 var outRate = 44_100
-
+                try {
                 while (!outputDone && guard++ < 200_000) {
                     if (!inputDone) {
                         val inBuf = codec.dequeueInputBuffer(10_000)
@@ -419,6 +419,10 @@ object SeparationInput {
                         "frames=${writer?.framesWritten} eos=$outputDone",
                 )
                 return outputDone && writer != null && temp.length() > 44
+                } finally {
+                    // 异常路径也关闭 writer，避免临时 WAV 句柄泄漏到 GC。
+                    runCatching { writer?.close() }
+                }
             } finally {
                 codec.stop()
                 codec.release()

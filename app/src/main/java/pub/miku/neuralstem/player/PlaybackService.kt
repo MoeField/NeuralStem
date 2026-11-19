@@ -708,7 +708,8 @@ class PlaybackService : MediaSessionService() {
             args: Bundle,
         ): ListenableFuture<SessionResult> {
             Log.i(TAG, "onCustomCommand: ${customCommand.customAction}")
-            val result = when (customCommand.customAction) {
+            val result = try {
+                when (customCommand.customAction) {
                 MultiTrackSession.CMD_LOAD -> handleLoadMultiTrack(args)
                 MultiTrackSession.CMD_LOAD_STREAM -> handleLoadStream(args)
                 MultiTrackSession.CMD_SET_VOLUME -> handleSetVolume(args)
@@ -757,8 +758,15 @@ class PlaybackService : MediaSessionService() {
                 MultiTrackSession.CMD_RESET_EQ -> handleResetEq()
                 MultiTrackSession.CMD_APPLY_EQ_TEST_CURVE -> handleApplyEqTestCurve()
                 MultiTrackSession.CMD_APPLY_EQ_DEFAULT_CURVE -> handleApplyEqDefaultCurve()
-                MultiTrackSession.CMD_DEBUG_POS -> handleDebugPos()
-                else -> SessionResult(SessionError.ERROR_NOT_SUPPORTED)
+                    MultiTrackSession.CMD_DEBUG_POS -> handleDebugPos()
+                    else -> SessionResult(SessionError.ERROR_NOT_SUPPORTED)
+                }
+            } catch (t: Throwable) {
+                // 自定义命令跑在 MediaSession 主线程；任何 require/IO 异常都不能冒出去。
+                Log.e(TAG, "onCustomCommand failed: ${customCommand.customAction}", t)
+                runCatching { multiTrack?.let { abortMultiLoad(it) } }
+                    .onFailure { Log.w(TAG, "abortMultiLoad after command failure failed", it) }
+                err("多轨命令失败: ${t.message ?: t.javaClass.simpleName}")
             }
             return Futures.immediateFuture(result)
         }

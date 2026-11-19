@@ -8,7 +8,9 @@ import android.util.Log
 import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -31,8 +33,23 @@ class PlaylistViewModel(app: Application) : AndroidViewModel(app) {
     /** 默认歌单 id（保证存在——由 store.load() 保证）。 */
     val defaultListId: String get() = store.defaultListId
 
-    private val _lists = MutableStateFlow(store.load())
+    // ★P2.1：歌单文件读写统一走单线程 IO，避免主线程 fsync/解析 1000+ 首。
+    private val ioWorker = CoroutineScope(
+        SupervisorJob() + Dispatchers.IO.limitedParallelism(1),
+    )
+
+    private val _lists = MutableStateFlow<List<PlaylistStore.Playlist>>(emptyList())
     val lists: StateFlow<List<PlaylistStore.Playlist>> = _lists.asStateFlow()
+
+    @Volatile private var loaded = false
+
+    init {
+        ioWorker.launch {
+            _lists.value = store.load()
+            loaded = true
+            ensureValidSelection()
+        }
+    }
 
     // ============================ ★R1：当前选中歌单（恒存在，不为空） ============================
     // 需求（用户定）：**任何时候都存在唯一“选中歌单”**；若未明确选中 / 选中的被删除 →
@@ -69,7 +86,15 @@ class PlaylistViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private fun persist() = store.save(_lists.value)
+    /** 异步落盘；saveMerged 在 IO_LOCK 内合并播放器直写的进度。 */
+    private fun persist() {
+        if (!loaded) {
+            Log.w(TAG, "persist skipped: playlists not loaded yet")
+            return
+        }
+        val snapshot = _lists.value
+        ioWorker.launch { store.saveMerged(snapshot) }
+    }
 
     /**
      * 重新从磁盘加载。
@@ -78,8 +103,11 @@ class PlaylistViewModel(app: Application) : AndroidViewModel(app) {
      * 而本 VM 的 `_lists` 是内存缓存 → 会显示旧数据。进入歌单页时调一次即可对齐。
      */
     fun reload() {
-        _lists.value = store.load()
-        ensureValidSelection()
+        ioWorker.launch {
+            _lists.value = store.load()
+            loaded = true
+            ensureValidSelection()
+        }
     }
 
     // ---------------- 新建 ----------------
