@@ -146,10 +146,10 @@ App 首次启动会让你跑一次**设备性能检测**，之后按本机实测
 如果遇到，重进一次模型库页面。
 
 **Q：分离完能导出吗？**
-可以，但**目前只支持 4 轨**：4 轨分离完成后，分离页的「导出到 Music/separate/」按钮会亮起，
+可以。2 轨和 4 轨分离完成后，分离页的「导出到 Music/separate/」按钮会亮起，
 导出无损 WAV 到 `Music/separate/<歌名>/<模型>/`（模型目录如 `spleeter-2stem` / `spleeter-4stem` / `demucs`）。
 
-2 轨（人声/伴奏）暂不支持导出——若需要，选一个 4 轨档位重新分离即可。
+前提是 `coverage.complete`：如果只做了快速/成本门控的局部分离，按钮不会亮，避免导出半截静音。
 
 **Q：边分离边播是什么意思？**
 不整首等完。开始分离后会先攒一段，够你连续听之后自动切过去，
@@ -233,6 +233,7 @@ CI 用 Repository Secrets（`KEYSTORE_BASE64` / `KEYSTORE_PASSWORD` / `KEY_ALIAS
 
 - [`docs/DEVELOP.md`](docs/DEVELOP.md)：构建、架构、关键不变量、常见坑、测试与发布。
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)：播放/分离/持久化不变量与被否决方案。
+- [`docs/REMEDIATION_STATUS.md`](docs/REMEDIATION_STATUS.md)：审计整改状态、验证缺口与后续版本计划。
 - [`docs/STEP_HISTORY.md`](docs/STEP_HISTORY.md)：阶段/版本改动历史与验证方式。
 - [`docs/LICENSING.md`](docs/LICENSING.md)：MIT / NCM / AVS3 参考实现边界。
 - [`docs/STATE_MODEL.md`](docs/STATE_MODEL.md)：分离状态模型重构设计稿。
