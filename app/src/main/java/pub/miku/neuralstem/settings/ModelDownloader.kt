@@ -117,10 +117,11 @@ class ModelDownloader(private val filesDir: File) {
      * 2. 若目标是 **github.com** 且该域名自己连不上 → 改写成代理前缀
      *    `https://api.gitproxy.dev/github.com/<path>`（Cloudflare 加速，实测可用）。
      */
-    private fun resolveUrl(f: ModelFile, base: String): String {
-        val raw = if (f.remotePath.startsWith("http")) f.remotePath else "$base${f.remotePath}"
-        return maybeProxyGithub(raw)
-    }
+    private fun rawUrl(f: ModelFile, base: String): String =
+        if (f.remotePath.startsWith("http")) f.remotePath else "$base${f.remotePath}"
+
+    private fun resolveUrl(f: ModelFile, base: String): String =
+        maybeProxyGithub(rawUrl(f, base))
 
     /**
      * GitHub ↔ 代理前缀改写。
@@ -200,9 +201,24 @@ class ModelDownloader(private val filesDir: File) {
 
                 setState(pack, State.Downloading(done, total, f.fileName))
                 // ★URL 组装 + 代理改写，见 [resolveUrl]
-                downloadOne(resolveUrl(f, base), part) { delta ->
-                    done += delta
-                    setState(pack, State.Downloading(done, total, f.fileName))
+                val direct = rawUrl(f, base)
+                val proxied = maybeProxyGithub(direct)
+                val beforeAttempt = done
+                try {
+                    downloadOne(proxied, part) { delta ->
+                        done += delta
+                        setState(pack, State.Downloading(done, total, f.fileName))
+                    }
+                } catch (t: Throwable) {
+                    // 代理 DNS/连接失败时回退直连；不要因为 api.gitproxy.dev 挂了就判死。
+                    if (proxied == direct) throw t
+                    Log.w(TAG, "proxy download failed, retry direct: ${t.message}", t)
+                    runCatching { part.delete() }
+                    done = beforeAttempt
+                    downloadOne(direct, part) { delta ->
+                        done += delta
+                        setState(pack, State.Downloading(done, total, f.fileName))
+                    }
                 }
                 verifySha256(part, f)
                 if (!part.renameTo(target)) {

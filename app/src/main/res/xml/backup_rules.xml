@@ -1,13 +1,17 @@
-<?xml version="1.0" encoding="utf-8"?><!--
-   Sample backup rules file; uncomment and customize as necessary.
-   See https://developer.android.com/guide/topics/data/autobackup
-   for details.
-   Note: This file is ignored for devices older than API 31
-   See https://developer.android.com/about/versions/12/backup-restore
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android 11- 的 Auto Backup 规则。
+  模型（sherpa/spleeter4/demucs/uvr）与分离/PCM/波形缓存都很大，且可由用户重新下载；
+  歌单里含本地媒体 URI，不应上传云端。只保留小的设置类数据。
 -->
 <full-backup-content>
-    <!--
-   <include domain="sharedpref" path="."/>
-   <exclude domain="sharedpref" path="device.xml"/>
--->
+    <exclude domain="file" path="sherpa" />
+    <exclude domain="file" path="spleeter4" />
+    <exclude domain="file" path="demucs" />
+    <exclude domain="file" path="uvr" />
+    <exclude domain="file" path="stems-cache" />
+    <exclude domain="file" path="pcm-cache" />
+    <exclude domain="file" path="waveform-cache" />
+    <exclude domain="file" path="playlists.json" />
+    <exclude domain="external" path="uvr" />
 </full-backup-content>

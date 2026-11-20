@@ -212,7 +212,7 @@ object NcmImporter {
         for (r in roots) {
             val dir = "$r/$NETEASE_REL"
             val exists = runCatching {
-                sh("[ -d \"$dir\" ] && echo yes || echo no").trim() == "yes"
+                sh("[ -d ${q(dir)} ] && echo yes || echo no").trim() == "yes"
             }.getOrDefault(false)
             diag("  exists? $dir -> $exists")
             if (exists) out += dir
@@ -260,7 +260,7 @@ object NcmImporter {
         //   `stat ... *.ncm` 展开后被拆成多个参数 → 失败。
         //   `find -printf '%s\t%f\n'` 每个文件一行，名字带空格也安全。
         val raw = runCatching {
-            sh("find \"$dir\" -maxdepth 1 -type f \\( $filter \\) -printf '%s\\t%f\\n' 2>/dev/null")
+            sh("find ${q(dir)} -maxdepth 1 -type f \\( $filter \\) -printf '%s\\t%f\\n' 2>/dev/null")
         }.getOrNull()
         if (raw.isNullOrBlank()) {
             // 回退：toybox 的 find 可能不支持 -printf → 用 ls -l 解析
@@ -302,7 +302,7 @@ object NcmImporter {
 
     /** 回退方案：解析 `ls -l`（toybox 的 find 无 -printf 时用）。 */
     private fun listNcmByLs(dir: String, audioOnly: Boolean): List<Entry> {
-        val raw = runCatching { sh("ls -l \"$dir\" 2>/dev/null") }.getOrDefault("")
+        val raw = runCatching { shArgv(arrayOf("ls", "-l", dir)) }.getOrDefault("")
         val out = mutableListOf<Entry>()
         for (line in raw.lineSequence()) {
             // 形如：-rwxrwx--- 1 root media_rw 20161389 2026-09-18 20:50 名字.ncm
@@ -326,7 +326,7 @@ object NcmImporter {
      * `od` 的输出格式：`0000000 0000 001c 6674 7970`，这里把字段 2.. 拼起来。
      */
     fun headHex(path: String, n: Int = 16): String = runCatching {
-        val out = sh("od -An -tx1 -N $n \"$path\" 2>/dev/null")
+        val out = shArgv(arrayOf("od", "-An", "-tx1", "-N", n.toString(), path))
         out.split(Regex("\\s+")).filter { it.length == 2 }.joinToString(" ") { it.lowercase() }
     }.getOrDefault("?")
 
@@ -344,7 +344,7 @@ object NcmImporter {
         //   `sh()` 内部用 bufferedReader 读，会把非 UTF-8 字节变成替换符，
         //   MP4 是二进制，走字符流直接报废。
         val process = newShizukuProcess(
-            arrayOf("sh", "-c", "dd if=\"$path\" bs=4096 count=${(n + 4095) / 4096} 2>/dev/null"),
+            arrayOf("dd", "if=$path", "bs=4096", "count=${(n + 4095) / 4096}"),
         )
         val out = ByteArrayOutputStream(minOf(n, 256 * 1024))
         process.inputStream.use { ins ->
@@ -370,7 +370,7 @@ object NcmImporter {
      * @return `[size, mtimeSec]`；失败返回 null（调用方跳过缓存）
      */
     fun statFor(path: String): LongArray? = runCatching {
-        val out = sh("stat -c '%s %Y' \"$path\" 2>/dev/null").trim()
+        val out = shArgv(arrayOf("stat", "-c", "%s %Y", path)).trim()
         val parts = out.split(' ')
         if (parts.size < 2) return@runCatching null
         val size = parts[0].toLongOrNull() ?: return@runCatching null
@@ -388,7 +388,7 @@ object NcmImporter {
         val copied = mutableListOf<String>()
         val failed = mutableListOf<Pair<String, String>>()
 
-        runCatching { sh("mkdir -p \"$destRoot\"") }
+        runCatching { shArgv(arrayOf("mkdir", "-p", destRoot)) }
 
         if (files.isEmpty()) return ImportResult(copied, failed, destRoot)
 
@@ -398,7 +398,7 @@ object NcmImporter {
         for (src in files) {
             val name = src.substringAfterLast('/')
             val dst = "$destRoot/$name"
-            val cpOut = runCatching { sh("cp -f \"$src\" \"$dst\" 2>&1") }
+            val cpOut = runCatching { shArgv(arrayOf("cp", "-f", src, dst)) }
                 .getOrElse { e ->
                     failed += name to (e.message ?: "cp 异常")
                     continue
@@ -409,7 +409,7 @@ object NcmImporter {
             }
             // 核对：目标存在且大小与源一致
             val sz = runCatching {
-                sh("stat -c %s \"$dst\" 2>/dev/null").trim().toLongOrNull() ?: 0L
+                shArgv(arrayOf("stat", "-c", "%s", dst)).trim().toLongOrNull() ?: 0L
             }.getOrDefault(0L)
             if (sz > 0L) copied += dst else failed += name to "复制后大小为 0"
         }
@@ -478,9 +478,16 @@ object NcmImporter {
      * `ShizukuRemoteProcess` 本身是 public class（只是构造器包私有），
      * 用反射可以构造。
      */
-    private fun sh(cmd: String): String {
-        val argv = arrayOf("sh", "-c", cmd)
+    /** 仅用于静态 find 表达式里的目录名：单引号转义，避免 shell 注入。 */
+    private fun q(s: String): String = "'" + s.replace("'", "'\\''") + "'"
 
+    private fun sh(cmd: String): String = shArgv(arrayOf("sh", "-c", cmd))
+
+    /**
+     * 直接执行 argv，不经过 `sh -c`。**所有带文件路径的参数都必须走这里**，
+     * 否则文件名里的引号/`$()` 会被 shell 解释（命令注入）。
+     */
+    private fun shArgv(argv: Array<String>): String {
         // 1) 拿 IShizukuService binder（Shizuku.getBinder() 是 public）
         val shizukuCls = Class.forName("rikka.shizuku.Shizuku")
         val serviceBinder = shizukuCls.getMethod("getBinder").invoke(null) as? android.os.IBinder
@@ -574,7 +581,7 @@ object NcmImporter {
         val tmp = File(destDir, "$name.part")
 
         return try {
-            val process = newShizukuProcess(arrayOf("sh", "-c", "cat \"$srcPath\""))
+            val process = newShizukuProcess(arrayOf("cat", srcPath))
             var total = 0L
             tmp.outputStream().use { fos ->
                 val ins = process.inputStream
@@ -613,7 +620,7 @@ object NcmImporter {
      * 代价：整个文件进内存（一首 15-40MB，扫 20 首逐个读即可，不并行）。
      */
     fun readBytesViaShizuku(srcPath: String): ByteArray? = runCatching {
-        val process = newShizukuProcess(arrayOf("sh", "-c", "cat \"$srcPath\""))
+        val process = newShizukuProcess(arrayOf("cat", srcPath))
         val bytes = process.inputStream.use { it.readBytes() }
         runCatching { process.destroy() }
         if (bytes.isEmpty()) error("0 字节")

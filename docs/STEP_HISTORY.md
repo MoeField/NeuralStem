@@ -118,6 +118,14 @@
 - JVM **433/0**（M1 reducer 52 + M2 controller 7 + 原有 374）；
   真机 edge fast path、4-stem cache/启动、开关 off/on 通过。
 
+## v0.2.39：B 阶段隐私与命令边界
+
+- **备份**：`backup_rules.xml` / `data_extraction_rules.xml` 排除模型、stems/PCM/波形缓存、`playlists.json` 和外部 UVR 目录；避免 1.2GB 备份失败与歌单路径上云。
+- **MediaSession**：自定义命令只对本应用 UID 暴露；`onCustomCommand` 对非本 UID 直接返回 `ERROR_NOT_SUPPORTED`，外部 App 无法触发加载/EQ/退出。
+- **NCM shell**：新增 `shArgv()`，`cat/dd/cp/stat/ls/od` 等带路径命令改 argv；静态 `find` 的目录名做单引号转义，消除引号/`$()` 注入面。
+- **模型下载**：GitHub 代理 DNS/连接失败时自动回退直连；`.part` 删除后重试，仍做 SHA-256 校验。
+- `with_ncm=true` Kotlin 编译通过；JVM **483/0**。
+
 ## v0.2.38：A 阶段数据完整性
 
 - **P2.2 歌单陈旧快照**：`PlaylistStore.saveMerged()` 在 IO_LOCK 内重新 load，磁盘进度优先；VM 异步 persist；空快照/未加载完成拒绝落盘。

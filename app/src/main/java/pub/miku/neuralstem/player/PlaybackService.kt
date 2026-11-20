@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.Process
 import android.util.Log
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
@@ -638,9 +639,13 @@ class PlaybackService : MediaSessionService() {
             session: MediaSession,
             controller: MediaSession.ControllerInfo,
         ): MediaSession.ConnectionResult {
-            val commands = MultiTrackSession.ALL_COMMANDS.map { MultiTrackSession.cmd(it) }
             val builder = MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS.buildUpon()
-            commands.forEach { builder.add(it) }
+            // ★B：自定义命令只暴露给本应用；外部 controller（蓝牙/其他 App）看不到。
+            if (controller.uid == Process.myUid()) {
+                MultiTrackSession.ALL_COMMANDS.forEach { builder.add(MultiTrackSession.cmd(it)) }
+            } else {
+                Log.w(TAG, "onConnect: external controller=${controller.packageName}, no custom commands")
+            }
             return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
                 .setAvailableSessionCommands(builder.build())
                 .build()
@@ -707,6 +712,11 @@ class PlaybackService : MediaSessionService() {
             customCommand: SessionCommand,
             args: Bundle,
         ): ListenableFuture<SessionResult> {
+            // ★B：第二道门。即使外部 controller 猜到了 action，也拒绝执行。
+            if (controller.uid != Process.myUid()) {
+                Log.w(TAG, "reject custom command from ${controller.packageName}/${controller.uid}")
+                return Futures.immediateFuture(SessionResult(SessionError.ERROR_NOT_SUPPORTED))
+            }
             Log.i(TAG, "onCustomCommand: ${customCommand.customAction}")
             val result = try {
                 when (customCommand.customAction) {
