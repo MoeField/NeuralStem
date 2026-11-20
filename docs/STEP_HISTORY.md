@@ -118,6 +118,13 @@
 - JVM **433/0**（M1 reducer 52 + M2 controller 7 + 原有 374）；
   真机 edge fast path、4-stem cache/启动、开关 off/on 通过。
 
+## v0.2.41：多轨曲尾重启竞态热修
+
+- 根因：`StemMixer.play()` 看到旧渲染线程仍 alive 就直接返回，只置 `playing=true`；旧线程曲尾退出后没有新线程 → UI 显示播放但 mixer 无 heartbeat、无声。
+- 修复：旧线程 `running=false` 但线程仍存活时，短暂 `join(300)` 等其退出再启动新线程；仍失败则保持 `playing=false`，让 UI 回到暂停。
+- 真机复现：2-stem 多轨 seek 到 2:26，自然到曲尾；现在日志 `mix ended → LOOP_ONE` → `StemMixer play @0frame`，后续 5s/10s heartbeat 正常，不再出现死 mixer。
+- JVM **485/0**。
+
 ## v0.2.40：C 阶段工程卫生（第一批）
 
 - **WaveformCache**：缓存文件名从 32-bit `hashCode` 改 SHA-256 截断，避免碰撞显示别的歌波形；新增 JVM 测试。

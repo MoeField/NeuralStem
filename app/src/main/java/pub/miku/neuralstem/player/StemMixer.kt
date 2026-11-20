@@ -162,17 +162,31 @@ class StemMixer(
     /** 启动渲染线程（幂等）。 */
     fun play() {
         if (voices.isEmpty()) return
-        playing = true
         ensureTrack()
         val t = track ?: return
         // ★2026-11-06：曲尾后线程已退出，但 `running` 可能还是 true（旧实现的遗留）→
         //   只按 running 判断会“按播放没反应”。改为看线程是否还活着。
-        val aliveThread = thread
+        var aliveThread = thread
         if (aliveThread != null && aliveThread.isAlive) {
-            // 同一个渲染线程已在跑：让它继续；旧线程正在退出时也绝不启动第二个 writer。
-            if (!running) Log.w(TAG, "play: 旧渲染线程仍在退出，暂不启动新线程")
-            return
+            if (running) {
+                // 同一个渲染线程已在跑：让它继续；也绝不启动第二个 writer。
+                playing = true
+                return
+            }
+            // ★曲尾重启竞态：旧线程正在退出（running=false 但 Thread 还没真正结束）。
+            //   此时若直接 return，旧线程退出后就没有 writer，UI 会显示 playing 但无声。
+            //   短暂等它结束，再启动新线程；音频线程退出通常 <10ms，300ms 是防御上限。
+            Log.i(TAG, "play: 等待旧渲染线程退出后再重启")
+            runCatching { aliveThread.join(300) }
+            if (aliveThread.isAlive) {
+                playing = false
+                Log.w(TAG, "play: 旧渲染线程 300ms 仍未退出，放弃本次启动")
+                return
+            }
+            if (thread === aliveThread) thread = null
+            aliveThread = null
         }
+        playing = true
         // 在曲尾按播放：从 0 重来（否则读头在 totalFrames，启动即又结束）。
         if (totalFrames > 0 && framePos >= totalFrames) {
             framePos = 0L
