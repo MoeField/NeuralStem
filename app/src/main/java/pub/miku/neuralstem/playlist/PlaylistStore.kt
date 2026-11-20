@@ -49,6 +49,12 @@ class PlaylistStore internal constructor(private val dir: File) {
 
     private val file = File(dir, PLAYLISTS_FILE)
 
+    /** 损坏文件已备份但尚未恢复；期间绝不能 save() 覆盖现场。 */
+    @Volatile
+    private var corrupt = false
+
+    val isCorrupt: Boolean get() = corrupt
+
     /** 默认歌单的稳定 id（便于"取默认歌单"）。 */
     val defaultListId: String = DEFAULT_LIST_ID
 
@@ -61,9 +67,11 @@ class PlaylistStore internal constructor(private val dir: File) {
             // ★2026-11-09（P0-2）：解析失败**绝不能**用空结果回写覆盖原文件
             //   （旧行为：ensureDefault(empty) → save → 1000+ 首永久丢失）。
             //   保留一份损坏副本，本次只在内存里返回默认歌单；文件保持原样。
+            corrupt = true
             backupCorrupt()
             return ensureDefault(emptyList())
         }
+        corrupt = false
         val withDefault = ensureDefault(raw)
         val migrated = migrateUnreadableFileUris(withDefault)
         // ★ 只要规范化**产生了任何变化**（新增默认歌单，或改动了字段）就落盘，
@@ -197,6 +205,10 @@ class PlaylistStore internal constructor(private val dir: File) {
 
     /** 记某歌单“最后播放的曲目 + 位置”(ms)。（播放器直接调用，不经 PlaylistViewModel。） */
     fun recordProgress(listId: String, trackUri: String?, positionMs: Long) {
+        if (corrupt) {
+            Log.w(TAG, "recordProgress refused: playlists.json is corrupt")
+            return
+        }
         // ★P1：load→modify→save 必须整体串行，否则 PlaylistViewModel 的整份快照
         //   可以插在中间，把刚编辑的歌单/进度覆盖掉（save 内部的锁不够）。
         synchronized(IO_LOCK) {
@@ -246,6 +258,10 @@ class PlaylistStore internal constructor(private val dir: File) {
      * 只把磁盘上仍存在的进度合并回来（曲目被删/清空时自然清除）。
      */
     fun saveMerged(incoming: List<Playlist>) {
+        if (corrupt) {
+            Log.w(TAG, "saveMerged refused: playlists.json is corrupt; preserve corrupt file")
+            return
+        }
         // 空快照永远不是合法状态（默认歌单不可删）；防止“加载完成前误保存”清空歌单。
         if (incoming.isEmpty()) {
             Log.w(TAG, "saveMerged refused: empty snapshot")
@@ -270,6 +286,10 @@ class PlaylistStore internal constructor(private val dir: File) {
     }
 
     fun save(list: List<Playlist>) {
+        if (corrupt) {
+            Log.w(TAG, "save refused: playlists.json is corrupt; preserve corrupt file")
+            return
+        }
         // ★2026-11-09（P0-2）：tmp + fsync + rename 原子替换 + 进程内串行化。
         //   旧实现直接 `file.writeText`，多写者（进度落盘/歌单编辑）或被杀会截断 JSON；
         //   下次启动解析失败又会被空歌单覆盖 → 整份歌单丢失。

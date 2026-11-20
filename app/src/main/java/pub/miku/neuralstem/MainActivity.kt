@@ -106,6 +106,7 @@ class MainActivity : ComponentActivity() {
                 // 改为 intent data 直传 Uri —— 验收走非 UI 通道:
                 //   adb shell am start -n pub.miku.neuralstem/.MainActivity \
                 //     -d "<content or file uri>" --ez auto_play true
+                if (BuildConfig.DEBUG) {
                 intent?.data?.let { uri ->
                     // ★互斥：若同时给了 mt_vocals/mt_accomp（多轨入口），则本单曲入口**不载入**，
                     //   否则两个入口会同时 loadAndPlay + loadMultiTrack → **两首同时出声**。
@@ -133,9 +134,11 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
+                }
                 // V1 自动化入口:直接载入两条 stem 文件进多轨模式,不依赖坐标点击。
                 //   adb shell am start -n pub.miku.neuralstem/.MainActivity \
                 //     --es mt_vocals <abs path> --es mt_accomp <abs path> --ez auto_play true
+                if (BuildConfig.DEBUG) {
                 val mtVocals = intent?.getStringExtra("mt_vocals")
                 val mtAccomp = intent?.getStringExtra("mt_accomp")
                 if (mtVocals != null && mtAccomp != null && !mtIntentConsumed.value) {
@@ -191,10 +194,11 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                 }
+                }
                 // M2-D 自动化入口:载入音频后应用 EQ 测试曲线并打印诊断
                 //   adb shell am start -n pub.miku.neuralstem/.MainActivity \
                 //     -d "file:///...wav" --ez auto_play true --ez eq_test true
-                if (intent?.getBooleanExtra("eq_test", false) == true) {
+                if (BuildConfig.DEBUG && intent?.getBooleanExtra("eq_test", false) == true) {
                     LaunchedEffect(Unit) {
                         // 等待音频就绪/会话建立后再挂 EQ
                         delay(4000)

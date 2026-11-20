@@ -74,6 +74,11 @@ class SeparationGuardsTest {
                 kind = SeparationKind.EDGE,
                 lifecycle = lifecycle,
                 files = stemFiles,
+                coverage = Coverage(
+                    totalFrames = 100L,
+                    coveredRanges = listOf(0L..99L),
+                    complete = true,
+                ),
             ),
         )
 
@@ -111,6 +116,16 @@ class SeparationGuardsTest {
                 snapshot(trackA, Lifecycle.Finished, null),
                 trackA.uri,
             ),
+        )
+        val incomplete = snapshot(trackA, Lifecycle.Finished, files).copy(
+            job = snapshot(trackA, Lifecycle.Finished, files).job?.copy(
+                coverage = Coverage(totalFrames = 100L, coveredRanges = listOf(0L..49L), complete = false),
+            ),
+        )
+        assertEquals(
+            "不完整 coverage 不允许导出",
+            null,
+            SeparationGuards.exportableFiles(incomplete, trackA.uri),
         )
     }
 

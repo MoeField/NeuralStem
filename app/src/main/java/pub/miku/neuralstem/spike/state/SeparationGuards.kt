@@ -52,6 +52,9 @@ object SeparationGuards {
     ): List<String>? {
         val job = snapshot.job ?: return null
         if (job.lifecycle !is Lifecycle.Finished) return null
+        // ★P0 #3：成本门控跳过后 coverage.complete=false；不能再把数字静音的
+        // 半截 WAV 当成可导出结果。
+        if (!job.coverage.complete) return null
         val files = job.files?.paths ?: return null
         if (currentUri != null && job.trackKey.uri != currentUri) return null
         val current = snapshot.currentTrackKey

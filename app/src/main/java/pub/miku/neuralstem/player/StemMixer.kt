@@ -38,6 +38,8 @@ class StemMixer(
     private val channels: Int,
     /** 每条轨的混音系数提供者（音量/静音/独奏已折算好，0..1）。 */
     private val gainProvider: (id: String) -> Float,
+    /** AudioTrack 重建后 sessionId 会变，通知 Service 重挂 EQ。 */
+    private val onAudioSessionChanged: ((Int) -> Unit)? = null,
 ) : Closeable {
 
     private class Voice(val id: String, val source: StemSource)
@@ -293,6 +295,7 @@ class StemMixer(
             .setTransferMode(AudioTrack.MODE_STREAM)
             .build()
         Log.i(TAG, "AudioTrack created: buf=$minBuf bytes (${minBuf / (channels * 4)} frames)")
+        onAudioSessionChanged?.invoke(track?.audioSessionId ?: 0)
     }
 
     /**
@@ -358,18 +361,25 @@ class StemMixer(
                 // ---- 混音 ----
                 java.util.Arrays.fill(mix, 0f)
                 var framesRead = 0
-                for (v in voices) {
+                // ★P0 #14：全轨静音不是“没有数据”。若所有 gain=0 就跳过读取，
+                //   framesRead 永远为 0，framePos/ended 永远不推进（进度冻结、100Hz 空转）。
+                //   此时仍从第一条源读一帧块，写零保持 AudioTrack 时钟。
+                val anyAudible = voices.any { gainProvider(it.id) > 0f }
+                for ((index, v) in voices.withIndex()) {
                     val g = gainProvider(v.id)
-                    if (g <= 0f) continue        // 静音/未独奏 → 连读都不读，省 IO
+                    if (anyAudible && g <= 0f) continue   // 有可听轨时，静音轨省 IO
+                    if (!anyAudible && index > 0) continue // 全静音：只读一条 canonical 源推进时钟
                     val n = runCatching { v.source.read(framePos, tmp, CHUNK_FRAMES) }.getOrDefault(0)
                     if (n <= 0) {
                         if (loopWarn < 3) Log.w(TAG, "read[${v.id}] @${framePos} → $n（无数据）")
                         continue
                     }
-                    if (g >= 0.999f) {
-                        for (i in 0 until n * channels) mix[i] += tmp[i]
-                    } else {
-                        for (i in 0 until n * channels) mix[i] += tmp[i] * g
+                    if (anyAudible) {
+                        if (g >= 0.999f) {
+                            for (i in 0 until n * channels) mix[i] += tmp[i]
+                        } else {
+                            for (i in 0 until n * channels) mix[i] += tmp[i] * g
+                        }
                     }
                     if (n > framesRead) framesRead = n
                 }
@@ -442,6 +452,8 @@ class StemMixer(
                             track = null
                         }
                         ensureTrack()
+                        // 新建 AudioTrack 默认 STOPPED；不 play() 会在下一次阻塞写永久卡死。
+                        runCatching { track?.play() }
                         Thread.sleep(20)
                         continue
                     }
@@ -472,6 +484,7 @@ class StemMixer(
                             track = null
                         }
                         ensureTrack()
+                        runCatching { track?.play() }
                         Thread.sleep(20)
                         continue
                     }

@@ -37,7 +37,10 @@ import java.io.File
  * `currentPositionMs` / `durationMs` / `isPlaying` 语义不变，
  * 所以 `PlaybackService` / `PlayerViewModel` 的调用点几乎不用改。
  */
-class MultiTrackController(private val context: Context) : Closeable {
+class MultiTrackController(
+    private val context: Context,
+    private val onAudioSessionChanged: ((Int) -> Unit)? = null,
+) : Closeable {
 
     /**
      * 一条轨的**元信息**（不再持有 ExoPlayer）。
@@ -159,9 +162,9 @@ class MultiTrackController(private val context: Context) : Closeable {
         //   否则第一轮混音读到 gain=0（字段默认值），会整体无声。
         applySoloMute()
         // 增益回调：混音时实时读（音量/静音/独奏改动立即生效，不用重启 mixer）
-        val m = StemMixer(sampleRate = sr, channels = ch) { id ->
+        val m = StemMixer(sampleRate = sr, channels = ch, gainProvider = { id ->
             tracks[id]?.effectiveVolume ?: 0f
-        }
+        }, onAudioSessionChanged = onAudioSessionChanged)
         m.load(sources)
         mixer = m
         Log.i(

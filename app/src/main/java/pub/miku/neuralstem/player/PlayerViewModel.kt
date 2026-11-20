@@ -1701,6 +1701,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                         volume = o.optDouble("volume", 1.0).toFloat(),
                         muted = o.optBoolean("muted", false),
                         solo = o.optBoolean("solo", false),
+                        uri = o.optString("uri").takeIf { it.isNotBlank() },
                     )
                 }
             }.getOrDefault(emptyList())

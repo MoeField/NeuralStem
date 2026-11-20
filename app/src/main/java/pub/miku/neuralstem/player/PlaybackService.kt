@@ -170,7 +170,15 @@ class PlaybackService : MediaSessionService() {
 
     private fun ensureMultiTrack(): MultiTrackController {
         multiTrack?.let { return it }
-        val c = MultiTrackController(this)
+        val c = MultiTrackController(this) { sessionId ->
+            // AudioTrack 重建后 sessionId 变了；在主线程重挂多轨 EQ。
+            handler.post {
+                if (inMultiTrack) {
+                    Log.i(TAG, "mixer audio session changed → $sessionId, reattach EQ")
+                    multiTrack?.let { attachMultiTrackEq(it) }
+                }
+            }
+        }
         c.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) = requestSnapshotPush()
             override fun onPlaybackStateChanged(playbackState: Int) = requestSnapshotPush()

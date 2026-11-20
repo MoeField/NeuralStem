@@ -118,6 +118,16 @@
 - JVM **433/0**（M1 reducer 52 + M2 controller 7 + 原有 374）；
   真机 edge fast path、4-stem cache/启动、开关 off/on 通过。
 
+## v0.2.42：P0 第一组（音频/导出/恢复/守卫）
+
+- **#1 AudioTrack 重建**：`write<0` 重建后补 `track.play()`；`StemMixer` 新增 `onAudioSessionChanged`，Service 收到新 session 后重挂多轨 EQ。
+- **#3 导出完整性**：`SeparationGuards.exportableFiles()` 要求 `coverage.complete`；半截结果不再可导出；补 guard 单测。
+- **#14 全轨静音**：所有 gain=0 时仍从一条 canonical 源读取并写零，`framePos`/`ended` 继续推进；真机两轨全 mute 后位置仍走。
+- **#11 B1 恢复**：`applyTracksSnapshot()` 补 `uri` 字段，VM 重建后能还原 lastStems。
+- **#4 release 自动化入口**：`MainActivity` 的 `auto_play/mt_vocals/eq_test` 分支加 `BuildConfig.DEBUG` 守卫；release 包真机验证忽略 `auto_play`。
+- **#5 损坏歌单**：`PlaylistStore` 置 `corrupt` 标记，期间拒绝 `save/saveMerged/recordProgress`，避免切歌覆盖损坏现场。
+- JVM **485/0**；lint 0 errors。
+
 ## v0.2.41：多轨曲尾重启竞态热修
 
 - 根因：`StemMixer.play()` 看到旧渲染线程仍 alive 就直接返回，只置 `playing=true`；旧线程曲尾退出后没有新线程 → UI 显示播放但 mixer 无 heartbeat、无声。
