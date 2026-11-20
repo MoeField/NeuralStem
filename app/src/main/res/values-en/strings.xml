@@ -106,7 +106,7 @@
     <string name="settings_models_license">License: %1$s</string>
     <string name="settings_models_source">Download source</string>
     <string name="settings_models_proxy">GitHub proxy (for UVR models)</string>
-    <string name="settings_models_proxy_hint">UVR models are only on GitHub, which is often unreachable in some regions. Defaults to api.gitproxy.dev (Cloudflare). Clear to connect directly.</string>
+    <string name="settings_models_proxy_hint">UVR models are only on GitHub. Default is a direct connection; optionally enter a third-party proxy (it will see your IP/request path).</string>
     <string name="settings_models_proxy_reset">Revert</string>
     <string name="settings_models_proxy_save">Save proxy</string>
     <string name="settings_models_probing">Detecting network…</string>

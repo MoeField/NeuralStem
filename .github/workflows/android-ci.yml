@@ -19,9 +19,6 @@ on:
       - 'LICENSE'
       - 'NOTICE'
       - '.gitignore'
-      # NCM 模块默认不编译，CI 也不启用（-Pwith_ncm），其改动不影响构建结果
-      - 'app/src/ncm/**'
-      - 'app/src/ncmTest/**'
   pull_request:
     branches: [ main ]
     paths-ignore:
@@ -29,8 +26,6 @@ on:
       - 'docs/**'
       - 'LICENSE'
       - 'NOTICE'
-      - 'app/src/ncm/**'
-      - 'app/src/ncmTest/**'
   workflow_dispatch:
 
 concurrency:
@@ -126,6 +121,34 @@ jobs:
           if [ "$rc" -ne 0 ]; then
             grep -E "Error:|Lint found|FAILED|What went wrong" /tmp/lint.log \
               | head -30 | while IFS= read -r line; do
+                echo "::error::$(echo "$line" | tr -d '\r' | cut -c1-900)"
+              done
+          fi
+          exit $rc
+
+      - name: Compile with NCM
+        run: |
+          set +e
+          ./gradlew :app:testDebugUnitTest -Pwith_ncm=true --no-daemon --stacktrace \
+            -Porg.gradle.java.installations.auto-download=false 2>&1 | tee /tmp/ncm.log
+          rc=${PIPESTATUS[0]}
+          if [ "$rc" -ne 0 ]; then
+            grep -iE "What went wrong|Caused by|error:|FAILED" /tmp/ncm.log \
+              | head -25 | while IFS= read -r line; do
+                echo "::error::$(echo "$line" | tr -d '\r' | cut -c1-900)"
+              done
+          fi
+          exit $rc
+
+      - name: Lint vital
+        run: |
+          set +e
+          ./gradlew :app:lintVitalRelease --no-daemon --stacktrace \
+            -Porg.gradle.java.installations.auto-download=false 2>&1 | tee /tmp/lintvital.log
+          rc=${PIPESTATUS[0]}
+          if [ "$rc" -ne 0 ]; then
+            grep -iE "What went wrong|Caused by|error:|FAILED|Lint found" /tmp/lintvital.log \
+              | head -25 | while IFS= read -r line; do
                 echo "::error::$(echo "$line" | tr -d '\r' | cut -c1-900)"
               done
           fi
@@ -313,6 +336,12 @@ jobs:
           APK=$(find app/build/outputs/apk/release -name "*arm64*v8a*.apk" | head -1)
           if [ -z "$APKSIGNER" ] || [ -z "$AAPT" ] || [ -z "$APK" ]; then
             echo "::error::无法定位 apksigner/aapt/APK"
+            exit 1
+          fi
+
+          if unzip -l "$APK" | grep -qE 'lib/.*/lib(AVS3|VMF|av3a)'; then
+            echo "::error::APK 含 AVS3/VMF native 库；public release 不允许"
+            unzip -l "$APK" | grep -E 'lib/.*/lib(AVS3|VMF|av3a)' || true
             exit 1
           fi
 

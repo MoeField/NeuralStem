@@ -118,6 +118,14 @@
 - JVM **433/0**（M1 reducer 52 + M2 controller 7 + 原有 374）；
   真机 edge fast path、4-stem cache/启动、开关 off/on 通过。
 
+## v0.2.44：CI 与供应链门禁
+
+- **#15**：CI 新增 `lintVitalRelease`；不再只跑 lintDebug。
+- **#16**：CI 新增 `-Pwith_ncm=true` 的 JVM 测试（24 条 NCM 测试），并移除 `app/src/ncm/**` 的 paths-ignore；APK 发布前断言不含 `libAVS3*`/`libVMF*`/`libav3a*`。
+- **#6**：`DEFAULT_GITHUB_PROXY` 改为空（默认直连）；第三方代理必须用户在设置里显式填写；文案明确会暴露 IP/请求路径。
+- 本地：普通 486/0；with_ncm 510/0；lintVitalRelease 通过。
+- 未做：#9 JNI 输出形状校验、#17 下载任务生命周期/续传（下一批）。
+
 ## v0.2.43：P0 第二组（Stopping/缓存/状态/SAF/返回键）
 
 - **#2 Stopping 死胡同**：`SeparationDomain.start()` 不再提前清 `activeJobId`；`CancelJob` 增加 2s watchdog，超时补发 `JobStopped`，避免 `busy` 永久 true。

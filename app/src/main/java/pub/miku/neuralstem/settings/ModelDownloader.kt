@@ -132,8 +132,8 @@ class ModelDownloader(private val filesDir: File) {
      * 且它做的是**前缀替换**：`api.gitproxy.dev/github.com/<path>` → `github.com/<path>`。
      *
      * ## 策略
-     * - 用户显式填了代理 → 一律走代理；
-     * - 否则默认走 `api.gitproxy.dev`（可在设置里关掉）。
+     * - 用户显式填了代理 → 走代理；
+     * - 默认空 → 直连 GitHub。第三方代理会看到 IP/路径，不默认启用。
      */
     private fun maybeProxyGithub(url: String): String {
         if (!url.startsWith("https://github.com/")) return url

@@ -38,8 +38,8 @@ import pub.miku.neuralstem.R
  *
  * ## 为何单独一个设置
  * UVR 系模型**只**在 GitHub Release（hf-mirror 镜像不了），而国内网络常
- * `github.com:443` 连不上。默认填 `https://api.gitproxy.dev`（实测可用），
- * 用户可改成自建代理或清空直连。
+ * `github.com:443` 连不上。默认空 = 直连；用户可显式填写代理。
+ * 第三方代理会看到连接 IP/请求路径，因此不默认启用。
  */
 @Composable
 internal fun GithubProxySetting(repo: SettingsRepository) {
@@ -53,7 +53,7 @@ internal fun GithubProxySetting(repo: SettingsRepository) {
             value = value,
             onValueChange = { value = it },
             singleLine = true,
-            placeholder = { Text("https://api.gitproxy.dev") },
+            placeholder = { Text("https://your-proxy.example") },
             modifier = Modifier.fillMaxWidth(),
             trailingIcon = {
                 TextButton(onClick = { value = repo.downloadProxy }) {
