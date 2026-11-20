@@ -296,6 +296,18 @@ class WavReader private constructor(
     }
 }
 
+/** 缓存发布前校验：data chunk 的声明长度必须与实际文件长度一致，且帧数 > 0。 */
+internal fun isCompleteWav(file: File): Boolean = runCatching {
+    if (!file.exists() || file.length() < 44L) return false
+    WavRandomAccess.fromFile(file).use { src ->
+        val h = WavIo.parseHeader(src, file.name)
+        val frameBytes = h.channels * 2L
+        h.dataLen > 0L &&
+            h.dataLen % frameBytes == 0L &&
+            h.dataPos + h.dataLen == file.length()
+    }
+}.getOrDefault(false)
+
 /**
  * 流式 WAV 写入器(Task 0e)。
  *
@@ -392,6 +404,7 @@ class WavWriter(
         raf.writeIntLE(36 + dataSize)
         raf.seek(40)
         raf.writeIntLE(dataSize)
+        runCatching { raf.fd.sync() }
         raf.close()
     }
 

@@ -133,6 +133,20 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _state = MutableStateFlow(PlayerState())
 
+    /** isPlaying 的输入源；多轨只认 mixer，单轨只认门面，显式载入/清空可强制。 */
+    private enum class PlayingSource { FACADE, MIX, EXPLICIT }
+
+    private fun updatePlaying(value: Boolean, source: PlayingSource) {
+        if (source != PlayingSource.EXPLICIT) {
+            if (isMultiTrackLoaded && source != PlayingSource.MIX) return
+            if (!isMultiTrackLoaded && source == PlayingSource.MIX) return
+        }
+        if (_state.value.isPlaying != value) {
+            _state.value = _state.value.copy(isPlaying = value)
+            Log.i(TAG, "isPlaying=$value source=$source multi=$isMultiTrackLoaded")
+        }
+    }
+
     /** ★B6：播放失败过的曲目（SAF 权限失效等）——保留在歌单里并标记，不自动删除。 */
     private val _brokenTracks = MutableStateFlow<Set<String>>(emptySet())
     val brokenTracks: StateFlow<Set<String>> = _brokenTracks.asStateFlow()
@@ -461,9 +475,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                         mixEnded = extras.getBoolean(MultiTrackSession.KEY_MIX_ENDED, false)
                         mixPosAtClock = android.os.SystemClock.elapsedRealtime()
                         val playing = extras.getBoolean(MultiTrackSession.KEY_MIX_PLAYING, false)
-                        if (playing != _state.value.isPlaying) {
-                            _state.value = _state.value.copy(isPlaying = playing)
-                        }
+                        updatePlaying(playing, PlayingSource.MIX)
                     }
                 }
             })
@@ -570,9 +582,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                 // ★v2：session 的 player = singlePlayer，多轨时它**就是主轨**，其 isPlaying 即整组
                 //   播放态（跟随轨由 Service 镜像）。故**单/多轨均由此驱动**——旧代码多轨时
                 //   跳过更新，导致“多轨时播放/暂停按钮卡在旧态”。
-                if (_state.value.isPlaying != isPlaying) {
-                    _state.value = _state.value.copy(isPlaying = isPlaying)
-                }
+                updatePlaying(isPlaying, PlayingSource.FACADE)
                 // ★健康播放后重置 AudioSink 恢复额度，避免“早一次偶发超时”把上限吃光
                 if (isPlaying) audioSinkRecoveryCount = 0
             }
@@ -1924,9 +1934,9 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             isMultiTrack = true,
             hasMedia = true,
             playWhenReady = true,
-            isPlaying = true,
             fileName = _state.value.fileName.ifBlank { "分离结果" },
         )
+        updatePlaying(true, PlayingSource.EXPLICIT)
     }
 
     /**
@@ -2203,7 +2213,6 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                 fileName = "",
                 hasMedia = false,
                 playWhenReady = false,
-                isPlaying = false,
                 isReady = false,
                 durationMs = 0L,
                 tracks = emptyList(),
@@ -2214,6 +2223,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                 cover = null,
             ),
         )
+        updatePlaying(false, PlayingSource.EXPLICIT)
         _progress.value = Progress(0L, 0L)
         _anchor.value = null
         lastShownMs = -1L

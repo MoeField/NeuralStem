@@ -102,9 +102,11 @@ class SeparationDomain private constructor(private val app: Application) {
             _notices.tryEmit("当前曲已切换，请重试")
             return false
         }
+        // ★P0 #2：不能在这里清 activeJobId。若 reducer 把“运行中再 Start”转成
+        // Stopping + CancelJob，旧仓库随后发出的 Cancelled/JobStopped 会被
+        // onRepoState() 的 `activeJobId ?: return` 丢弃，Stopping 永久卡住。
+        // activeJobId 由 StartDecode 设为新 job，旧 job 的 JobStopped 负责清场。
         sourceReady = false
-        activeJobId = null
-        activeSourcePath = null
         controller.start(request)
         return true
     }
@@ -203,7 +205,20 @@ class SeparationDomain private constructor(private val app: Application) {
         when (effect) {
             is SeparationEffect.StartDecode -> startEngine(effect)
             is SeparationEffect.StartSeparation -> Unit // repo.start 已负责真正启动
-            is SeparationEffect.CancelJob -> repo.cancel()
+            is SeparationEffect.CancelJob -> {
+                val jobId = effect.jobId
+                repo.cancel()
+                // ★P0 #2：仓库已空闲/取消回调丢失时，reducer 会永远停在 Stopping。
+                // 2s 后若仍是同一个 Stopping job，补发 JobStopped；重复事件由 reducer 忽略。
+                scope.launch {
+                    delay(CANCEL_WATCHDOG_MS)
+                    val job = controller.snapshot.value.job
+                    if (job?.jobId == jobId && job.lifecycle is Lifecycle.Stopping) {
+                        Log.w(TAG, "cancel watchdog: job=$jobId still Stopping → force JobStopped")
+                        sendDomain(SeparationEvent.Domain.JobStopped(jobId))
+                    }
+                }
+            }
             is SeparationEffect.LoadStems -> loadStems(effect)
             is SeparationEffect.DetachStems -> playerBridge?.detachStems()
             is SeparationEffect.Export -> _notices.tryEmit("导出由分离页处理")
@@ -489,6 +504,7 @@ class SeparationDomain private constructor(private val app: Application) {
 
     companion object {
         private const val TAG = "SepDomain"
+        private const val CANCEL_WATCHDOG_MS = 2_000L
 
         @Volatile
         private var instance: SeparationDomain? = null
@@ -501,4 +517,5 @@ class SeparationDomain private constructor(private val app: Application) {
         /** 已初始化则返回，供 Service.onDestroy 上报丢失；不要为了上报去创建实例。 */
         fun peek(): SeparationDomain? = instance
     }
+
 }

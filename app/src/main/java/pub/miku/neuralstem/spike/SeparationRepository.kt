@@ -899,7 +899,7 @@ class SeparationRepository(private val app: Application) {
         val manifest = File(cacheDir, "manifest4.txt")
         if (!manifest.exists()) return null
         val files = Spleeter4Dsp.STEM_KINDS.map { File(cacheDir, "$it.wav") }
-        if (files.any { !it.exists() }) return null
+        if (files.any { !isCompleteWav(it) }) return null
         return try {
             val parts = manifest.readText().trim().split(",")
             State.Done4(
@@ -1026,7 +1026,7 @@ class SeparationRepository(private val app: Application) {
         val manifest = File(cacheDir, "manifest4.txt")
         if (!manifest.exists()) return null
         val files = DemucsSeparator.STEM_KINDS.map { File(cacheDir, "$it.wav") }
-        if (files.any { !it.exists() }) return null
+        if (files.any { !isCompleteWav(it) }) return null
         return try {
             val parts = manifest.readText().trim().split(",")
             State.Done4(
@@ -1297,7 +1297,7 @@ class SeparationRepository(private val app: Application) {
         if (!manifest.exists()) return null
         val vocals = File(cacheDir, "vocals.wav")
         val accomp = File(cacheDir, "accompaniment.wav")
-        if (!vocals.exists() || !accomp.exists()) return null
+        if (!isCompleteWav(vocals) || !isCompleteWav(accomp)) return null
         return try {
             val parts = manifest.readText().trim().split(",")
             State.Done(

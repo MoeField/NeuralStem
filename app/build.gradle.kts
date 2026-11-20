@@ -52,7 +52,7 @@ val hasReleaseSigning = listOf(
 // F-Droid/Obtainium 会把它当同一版本，自动更新静默失效。
 // 规则：major*10000 + minor*100 + patch（0.2.36 → 236，0.3.0 → 300）。
 // CI 的 tag 构建同时传 -PversionName 和 -PversionCode；本地不传则用这里的默认值。
-val defaultVersionName = "0.2.42"
+val defaultVersionName = "0.2.43"
 
 fun semverCode(name: String): Int {
     val parts = name.split(".")

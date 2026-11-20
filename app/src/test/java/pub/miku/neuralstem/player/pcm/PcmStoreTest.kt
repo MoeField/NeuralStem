@@ -20,6 +20,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import pub.miku.neuralstem.spike.WavWriter
 
 class PcmStoreTest {
 
@@ -54,8 +55,12 @@ class PcmStoreTest {
     ) = PcmStore.PcmDecoder { _, output, progress ->
         val n = counter.incrementAndGet()
         if (n <= failTimes) return@PcmDecoder null
-        output.outputStream().use { it.write(ByteArray(writes)) }
-        progress(writes.toLong(), null)
+        // PcmStore 现在会校验 44-byte WAV 头与 data 长度；测试 decoder 必须写合法 WAV。
+        val frames = (writes / 4).coerceAtLeast(1)
+        WavWriter(output, 2, 44_100).use { w ->
+            w.append(FloatArray(frames * 2))
+        }
+        progress(output.length(), null)
         delay(delayMs)
         PcmArtifact(
             file = output,
@@ -63,7 +68,7 @@ class PcmStoreTest {
             createdAtMs = 1L,
             sampleRate = 44_100,
             channels = 2,
-            totalFrames = 100L,
+            totalFrames = frames.toLong(),
         )
     }
 

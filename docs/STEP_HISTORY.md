@@ -118,6 +118,16 @@
 - JVM **433/0**（M1 reducer 52 + M2 controller 7 + 原有 374）；
   真机 edge fast path、4-stem cache/启动、开关 off/on 通过。
 
+## v0.2.43：P0 第二组（Stopping/缓存/状态/SAF/返回键）
+
+- **#2 Stopping 死胡同**：`SeparationDomain.start()` 不再提前清 `activeJobId`；`CancelJob` 增加 2s watchdog，超时补发 `JobStopped`，避免 `busy` 永久 true。
+- **#7 PCM 缓存**：复用/重命名前校验完整 WAV 头与 data 长度；rename→Ready 窗口把 finalFile 纳入 activeTemps，避免清缓存删掉即将发布的文件。
+- **#8 分离缓存/WAV 落盘**：`readCache/readCache4/readCacheDemucs` 统一用 `isCompleteWav`；`WavWriter.close()` 补 `fd.sync()`。
+- **#10 isPlaying 单入口**：新增 `PlayingSource`/`updatePlaying()`；多轨只认 mix extras，单轨只认门面，显式载入/清空可强制；消除 `_state.copy(isPlaying=...)` 的四处互相覆盖。
+- **#13 SAF grant**：单文件 grant 无其他歌单引用时释放；tree grant 按实际 READ/WRITE 位释放，避免 READ|WRITE 合并异常被吞。
+- **#18 BackHandler**：非播放器页按返回回播放器，不再直接退出 App。
+- 新增 `WavIoStreamingTest` 截断 WAV 校验；JVM **486/0**。
+
 ## v0.2.42：P0 第一组（音频/导出/恢复/守卫）
 
 - **#1 AudioTrack 重建**：`write<0` 重建后补 `track.play()`；`StemMixer` 新增 `onAudioSessionChanged`，Service 收到新 session 后重挂多轨 EQ。

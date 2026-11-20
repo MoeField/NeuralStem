@@ -1,7 +1,10 @@
 package pub.miku.neuralstem.player.pcm
 
+import android.util.Log
+
 import java.io.File
 import java.security.MessageDigest
+import pub.miku.neuralstem.spike.isCompleteWav
 import java.util.UUID
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -85,8 +88,16 @@ class PcmStore(
             val existing = entries[key]
             when (val st = existing?.state) {
                 is State.Ready -> {
-                    existing.lastAccessMs = clock()
-                    readySession(source, st.artifact) to false
+                    if (!isCompleteWav(st.artifact.file)) {
+                        Log.w("PcmStore", "PCM cache invalid, re-decode: ${st.artifact.file.name}")
+                        entries.remove(key)
+                        val s = PcmSession(source)
+                        entries[key] = Entry(source, State.Decoding(s), waiters = 1, lastAccessMs = clock())
+                        s to true
+                    } else {
+                        existing.lastAccessMs = clock()
+                        readySession(source, st.artifact) to false
+                    }
                 }
                 is State.Decoding -> {
                     existing.waiters++
@@ -94,7 +105,7 @@ class PcmStore(
                 }
                 is State.Failed, null -> {
                     if (existing != null) entries.remove(key)
-                    if (finalFile.exists() && finalFile.length() > 0L) {
+                    if (isCompleteWav(finalFile)) {
                         val artifact = PcmArtifact(
                             file = finalFile,
                             sizeBytes = finalFile.length(),
@@ -262,9 +273,16 @@ class PcmStore(
                 fail(source, temp, "decoder returned incomplete output")
                 return
             }
+            // 从 rename 到 Ready 发布之间，clearUnpinned 可能扫描到 finalFile；
+            // 先纳入 activeTemps，避免发布出指向已删文件的 lease。
+            mutex.withLock { activeTemps.add(finalFile) }
             if (!temp.renameTo(finalFile)) {
                 // same-directory rename should succeed; fallback copy is intentionally avoided
                 fail(source, temp, "rename failed")
+                return
+            }
+            if (!isCompleteWav(finalFile)) {
+                fail(source, temp, "decoded WAV invalid")
                 return
             }
             val artifact = decoded.copy(
@@ -289,7 +307,10 @@ class PcmStore(
         } catch (t: Throwable) {
             fail(source, temp, t.message ?: t::class.java.simpleName)
         } finally {
-            mutex.withLock { activeTemps.remove(temp) }
+            mutex.withLock {
+                activeTemps.remove(temp)
+                activeTemps.remove(finalFile)
+            }
         }
     }
 

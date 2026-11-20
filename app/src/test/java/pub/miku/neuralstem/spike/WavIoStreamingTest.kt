@@ -1,6 +1,7 @@
 package pub.miku.neuralstem.spike
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -187,5 +188,14 @@ class WavIoStreamingTest {
             }
             assertTrue("越界 appendRegion 应被拒绝", failed)
         }
+    }
+
+    @Test
+    fun `isCompleteWav 拒绝截断文件`() {
+        val f = tempFile()
+        WavWriter(f, 2, 44_100).use { it.append(FloatArray(200)) }
+        assertTrue(isCompleteWav(f))
+        java.io.RandomAccessFile(f, "rw").use { it.setLength(f.length() - 8) }
+        assertFalse(isCompleteWav(f))
     }
 }

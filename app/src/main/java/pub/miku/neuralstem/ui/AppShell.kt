@@ -5,6 +5,7 @@ import android.content.res.Configuration
 import android.net.Uri
 import android.util.Log
 import androidx.annotation.StringRes
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -101,6 +102,10 @@ fun AppShell(
     initial: AppDestination = AppDestination.PLAYER,
 ) {
     var current by rememberSaveable { mutableStateOf(initial) }
+    // 底部导航页：返回键回播放器，而不是直接退出 App。
+    BackHandler(enabled = current != AppDestination.PLAYER) {
+        current = AppDestination.PLAYER
+    }
     // ★G-3ux：用户在播放页点开分离开关但**无缓存** → 跳分离页时**自动开始分离**，
     //   不用用户再手动点一次「快速」。传一个递增的 token 而非布尔（可重复触发）。
     var autoStartSeparate by remember { mutableStateOf(0) }

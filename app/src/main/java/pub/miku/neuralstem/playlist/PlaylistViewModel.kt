@@ -129,6 +129,33 @@ class PlaylistViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---------------- 删除 ----------------
 
+    /** 单文件 grant：没有其他歌单引用时才释放 READ。 */
+    private fun releaseFileGrantIfUnused(uri: String) {
+        if (_lists.value.any { p -> p.tracks.any { it.uri == uri } }) return
+        runCatching {
+            getApplication<Application>().contentResolver.releasePersistableUriPermission(
+                Uri.parse(uri),
+                Intent.FLAG_GRANT_READ_URI_PERMISSION,
+            )
+            Log.i(TAG, "released file grant: $uri")
+        }.onFailure { Log.w(TAG, "release file grant failed: $uri", it) }
+    }
+
+    /** tree grant：按系统实际记录的 READ/WRITE 位释放，避免 READ|WRITE 合并导致异常。 */
+    private fun releaseTreeGrant(uri: String) {
+        val parsed = Uri.parse(uri)
+        val cr = getApplication<Application>().contentResolver
+        val perm = cr.persistedUriPermissions.firstOrNull { it.uri == parsed } ?: return
+        var flags = 0
+        if (perm.isReadPermission) flags = flags or Intent.FLAG_GRANT_READ_URI_PERMISSION
+        if (perm.isWritePermission) flags = flags or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+        if (flags == 0) return
+        runCatching {
+            cr.releasePersistableUriPermission(parsed, flags)
+            Log.i(TAG, "released tree grant: $uri flags=$flags")
+        }.onFailure { Log.w(TAG, "release tree grant failed: $uri", it) }
+    }
+
     /** 删除整个歌单（不动文件）；**默认歌单禁止删除**。 */
     fun deleteList(id: String) {
         val target = _lists.value.firstOrNull { it.id == id } ?: return
@@ -141,18 +168,10 @@ class PlaylistViewModel(app: Application) : AndroidViewModel(app) {
         //   并按 take 时的 READ|WRITE 一并释放。
         val folderUri = target.folderUri
         val shared = folderUri != null && _lists.value.any { it.id != id && it.folderUri == folderUri }
-        if (!shared) {
-            folderUri?.let { fu ->
-                runCatching {
-                    getApplication<Application>().contentResolver.releasePersistableUriPermission(
-                        Uri.parse(fu),
-                        Intent.FLAG_GRANT_READ_URI_PERMISSION or
-                            Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
-                    )
-                }.onFailure { Log.w(TAG, "release tree grant failed: $fu", it) }
-            }
-        }
+        val removedTracks = target.tracks.map { it.uri }
         _lists.value = _lists.value.filterNot { it.id == id }
+        if (!shared && folderUri != null) releaseTreeGrant(folderUri)
+        removedTracks.forEach(::releaseFileGrantIfUnused)
         persist()
         // ★R5：删了当前选中的歌单 → 回落默认（保证选中态恒存在）。
         ensureValidSelection()
@@ -160,10 +179,12 @@ class PlaylistViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 清空某歌单的所有曲目（**默认歌单也允许**；不动磁盘文件）。 */
     fun clearList(id: String) {
+        val removed = _lists.value.firstOrNull { it.id == id }?.tracks?.map { it.uri }.orEmpty()
         _lists.value = _lists.value.map {
             if (it.id == id) it.copy(tracks = emptyList(), lastPlayedUri = null, lastPositionMs = 0L) else it
         }
         persist()
+        removed.forEach(::releaseFileGrantIfUnused)
     }
 
     // ---------------- 曲目增删/排序 ----------------
@@ -178,6 +199,7 @@ class PlaylistViewModel(app: Application) : AndroidViewModel(app) {
             } else p
         }
         persist()
+        releaseFileGrantIfUnused(trackUri)
     }
 
     /**
