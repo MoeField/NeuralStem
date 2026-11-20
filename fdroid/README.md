@@ -5,7 +5,7 @@
 > `https://neuralstem.miku.pub/fdroid/repo/`
 > 不要使用 `raw.githubusercontent.com`，也不要把本机绝对路径写进 F-Droid 配置。
 
-当前源由 GitHub Actions 自动发布，最新验证版本：**0.2.44 (244)**。
+当前源由 GitHub Actions 自动发布，最新验证版本：**0.2.45 (245)**。
 
 ## 用户安装
 
@@ -49,8 +49,8 @@ release asset: app-arm64-v8a-release.apk
 已验证（自动触发）：
 
 ```text
-run 44809844038: success
-gh-pages commit 007be8a: publish: NeuralStem F-Droid repo v0.2.44
+run 44812004075: success
+gh-pages commit 6ded183: publish: NeuralStem F-Droid repo v0.2.45
 ```
 
 该 run 也验证了 APK `versionName`/签名证书校验步骤。
