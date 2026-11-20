@@ -115,7 +115,6 @@ class PlaybackService : MediaSessionService() {
             override fun onPlaybackStateChanged(playbackState: Int) {
                 if (playbackState == Player.STATE_READY) {
                     Log.i(TAG, "player READY, audioSessionId=${player.audioSessionId}")
-                    onPlayerReadyForEq?.invoke(player)
                     // M3-P3：单轨(非多轨)时，把 EQ 挂到主播放器会话
                     if (!inMultiTrack) attachSingleEq(player)
                 }
@@ -813,8 +812,5 @@ class PlaybackService : MediaSessionService() {
     companion object {
         const val TAG = "PlaybackService"
 
-        /** M2-D EQ 钩子：真实 ExoPlayer READY 时回调（P3 会把 EQ 搬进 Service）。 */
-        @Volatile
-        var onPlayerReadyForEq: ((Player) -> Unit)? = null
     }
 }

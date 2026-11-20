@@ -191,10 +191,14 @@ class StemMixer(
         running = true
         renderGeneration++
         val gen = renderGeneration
-        thread = Thread({ renderLoop(gen) }, "StemMixer").apply {
-            priority = Thread.MAX_PRIORITY      // 音频线程要高优先级，否则容易 underrun
-            start()
-        }
+        thread = Thread({
+            // 用 Android 音频线程优先级，而不是 Thread.MAX_PRIORITY：
+            // 后者会把渲染线程抬到普通 Linux 最高优先级，和 UI/系统线程争抢不均衡。
+            runCatching {
+                android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_AUDIO)
+            }
+            renderLoop(gen)
+        }, "StemMixer").apply { start() }
         Log.i(TAG, "play: 渲染线程启动 @${framePos}frame (trackState=${t.playState})")
         EdgeProbe.log("Mixer", "play @${framePos}f (thread=${thread?.isAlive})")
     }

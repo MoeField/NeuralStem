@@ -118,6 +118,15 @@
 - JVM **433/0**（M1 reducer 52 + M2 controller 7 + 原有 374）；
   真机 edge fast path、4-stem cache/启动、开关 off/on 通过。
 
+## v0.2.40：C 阶段工程卫生（第一批）
+
+- **WaveformCache**：缓存文件名从 32-bit `hashCode` 改 SHA-256 截断，避免碰撞显示别的歌波形；新增 JVM 测试。
+- **StemMixer**：渲染线程改用 `THREAD_PRIORITY_AUDIO`，不再 `Thread.MAX_PRIORITY`。
+- **死代码**：删除无调用的 `FrameSource.toStereo/takeFirstTwoChannels/decodeToPcm`、`Media3DecodeBridge.decodeToPcm`、`PlaybackService.onPlayerReadyForEq`。
+- **CI lint**：新增 `:app:lintDebug` 硬门禁；修复 `MissingClass`、`MissingTranslation`，并禁用误报 `UnsafeOptInUsageError`（代码已用 `@file:OptIn`）。
+- JVM **485/0**；lint 0 errors。
+- 未完成：i18n 全量迁移、`dispatchTestCommand`/probe 拆 debug 源集、权限 manifest overlay、P3 数组不可变，留 C2。
+
 ## v0.2.39：B 阶段隐私与命令边界
 
 - **备份**：`backup_rules.xml` / `data_extraction_rules.xml` 排除模型、stems/PCM/波形缓存、`playlists.json` 和外部 UVR 目录；避免 1.2GB 备份失败与歌单路径上云。

@@ -207,4 +207,5 @@
     <string name="pl_delete">Delete</string>
     <string name="pl_remove">Remove</string>
     <string name="pl_rescan">Rescan folder</string>
+    <string name="sep_cache_disable_in_multitrack">Turn off the separation switch before clearing cache during multitrack playback</string>
 </resources>

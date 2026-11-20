@@ -7,6 +7,7 @@ import android.util.Log
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.File
+import java.security.MessageDigest
 import kotlin.math.abs
 
 /**
@@ -73,8 +74,16 @@ object WaveformCache {
      * 所以给它一个不依赖文件系统的入口。
      */
     private fun fileForStamp(context: Context, key: String, stamp: String): File {
-        val h = (key + "|" + stamp).hashCode().toUInt().toString(16)
+        // 64-bit hashCode 碰撞会显示别的歌的波形；用 SHA-256 截断到 32 hex。
+        val h = sha256Hex(key + "|" + stamp).take(32)
         return File(dir(context), "wf_$h.bin")
+    }
+
+    /** 纯函数，便于 JVM 单测。 */
+    internal fun sha256Hex(text: String): String {
+        val md = MessageDigest.getInstance("SHA-256")
+        return md.digest(text.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
     }
 
     /**

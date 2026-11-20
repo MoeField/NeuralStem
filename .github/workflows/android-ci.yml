@@ -117,6 +117,20 @@ jobs:
           fi
           exit $rc
 
+      - name: Lint
+        run: |
+          set +e
+          ./gradlew :app:lintDebug --no-daemon --stacktrace \
+            -Porg.gradle.java.installations.auto-download=false 2>&1 | tee /tmp/lint.log
+          rc=${PIPESTATUS[0]}
+          if [ "$rc" -ne 0 ]; then
+            grep -E "Error:|Lint found|FAILED|What went wrong" /tmp/lint.log \
+              | head -30 | while IFS= read -r line; do
+                echo "::error::$(echo "$line" | tr -d '\r' | cut -c1-900)"
+              done
+          fi
+          exit $rc
+
       - name: Upload test reports
         if: always()
         uses: actions/upload-artifact@v7

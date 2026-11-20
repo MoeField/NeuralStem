@@ -125,6 +125,7 @@
         拆开要维护两份且容易不同步；用 enabled 开关只改一行。
     -->
     <provider
+        tools:ignore="MissingClass"
         android:name="rikka.shizuku.ShizukuProvider"
         android:authorities="${applicationId}.shizuku"
         android:enabled="${shizukuProviderEnabled}"

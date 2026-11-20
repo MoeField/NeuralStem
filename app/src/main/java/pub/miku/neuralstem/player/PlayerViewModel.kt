@@ -628,7 +628,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 // M2-D:AudioTrack 会话在准备好后才有效。注意 VM 持有的是
                 // MediaController(不是真实 ExoPlayer) —— 会话 id 在 Service 里，
-                // 故 EQ 挂载走 [PlaybackService.onPlayerReadyForEq] 钩子（见 attachEqHook）。
+                // EQ 由 Service 的 attachSingleEq/attachMultiTrackEq 在会话就绪时挂载。
                 if (playbackState == Player.STATE_READY && !_state.value.isMultiTrack) {
                     Log.i(TAG, "controller READY (session=${p.audioSessionId})")
                 }

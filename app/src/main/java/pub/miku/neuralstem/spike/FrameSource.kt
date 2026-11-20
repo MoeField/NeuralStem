@@ -432,25 +432,9 @@ object SeparationInput {
         }
     }
 
-    private fun toStereo(mono: FloatArray): FloatArray {
-        val frames = mono.size
-        val out = FloatArray(frames * 2)
-        for (f in 0 until frames) {
-            out[f * 2] = mono[f]
-            out[f * 2 + 1] = mono[f]
-        }
-        return out
-    }
 
-    private fun takeFirstTwoChannels(src: FloatArray, srcChannels: Int): FloatArray {
-        val frames = src.size / srcChannels
-        val out = FloatArray(frames * 2)
-        for (f in 0 until frames) {
-            out[f * 2] = src[f * srcChannels]
-            out[f * 2 + 1] = src[f * srcChannels + 1]
-        }
-        return out
-    }
+
+
 
     // ---------------- 解码(平台 MediaExtractor + MediaCodec) ----------------
 
@@ -460,100 +444,5 @@ object SeparationInput {
         val sampleRate: Int,
     )
 
-    private fun decodeToPcm(context: Context, uri: Uri): DecodedPcm {
-        val extractor = MediaExtractor()
-        try {
-            extractor.setDataSource(context, uri, null)
 
-            var trackIndex = -1
-            var format: MediaFormat? = null
-            for (i in 0 until extractor.trackCount) {
-                val f = extractor.getTrackFormat(i)
-                if (f.getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true) {
-                    trackIndex = i
-                    format = f
-                    break
-                }
-            }
-            check(trackIndex >= 0) { "no audio track in $uri" }
-            val fmt = format!!
-            val mime = fmt.getString(MediaFormat.KEY_MIME)!!
-            extractor.selectTrack(trackIndex)
-
-            val codec = MediaCodec.createDecoderByType(mime)
-            try {
-                codec.configure(fmt, null, null, 0)
-                codec.start()
-
-                val out = ByteArrayOutputStream(1 shl 22)
-                val info = MediaCodec.BufferInfo()
-                var inputDone = false
-                var outputDone = false
-                var guard = 0
-
-                while (!outputDone && guard++ < 200_000) {
-                    if (!inputDone) {
-                        val inBuf = codec.dequeueInputBuffer(10_000)
-                        if (inBuf >= 0) {
-                            val buf = codec.getInputBuffer(inBuf)!!
-                            val size = extractor.readSampleData(buf, 0)
-                            if (size < 0) {
-                                codec.queueInputBuffer(
-                                    inBuf, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM,
-                                )
-                                inputDone = true
-                            } else {
-                                codec.queueInputBuffer(inBuf, 0, size, extractor.sampleTime, 0)
-                                extractor.advance()
-                            }
-                        }
-                    }
-                    when (val outIdx = codec.dequeueOutputBuffer(info, 10_000)) {
-                        MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> { /* 稍后读 outputFormat */ }
-                        MediaCodec.INFO_TRY_AGAIN_LATER -> { /* 继续等 */ }
-                        else -> if (outIdx >= 0) {
-                            val buf = codec.getOutputBuffer(outIdx)!!
-                            val chunk = ByteArray(info.size)
-                            buf.position(info.offset)
-                            buf.limit(info.offset + info.size)
-                            buf.get(chunk)
-                            out.write(chunk)
-                            codec.releaseOutputBuffer(outIdx, false)
-                            if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) {
-                                outputDone = true
-                            }
-                        }
-                    }
-                }
-
-                val all = out.toByteArray()
-                val outFormat = codec.outputFormat
-                val channels = outFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
-                val sampleRate = outFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE)
-                // KEY_PCM_ENCODING 是可选的(API24+,不少解码器不给)——
-                // 缺失时按默认 PCM16 处理;直接 getInteger 会因 null 拆箱抛 NPE(真机实测踩到)
-                val pcmEnc = if (outFormat.containsKey(MediaFormat.KEY_PCM_ENCODING)) {
-                    outFormat.getInteger(MediaFormat.KEY_PCM_ENCODING)
-                } else {
-                    AudioFormat.ENCODING_PCM_16BIT
-                }
-                check(pcmEnc == AudioFormat.ENCODING_PCM_16BIT) {
-                    "decoder gave PCM encoding $pcmEnc, only 16-bit handled"
-                }
-
-                val frames = all.size / 2 / channels
-                val samples = FloatArray(frames * channels)
-                val bb = ByteBuffer.wrap(all).order(ByteOrder.LITTLE_ENDIAN)
-                for (i in samples.indices) samples[i] = bb.short / 32768f
-
-                Log.i(TAG, "decoded: frames=$frames ch=$channels sr=$sampleRate")
-                return DecodedPcm(samples, channels, sampleRate)
-            } finally {
-                codec.stop()
-                codec.release()
-            }
-        } finally {
-            extractor.release()
-        }
-    }
 }
