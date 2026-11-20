@@ -55,6 +55,21 @@ import pub.miku.neuralstem.spike.SeparationRepository
  * - 音频焦点(N3):`handleAudioFocus=true` 让 ExoPlayer 代管 —— 抢占时自动暂停,
  *   焦点归还时按 `playWhenReady` 恢复。Task 1 用最简方案,后续需要自定义行为再换手动管理。
  */
+/** isPlaying 输入源：多轨只认 mixer，单轨只认门面，显式载入/清空可强制。 */
+internal enum class PlayingSource { FACADE, MIX, EXPLICIT }
+
+/** 返回 null = 该来源在当前模式下不允许写 isPlaying。纯函数，便于 JVM 单测。 */
+internal fun resolvePlayingUpdate(
+    isMultiTrackLoaded: Boolean,
+    source: PlayingSource,
+    incoming: Boolean,
+): Boolean? = when {
+    source == PlayingSource.EXPLICIT -> incoming
+    isMultiTrackLoaded && source == PlayingSource.MIX -> incoming
+    !isMultiTrackLoaded && source == PlayingSource.FACADE -> incoming
+    else -> null
+}
+
 class PlayerViewModel(app: Application) : AndroidViewModel(app) {
 
     private val separationDomain = SeparationDomain.get(app)
@@ -133,17 +148,11 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _state = MutableStateFlow(PlayerState())
 
-    /** isPlaying 的输入源；多轨只认 mixer，单轨只认门面，显式载入/清空可强制。 */
-    private enum class PlayingSource { FACADE, MIX, EXPLICIT }
-
     private fun updatePlaying(value: Boolean, source: PlayingSource) {
-        if (source != PlayingSource.EXPLICIT) {
-            if (isMultiTrackLoaded && source != PlayingSource.MIX) return
-            if (!isMultiTrackLoaded && source == PlayingSource.MIX) return
-        }
-        if (_state.value.isPlaying != value) {
-            _state.value = _state.value.copy(isPlaying = value)
-            Log.i(TAG, "isPlaying=$value source=$source multi=$isMultiTrackLoaded")
+        val resolved = resolvePlayingUpdate(isMultiTrackLoaded, source, value) ?: return
+        if (_state.value.isPlaying != resolved) {
+            _state.value = _state.value.copy(isPlaying = resolved)
+            Log.i(TAG, "isPlaying=$resolved source=$source multi=$isMultiTrackLoaded")
         }
     }
 

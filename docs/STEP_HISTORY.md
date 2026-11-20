@@ -118,6 +118,14 @@
 - JVM **433/0**（M1 reducer 52 + M2 controller 7 + 原有 374）；
   真机 edge fast path、4-stem cache/启动、开关 off/on 通过。
 
+## v0.2.45：架构不变量文档 + 单源测试
+
+- 新增 `docs/ARCHITECTURE.md`：播放/分离/持久化不变量、被否决方案、维护规则。
+- #10 抽出纯函数 `resolvePlayingUpdate()` + `PlayingSourceTest`，锁住“单轨只认门面、多轨只认 mixer”。
+- #13 抽出 `grantReleaseFlags()` + `GrantReleaseFlagsTest`，锁住 READ/WRITE 位组合。
+- 文档索引/README/DEVELOP 互相链接。
+- JVM **489/0**。
+
 ## v0.2.44：CI 与供应链门禁
 
 - **#15**：CI 新增 `lintVitalRelease`；不再只跑 lintDebug。

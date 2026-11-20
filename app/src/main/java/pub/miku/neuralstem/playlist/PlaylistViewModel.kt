@@ -26,6 +26,14 @@ import java.util.UUID
  * - **默认歌单**（[PlaylistStore.Playlist.isDefault]）：不可删、可清空、不改名。
  * - 歌单顺序 = 播放顺序（文件可用 [moveTrack] 排序；文件夹不允许）。
  */
+/** 按系统实际记录的权限位组合 release flags；没有权限返回 0。 */
+internal fun grantReleaseFlags(read: Boolean, write: Boolean): Int {
+    var flags = 0
+    if (read) flags = flags or Intent.FLAG_GRANT_READ_URI_PERMISSION
+    if (write) flags = flags or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+    return flags
+}
+
 class PlaylistViewModel(app: Application) : AndroidViewModel(app) {
 
     private val store = PlaylistStore(app)
@@ -146,9 +154,7 @@ class PlaylistViewModel(app: Application) : AndroidViewModel(app) {
         val parsed = Uri.parse(uri)
         val cr = getApplication<Application>().contentResolver
         val perm = cr.persistedUriPermissions.firstOrNull { it.uri == parsed } ?: return
-        var flags = 0
-        if (perm.isReadPermission) flags = flags or Intent.FLAG_GRANT_READ_URI_PERMISSION
-        if (perm.isWritePermission) flags = flags or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+        val flags = grantReleaseFlags(perm.isReadPermission, perm.isWritePermission)
         if (flags == 0) return
         runCatching {
             cr.releasePersistableUriPermission(parsed, flags)
