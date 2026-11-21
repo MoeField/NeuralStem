@@ -5,7 +5,7 @@
 
 ## 0. TL;DR
 
-- 6 条 P0 已全部有代码修复并进入正式版本；其中 #3/#4/#14 有自动化或真机验证，#1/#2/#5/#6 仍是“代码修复、缺故障注入”。
+- 6 条 P0 已全部修复并验证：**#1 V3、#2 V2、#3 V1、#4 V2、#5 V1、#6 V2**。
 - 12 条 P1 中：**12 条已修**（#12/#13 有代码修复与专项验证；#2 仍是代码+纯函数验证，未复现到完整 UI Stopping）。
 - 当前不宜再混版做 UI/架构重构；下一步按 **#9 → #17 → 验证补齐 → P2** 四阶段推进。
 - 普通 JVM **503/0**；`with_ncm` **527/0**；`lintVitalRelease`、NCM 编译、APK 无 AVS3 断言均已进 CI。
@@ -24,11 +24,11 @@
 | # | 问题 | 状态 | 版本 | 验证 | 缺口 |
 |---|---|---|---|---|---|
 | 1 | AudioTrack 重建后没 `play()`、EQ 挂旧 session | 已修 | 0.2.42/48 | V3 | 已注入 write 失败：新 session/EQ/heartbeat 均验证 |
-| 2 | `Stopping` 永久卡死（activeJobId 提前清空、无 watchdog） | 已修 | 0.2.43/48 | V1 | watchdog 纯函数测试；完整 UI 二次 Start 未复现 |
+| 2 | `Stopping` 永久卡死（activeJobId 提前清空、无 watchdog） | 已修 | 0.2.43/48/49 | V2 | watchdog 纯函数 + 真机二次 Start 后 job=null、busy=false、按钮恢复；未观察到稳定 Stopping 日志 |
 | 3 | 导出未检查 `coverage.complete` | 已修 | 0.2.42 | V1 | 有 guard 单测；未做半截结果导出真机 |
 | 4 | release 自动化 Intent 无 DEBUG 守卫 | 已修 | 0.2.42 | V2 | release 包已验证忽略 `auto_play` |
 | 5 | 损坏歌单被下一次进度写覆盖 | 已修 | 0.2.42/48 | V1 | 损坏 JSON fixture 已测 |
-| 6 | 默认第三方模型代理 | 已修 | 0.2.44 | V2 | 默认直连；UVR 直连下载/Range 真机验证 |
+| 6 | 默认第三方模型代理 | 已修 | 0.2.44/47 | V2 | 默认直连；Spleeter 39MB 下载/SHA-256 成功 |
 
 ## 2. P1 状态
 
