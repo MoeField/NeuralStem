@@ -28,6 +28,7 @@
 | 损坏 playlists.json | **PASS**：启动保留 `.corrupt-<ts>` 副本，不覆盖损坏文件 |
 | 队列/repeat | **PASS**：2 首 queue + repeat one/all + next/prev，无播放错误 |
 | 分离中取消 | **PARTIAL**：fresh edge 中 `repo.cancel()` 触发 `EdgeSession.abort`，但未做完整 UI 回退断言 |
+| C：Service 启动竞态 | **PASS（修复后）**：`sepdouble` 第二次 Start → job2 `Running/Separating`，无 stopSelf/服务丢失；任务完成后前台通知清零 |
 
 2h 产物：`stability-out/soak-2h-c/`（本地，未入库）  
 关键序列产物：`stability-out/key-20261122-015434/`
@@ -40,6 +41,12 @@
 - 修复 `SeparationReducer.onStemsLoaded()`：Stopping 直接忽略迟到加载
 - 回归测试：`SeparationReducerTest.stopping_stemsLoaded_must_not_drop_pendingStart`
 - 随机模型：2000 seeds × 40 events 全绿
+
+### C：SeparationService 启动竞态
+
+- `sepdouble` 复现：第二次 Start 时 Service 读到旧终态 → `stopSelf` → job2 `Failed(分离服务丢失)`
+- 修复：`SeparationService` 增加 **2s 启动宽限期**；宽限期内终态不自停；第二次 Start 重置宽限
+- 修复后：job2 稳定 `Running / Separating(jobId=2)`，无 stopSelf/服务丢失；完成通知清零
 
 ### 测试环境问题（非 App 缺陷，已排除）
 
@@ -71,7 +78,7 @@
 - #2 完整 UI Stopping 仍不稳定性；C SeparationService 启动竞态仍开放
 - 损坏 playlists.json 真机（JVM 已测）
 - 15 条序列中剩余的分离/歌单/导出人工序列
-- **#2 完整 UI Stopping 仍不稳定性**；C SeparationService 启动竞态仍开放
+- #2 的 Service/Domain 竞态已稳定；完整 UI 二次 Start 的视觉回退仍建议单独人工确认
 - 未做 2h 以外的低内存/后台杀进程专项
 
 ## 6. 发布决定

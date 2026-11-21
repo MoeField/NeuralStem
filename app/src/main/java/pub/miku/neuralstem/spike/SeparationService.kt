@@ -10,6 +10,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
@@ -19,6 +20,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import pub.miku.neuralstem.MainActivity
@@ -50,11 +52,22 @@ class SeparationService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var observer: Job? = null
     private var stopped = false
+    /** 本次 onStartCommand 的启动宽限期：避免读到上一次任务的终态/Idle 就自杀。 */
+    private var startGraceUntil = 0L
+    /** 本次 Service 启动后是否真的见过 Preparing/Running。 */
+    private var sawActive = false
+    private var graceStopJob: Job? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         ensureChannel()
+        // ★C 修复：repo.start* 先 startService、后 launch separation；
+        // 服务第一次 collect 到的可能还是上一次的 terminal/Idle。给新任务 2s 启动窗口，
+        // 且只有真的见过 active 状态，才允许终态 stopSelf。
+        startGraceUntil = SystemClock.uptimeMillis() + START_GRACE_MS
+        sawActive = false
+        stopped = false
         try {
             // type 参数仅 API 29+ 使用；低版本传 0 即可（兼容由 ServiceCompat 处理）。
             val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -85,9 +98,11 @@ class SeparationService : Service() {
             repo.state.collectLatest { s ->
                 when (s) {
                     is SeparationRepository.State.Preparing -> {
+                        sawActive = true
                         notifyProgress(0, "准备中…")
                     }
                     is SeparationRepository.State.Running -> {
+                        sawActive = true
                         notifyProgress(s.percent, "分离中 ${s.percent}%")
                     }
                     is SeparationRepository.State.Done,
@@ -99,7 +114,22 @@ class SeparationService : Service() {
                         // ★2026-11-09（P0-3）：取消→立刻重试时，旧任务会先发 Cancelled，
                         //   但新任务已经在排队/等待旧任务 join（repo.isRunning=true）。
                         //   此时不能 stopSelf，否则新任务掉出前台被降频。
-                        if (!repo.isRunning) stopSelfCleanly()
+                        if (repo.isRunning) return@collectLatest
+                        val now = SystemClock.uptimeMillis()
+                        // ★宽限期优先于 sawActive：第二次 Start 可能先收到旧任务终态，
+                        //   此时 job2 还没登记为 running；2s 内一律不自停。
+                        if (now < startGraceUntil) {
+                            if (graceStopJob?.isActive != true) {
+                                graceStopJob = scope.launch {
+                                    delay(startGraceUntil - now)
+                                    if (!repo.isRunning) stopSelfCleanly()
+                                }
+                            }
+                        } else if (sawActive) {
+                            stopSelfCleanly()
+                        } else {
+                            stopSelfCleanly()
+                        }
                     }
                 }
             }
@@ -175,6 +205,7 @@ class SeparationService : Service() {
         private const val TAG = "SepService"
         private const val CHANNEL_ID = "separation"
         private const val NOTIF_ID = 0x5EA0
+        private const val START_GRACE_MS = 2_000L
 
         /**
          * 起前台服务（分离开跑前调用）。**失败不抛出**（降级为无前台照跑）。
