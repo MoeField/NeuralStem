@@ -140,6 +140,20 @@ jobs:
           fi
           exit $rc
 
+      - name: Compile instrumented tests
+        run: |
+          set +e
+          ./gradlew :app:assembleDebugAndroidTest --no-daemon --stacktrace \
+            -Porg.gradle.java.installations.auto-download=false 2>&1 | tee /tmp/androidtest.log
+          rc=${PIPESTATUS[0]}
+          if [ "$rc" -ne 0 ]; then
+            grep -iE "What went wrong|Caused by|error:|FAILED" /tmp/androidtest.log \
+              | head -25 | while IFS= read -r line; do
+                echo "::error::$(echo "$line" | tr -d '\r' | cut -c1-900)"
+              done
+          fi
+          exit $rc
+
       - name: Lint vital
         run: |
           set +e

@@ -118,6 +118,14 @@
 - JVM **433/0**（M1 reducer 52 + M2 controller 7 + 原有 374）；
   真机 edge fast path、4-stem cache/启动、开关 off/on 通过。
 
+## v0.2.51：B3 仪器化 smoke
+
+- 新增 `MultiTrackEngineSmokeTest`（androidTest）：合成 5s WAV → 多轨 load/play → 位置推进；全轨 volume=0 后位置仍推进（#14）；pause/close 不崩。
+- 修 `MainActivity` 错误监听重挂：`MediaController.removeListener/addListener` 统一到 `Dispatchers.Main.immediate`，修复测试暴露的 wrong-thread。
+- CI 新增 `assembleDebugAndroidTest` 编译门禁（不跑模拟器）。
+- 真机 `connectedDebugAndroidTest` 单测通过；普通 503/0。
+- 放弃 Compose UI smoke：测试环境触发无限重组 busy，引擎层测试更稳定。
+
 ## v0.2.50：B2 生产 UI i18n
 
 - Settings 的 NCM/解码缓存/PCM 缓存二级页文案全部迁 `values/strings.xml` + `values-en`。

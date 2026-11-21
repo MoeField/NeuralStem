@@ -96,7 +96,7 @@ AVS3-P3 参考实现受 UWA 政策限制，**不随仓库分发**，release APK 
 
 ## 5. 测试与调试
 
-当前基线：JVM **503** 条（v0.2.50，普通）；with_ncm 527 条。整改状态与计划见 [`REMEDIATION_STATUS.md`](REMEDIATION_STATUS.md)。
+当前基线：JVM **503** 条（v0.2.51，普通）；with_ncm 527 条；androidTest 1 条（需真机）。整改状态与计划见 [`REMEDIATION_STATUS.md`](REMEDIATION_STATUS.md)。
 
 ```bash
 # JVM

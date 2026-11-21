@@ -103,9 +103,13 @@ class MainActivity : ComponentActivity() {
                 }
                 LaunchedEffect(Unit) {
                     playerVm.state.collect {
-                        playerVm.player?.let { p ->
-                            p.removeListener(errorListener)
-                            p.addListener(errorListener)
+                        // MediaController 必须在应用主线程调用；Compose 测试/某些重建路径
+                        // 的 collect 可能不在主线程。
+                        withContext(kotlinx.coroutines.Dispatchers.Main.immediate) {
+                            playerVm.player?.let { p ->
+                                p.removeListener(errorListener)
+                                p.addListener(errorListener)
+                            }
                         }
                     }
                 }
