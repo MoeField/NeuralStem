@@ -29,6 +29,8 @@
 | 队列/repeat | **PASS**：2 首 queue + repeat one/all + next/prev，无播放错误 |
 | 分离中取消 | **PARTIAL**：fresh edge 中 `repo.cancel()` 触发 `EdgeSession.abort`，但未做完整 UI 回退断言 |
 | C：Service 启动竞态 | **PASS（修复后）**：`sepdouble` 第二次 Start → job2 `Running/Separating`，无 stopSelf/服务丢失；任务完成后前台通知清零 |
+| 队列/repeat | **PASS**：2 首 queue + one/all + next/prev，无播放错误 |
+| revoke grant | **PASS**：GRANTS 1→0，track 失效，无 FATAL |
 
 2h 产物：`stability-out/soak-2h-c/`（本地，未入库）  
 关键序列产物：`stability-out/key-20261122-015434/`
@@ -70,6 +72,7 @@
 | Demucs 分离/导出 | PASS（280s，0.60x，peakPss≈4966MB） |
 | 损坏 playlists.json | PASS（保留 corrupt 副本，不覆盖） |
 | 队列/repeat | PASS（2 首，one/all，next/prev） |
+| revoke grant | PASS（1→0） |
 | 分离中取消 | PARTIAL（abort 已触发；UI 回退未完全断言） |
 
 ## 5. 未完成/仍需补测
