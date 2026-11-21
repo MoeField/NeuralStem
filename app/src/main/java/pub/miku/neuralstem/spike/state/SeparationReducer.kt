@@ -396,8 +396,14 @@ object SeparationReducer {
     ): ReduceResult {
         val job = s.job
         if (job == null || job.jobId != e.jobId) return ReduceResult(s)
-        if (job.lifecycle is Lifecycle.Failed || job.lifecycle is Lifecycle.Stopping) {
+        if (job.lifecycle is Lifecycle.Failed) {
             return ReduceResult(s.copy(job = job.copy(operation = null)))
+        }
+        // ★稳定性测试发现：Stopping 时旧的 StemsLoaded 不能清 operation。
+        //   否则 Cancelling.pendingStart 被抹掉，JobStopped 找不到待启动请求，直接丢任务。
+        //   这里直接忽略迟到的加载完成，交给 CancelJob/JobStopped 收尾。
+        if (job.lifecycle is Lifecycle.Stopping) {
+            return ReduceResult(s)
         }
         // 用户在加载期间关掉开关：不 attach；清掉 loading，避免一直转。
         if (s.autoAttachSuppressedFor == e.jobId) {

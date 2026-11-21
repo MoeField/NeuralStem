@@ -982,4 +982,33 @@ class SeparationReducerTest {
         val s = SeparationSnapshot(currentTrackKey = trackB, attachment = loaded)
         assertFalse(s.separationOn)
     }
+
+    @Test
+    fun stopping_stemsLoaded_must_not_drop_pendingStart() {
+        val running = runningEdge()
+        val next = reduce(
+            running,
+            SeparationEvent.User.Start(
+                StartRequest(kind = SeparationKind.EDGE, trackKey = trackB),
+            ),
+        ).snapshot
+        assertEquals(Lifecycle.Stopping, next.job!!.lifecycle)
+        assertTrue(next.job!!.operation is Operation.Cancelling)
+        val pending = (next.job!!.operation as Operation.Cancelling).pendingStart
+        assertTrue(pending != null)
+
+        val stale = reduce(
+            next,
+            SeparationEvent.Domain.StemsLoaded(next.job!!.jobId, vocalsAndAccomp),
+        ).snapshot
+        assertEquals(Lifecycle.Stopping, stale.job!!.lifecycle)
+        assertTrue(
+            "迟到的 StemsLoaded 不能清掉 Cancelling/pendingStart",
+            stale.job!!.operation is Operation.Cancelling,
+        )
+        assertEquals(
+            pending,
+            (stale.job!!.operation as Operation.Cancelling).pendingStart,
+        )
+    }
 }

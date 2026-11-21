@@ -131,7 +131,7 @@ AudioState
 
 ### 真机 adb fuzz
 
-用 TEST_HOOKS 构建，脚本随机组合：
+用 TEST_HOOKS 构建，脚本随机组合（脚本：`tools/stability_soak.sh`）：
 
 ```text
 load / play / pause / seek / next / prev / repeat / speed / pitch /
