@@ -21,6 +21,7 @@
 | 2h soak | **7128 ops / 90 restarts / 0 FATAL / 0 ANR / 0 player error / 0 waveform error** |
 | 关键序列脚本（5 组） | **5/5 PASS**：basic / multi / eq / av3a / restart |
 | write 故障注入 | **PASS**：重建 AudioTrack → session 3913→3921 → EQ 重挂 → heartbeat 5015ms |
+| Spleeter 2 轨真机 | **PASS**：39MB 模型下载 → edge complete=true → 自动 2 轨多轨 → 导出 2 文件成功 |
 
 2h 产物：`stability-out/soak-2h-c/`（本地，未入库）  
 关键序列产物：`stability-out/key-20261122-015434/`
@@ -50,10 +51,12 @@
 | force-stop + 冷启动 | PASS |
 | write 失败注入 + AudioTrack 重建 + EQ 重挂 | PASS |
 | 2h 随机播放/重启 | PASS |
+| edge 分离→attach→多轨 | PASS（coverage complete=true，2 轨） |
+| 导出到 Music/separate | PASS（2 文件，spleeter-2stem） |
 
 ## 5. 未完成/仍需补测
 
-- 分离相关关键序列（edge/4-stem/attach/export/coverage）需要模型，当前设备未装模型
+- 4-stem/Demucs 分离压力（当前只装了 2 轨模型）
 - SAF 导入→删除→grant 计数（本会话早前手工验证过，未纳入本轮脚本）
 - 损坏 playlists.json 真机（JVM 已测）
 - 15 条序列中剩余的分离/歌单/导出人工序列
