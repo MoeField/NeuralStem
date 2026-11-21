@@ -49,15 +49,18 @@
 
 ## 3. P2 / 文档债
 
-已确认但仍开放：
+已关闭：
 
-- `MAINTENANCE_AUDIT.md` 的 471 条是**审计时快照**，不是当前值；本文与 DEVELOP 为准。
-- README 的“2 轨不支持导出”已过期：代码对 2/4 轨统一走 `exportableFiles`，前提是 `coverage.complete`。
-- `BackfillCostGateTest` 仍复刻生产公式，存在假绿风险；应改为调用生产纯函数。
-- `Spleeter4Separator` 的静态线程池仍无 `shutdown()`。
+- `MAINTENANCE_AUDIT.md` 已标为历史快照（471 条不是当前值）。
+- README 的“2 轨不支持导出”已改成 2/4 轨统一规则（`coverage.complete`）。
+- `BackfillCostGateTest` 已改调生产 `estimateBackfillSec/isBackfillTooExpensive`。
+- `Spleeter4Separator` 的 iSTFT 线程池已改为 daemon。
+
+仍开放（非 P0/P1 功能缺陷）：
+
 - `PlayerViewModel`/`MainActivity` 仍是大文件；`AppShell` 多分支；C2 工程卫生未做。
-- 资源压缩/16KB/largeHeap 等发布配置未逐项验证。
-- `SeparationDomain`/SAF 等 Android 路径没有 CI 仪器测试。
+- `largeHeap=true`、`useLegacyPackaging=true`、sherpa so 的 16KB 对齐：受依赖限制，未做发布配置层面的最终验证。
+- `SeparationDomain`/SAF 等 Android 路径没有 CI 仪器测试；#2 的完整 UI 二次 Start、#13 的设备端 grant 计数仍是手工验证缺口。
 
 ## 4. 参考项目结论（只读调研）
 
@@ -94,7 +97,7 @@
 
 退出标准：页面切换/返回不中断下载；取消单个任务不影响其他；断点续传可用；无重复下载。
 
-### Phase C — v0.2.48：Android 验证补齐
+### Phase C — v0.2.48：Android 验证补齐（部分完成）
 
 - #2：debug 测试命令触发二次 Start，确认 Stopping 2s 内恢复。
 - #10：多轨播放/暂停/通知/切歌，位置与播放态一致。
@@ -103,7 +106,7 @@
 - #11：VM 重建后 lastStems 恢复。
 - 先在本机/CI 设备跑；暂不要求模拟器全覆盖。
 
-### Phase D — v0.2.49+：P2/清理
+### Phase D — v0.2.49+：P2/清理（部分提前完成）
 
 - #12 主线程 join 改异步回收。
 - #13 授权重定位/启动孤儿 grant 清理。
