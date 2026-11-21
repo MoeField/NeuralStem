@@ -234,6 +234,7 @@ CI 用 Repository Secrets（`KEYSTORE_BASE64` / `KEYSTORE_PASSWORD` / `KEY_ALIAS
 - [`docs/DEVELOP.md`](docs/DEVELOP.md)：构建、架构、关键不变量、常见坑、测试与发布。
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)：播放/分离/持久化不变量与被否决方案。
 - [`docs/REMEDIATION_STATUS.md`](docs/REMEDIATION_STATUS.md)：审计整改状态、验证缺口与后续版本计划。
+- [`docs/STABILITY_TEST_PLAN.md`](docs/STABILITY_TEST_PLAN.md)：状态稳定性测试、故障注入与 v0.2.55 发布门禁。
 - [`docs/STEP_HISTORY.md`](docs/STEP_HISTORY.md)：阶段/版本改动历史与验证方式。
 - [`docs/LICENSING.md`](docs/LICENSING.md)：MIT / NCM / AVS3 参考实现边界。
 - [`docs/STATE_MODEL.md`](docs/STATE_MODEL.md)：分离状态模型重构设计稿。
