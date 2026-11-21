@@ -118,6 +118,13 @@
 - JVM **433/0**（M1 reducer 52 + M2 controller 7 + 原有 374）；
   真机 edge fast path、4-stem cache/启动、开关 off/on 通过。
 
+## v0.2.50 准备：C 项测试注入（未发版）
+
+- 新增 TEST_HOOKS `separationTestSlowMs`：edge 首块前可注入延迟。
+- `sepdouble` 命令在首块前停 3s，尝试稳定复现 Running→Stopping。
+- 实测仍被 `SeparationService` 启动窗口干扰：第二次 Start 前 Service 已 stopSelf，Domain 得到“分离服务丢失”，未录到稳定 Stopping。
+- 未带未经证实的 Service 改动进 release；只保留测试注入，release 默认 0。
+
 ## v0.2.49：SAF 重新授权真机修复
 
 - **#13 真机验证**：导入→grant=1；删除→grant=0 且日志 `released file grant`；revoke→重启后播放失败并显示“⚠ 需重新授权”；重新选择→标记消失、播放成功、grant=1。

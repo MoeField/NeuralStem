@@ -24,7 +24,7 @@
 | # | 问题 | 状态 | 版本 | 验证 | 缺口 |
 |---|---|---|---|---|---|
 | 1 | AudioTrack 重建后没 `play()`、EQ 挂旧 session | 已修 | 0.2.42/48 | V3 | 已注入 write 失败：新 session/EQ/heartbeat 均验证 |
-| 2 | `Stopping` 永久卡死（activeJobId 提前清空、无 watchdog） | 已修 | 0.2.43/48/49 | V2 | watchdog 纯函数 + 真机二次 Start 后 job=null、busy=false、按钮恢复；未观察到稳定 Stopping 日志 |
+| 2 | `Stopping` 永久卡死（activeJobId 提前清空、无 watchdog） | 已修 | 0.2.43/48/49 | V1 | watchdog 纯函数；C 项测试注入已加，但完整 Running→Stopping 仍受 Service 启动窗口干扰，未稳定复现 |
 | 3 | 导出未检查 `coverage.complete` | 已修 | 0.2.42 | V1 | 有 guard 单测；未做半截结果导出真机 |
 | 4 | release 自动化 Intent 无 DEBUG 守卫 | 已修 | 0.2.42 | V2 | release 包已验证忽略 `auto_play` |
 | 5 | 损坏歌单被下一次进度写覆盖 | 已修 | 0.2.42/48 | V1 | 损坏 JSON fixture 已测 |
