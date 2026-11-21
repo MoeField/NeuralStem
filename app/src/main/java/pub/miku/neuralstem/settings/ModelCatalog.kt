@@ -118,6 +118,8 @@ data class ModelPackInfo(
     val licenseNote: String,
     /** 来源页（用户可自行核对）。 */
     val sourceUrl: String,
+    /** 上游模型/权重仓库（可选；UVR 这类转发模型需要单独标出）。 */
+    val upstreamUrl: String? = null,
     val files: List<ModelFile>,
 ) {
     val totalBytes: Long get() = files.sumOf { it.expectedBytes }
@@ -140,6 +142,10 @@ object ModelCatalog {
      */
     private const val GH_UVR_BASE =
         "https://github.com/k2-fsa/sherpa-onnx/releases/download/source-separation-models"
+
+    /** UVR 上游权重仓库（k2-fsa 的 release 页面明确写“converted from”这里）。 */
+    private const val UVR_UPSTREAM =
+        "https://github.com/TRvlvr/model_repo/releases/tag/all_public_uvr_models"
 
     /**
      * 期望字节数（用于完整性校验）。
@@ -285,13 +291,14 @@ object ModelCatalog {
         ) = ModelPackInfo(
             pack = p,
             displayName = title,
-            license = "未统一声明",
-            licenseNote = "模型由 **k2-fsa（sherpa-onnx 作者）** 在官方 GitHub Release 转发，" +
-                "与 Spleeter 同一个 release。⚠️ **上游 UVR/MDX-Net 权重多数未显式声明许可**" +
-                "（部分源自 Sony MDX 研究发布，常带研究/非商业限制）—— **仅供个人学习研究**，" +
-                "商用请自行联系模型作者或改用 Spleeter。" +
+            license = "上游未声明",
+            licenseNote = "模型由 k2-fsa（sherpa-onnx 作者）在官方 GitHub Release 转发，与 Spleeter 同一个 release。" +
+                "上游 UVR/MDX-Net 权重多数未显式声明许可；其中部分源自 Sony MDX 研究发布，" +
+                "常带研究/非商业限制。该转发仓库和上游模型仓库均未附统一 license 文件。" +
+                "仅供个人学习研究；商用请自行联系模型作者，或改用 Spleeter。" +
                 "\n\n速度（$speedNote）。",
             sourceUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/tag/source-separation-models",
+            upstreamUrl = UVR_UPSTREAM,
             files = listOf(
                 ModelFile(
                     remotePath = file,   // 完整 URL（含 https://）→ 下载器识别后不走 base
@@ -356,15 +363,15 @@ object ModelCatalog {
         ) = ModelPackInfo(
             pack = p,
             displayName = "【实验】$title",
-            license = "未统一声明",
-            licenseNote = "模型由 **k2-fsa（sherpa-onnx 作者）** 在官方 GitHub Release 转发。" +
-                "⚠️ **上游 UVR/MDX-Net 权重多数未显式声明许可**" +
-                "（部分源自 Sony MDX 研究发布，常带研究/非商业限制）—— **仅供个人学习研究**，" +
-                "商用请自行联系模型作者或改用 Spleeter。" +
-                "\n\n**实验性质**：stem 顺序已用 NCC 实证（2026-10-20），但音质未做主观评估；" +
+            license = "上游未声明",
+            licenseNote = "模型由 k2-fsa（sherpa-onnx 作者）在官方 GitHub Release 转发。" +
+                "上游 UVR/MDX-Net 权重多数未显式声明许可；部分源自 Sony MDX 研究发布，" +
+                "常带研究/非商业限制。仅供个人学习研究；商用请自行联系模型作者或改用 Spleeter。" +
+                "\n\n实验性质：stem 顺序已用 NCC 实证（2026-10-20），但音质未做主观评估；" +
                 "与正式模型存在音质重叠，不建议作为长期首选。" +
                 "\n\n速度（$speedNote）。",
             sourceUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/tag/source-separation-models",
+            upstreamUrl = UVR_UPSTREAM,
             files = listOf(
                 ModelFile(
                     remotePath = "$GH_UVR_BASE/$file",

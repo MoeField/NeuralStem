@@ -38,6 +38,10 @@ AVS3-P3（`av3a`）的 UWA 参考实现受 **UWA Code Sharing Policy** 限制，
 - ONNX Runtime：MIT
 - AndroidX / Media3 / Kotlin：Apache-2.0
 - 分离模型权重：各自许可，**不入库**，用户在 App 内下载；商用/分发前需逐个核对。
+- UVR/MDX-Net：转发来源 <https://github.com/k2-fsa/sherpa-onnx/releases/tag/source-separation-models>，
+  上游权重来自 <https://github.com/TRvlvr/model_repo/releases/tag/all_public_uvr_models>。
+  上游多数未显式声明许可，部分源自 Sony MDX 研究发布，常带研究/非商业限制；
+  本项目仅供个人学习研究，商用请自行联系模型作者或改用 Spleeter。
 
 详见根目录 [`NOTICE`](../NOTICE)。
 

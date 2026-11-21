@@ -258,4 +258,5 @@
     <string name="spike_track_changed_retry">当前曲已切换，请重试</string>
     <string name="spike_import_first">先导入音频</string>
     <string name="spike_cancelled">分离已取消</string>
+    <string name="settings_models_upstream_page">上游：%1$s</string>
 </resources>

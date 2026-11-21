@@ -40,12 +40,16 @@ class ModelCatalogTest {
         for (p in uvrPacks) {
             val info = ModelCatalog.info(p)
             assertTrue(
-                "${p} 的许可必须写明“未统一声明”（不可声称自由许可）",
-                info.license.contains("未统一声明"),
+                "${p} 的许可必须写明上游未声明（不可声称自由许可）",
+                info.license.contains("未声明"),
             )
             assertTrue(
                 "${p} 的许可详情应提及上游风险",
                 info.licenseNote.contains("未显式声明") || info.licenseNote.contains("未统一"),
+            )
+            assertTrue(
+                "${p} 必须给出上游 TRvlvr 模型仓库地址",
+                info.upstreamUrl?.contains("TRvlvr/model_repo") == true,
             )
         }
     }

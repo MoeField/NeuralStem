@@ -118,6 +118,14 @@
 - JVM **433/0**（M1 reducer 52 + M2 controller 7 + 原有 374）；
   真机 edge fast path、4-stem cache/启动、开关 off/on 通过。
 
+## v0.2.52：UVR 许可/来源提示修正
+
+- UVR 弹窗不再显示 Markdown `**` 星号。
+- 许可短名改为「上游未声明」；正文明确：k2-fsa 转发、上游 TRvlvr 模型仓库、无统一 license、部分 Sony MDX 研究/非商业限制、仅供个人学习研究。
+- 弹窗新增「上游：TRvlvr/model_repo release」地址；下载来源仍为 k2-fsa release。
+- README/LICENSING 同步补两个地址。
+- `ModelCatalogTest` 增加 upstreamUrl 断言；JVM 503/0。
+
 ## v0.2.51（续）：B1 第一切口 PlaybackConnection
 
 - 新增 `PlaybackConnection`：只负责 MediaController 构建/连接/释放与 extras 转发。

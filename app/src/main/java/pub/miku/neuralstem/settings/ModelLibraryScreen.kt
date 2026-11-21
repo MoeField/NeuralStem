@@ -277,6 +277,13 @@ fun ModelLibraryScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.primary,
                     )
+                    info.upstreamUrl?.let { upstream ->
+                        Text(
+                            stringResource(R.string.settings_models_upstream_page, upstream),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
                 }
             },
             confirmButton = {

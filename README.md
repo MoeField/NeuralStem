@@ -322,3 +322,5 @@ AVS3-P3 解码器的参考实现（[Dreamello/av3a](https://github.com/Dreamello
 - **AVS3-P3 解码器**：**不在本仓库内**，按 UWA 代码共享政策授权，需自行获取，见上一节。
 - 第三方库与**模型权重**许可不统一 —— 商用前请逐个核对，见 [NOTICE](NOTICE)
 - UVR / MDX-Net 系列模型上游多数**未显式声明许可**，仅供个人学习研究
+  下载转发页：<https://github.com/k2-fsa/sherpa-onnx/releases/tag/source-separation-models>
+  上游权重：<https://github.com/TRvlvr/model_repo/releases/tag/all_public_uvr_models>
