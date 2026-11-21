@@ -226,6 +226,14 @@ class MainActivity : ComponentActivity() {
                         errorMsg.value = null
                     }
                 }
+                LaunchedEffect(Unit) {
+                    playerVm.userMessage.collect { msg ->
+                        if (msg != null) {
+                            snackbar.showSnackbar(msg)
+                            playerVm.consumeUserMessage()
+                        }
+                    }
+                }
 
                 // ★T0：测试命令总线消费循环（adb broadcast → 动作级驱动；见 devtools/）。
                 //   执行点调用**与 UI 点击相同**的 VM 方法（测试路径 = 用户路径）。

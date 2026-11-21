@@ -147,6 +147,10 @@ object ModelCatalog {
     private const val UVR_UPSTREAM =
         "https://github.com/TRvlvr/model_repo/releases/tag/all_public_uvr_models"
 
+    /** UVR 官方 README 的模型许可声明（MIT + 要求署名）。 */
+    private const val UVR_LICENSE =
+        "https://github.com/Anjok07/ultimatevocalremovergui#license"
+
     /**
      * 期望字节数（用于完整性校验）。
      *
@@ -291,11 +295,12 @@ object ModelCatalog {
         ) = ModelPackInfo(
             pack = p,
             displayName = title,
-            license = "上游未声明",
-            licenseNote = "模型由 k2-fsa（sherpa-onnx 作者）在官方 GitHub Release 转发，与 Spleeter 同一个 release。" +
-                "上游 UVR/MDX-Net 权重多数未显式声明许可；其中部分源自 Sony MDX 研究发布，" +
-                "常带研究/非商业限制。该转发仓库和上游模型仓库均未附统一 license 文件。" +
-                "仅供个人学习研究；商用请自行联系模型作者，或改用 Spleeter。" +
+            license = "MIT（UVR 声明）",
+            licenseNote = "模型由 UVR 核心开发者训练。UVR 官方 README 声明其模型按 MIT 使用，" +
+                "并要求第三方开发者署名 UVR 及其开发者（$UVR_LICENSE）。" +
+                "本 ONNX 由 k2-fsa/sherpa-onnx 转换分发。" +
+                "注意：Blane187/all_public_uvr_models 等聚合仓库还混有 Demucs、MDX23C、Kim 等第三方权重，" +
+                "不能把整个仓库统称 MIT；本应用只使用 UVR-MDX-NET 系列。" +
                 "\n\n速度（$speedNote）。",
             sourceUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/tag/source-separation-models",
             upstreamUrl = UVR_UPSTREAM,
@@ -363,10 +368,12 @@ object ModelCatalog {
         ) = ModelPackInfo(
             pack = p,
             displayName = "【实验】$title",
-            license = "上游未声明",
-            licenseNote = "模型由 k2-fsa（sherpa-onnx 作者）在官方 GitHub Release 转发。" +
-                "上游 UVR/MDX-Net 权重多数未显式声明许可；部分源自 Sony MDX 研究发布，" +
-                "常带研究/非商业限制。仅供个人学习研究；商用请自行联系模型作者或改用 Spleeter。" +
+            license = "MIT（UVR 声明）",
+            licenseNote = "模型由 UVR 核心开发者训练。UVR 官方 README 声明其模型按 MIT 使用，" +
+                "并要求第三方开发者署名 UVR 及其开发者（$UVR_LICENSE）。" +
+                "本 ONNX 由 k2-fsa/sherpa-onnx 转换分发。" +
+                "注意：聚合仓库不能把混入的 Demucs/MDX23C/Kim 等第三方权重统称 MIT；" +
+                "本应用只使用 UVR-MDX-NET 系列。" +
                 "\n\n实验性质：stem 顺序已用 NCC 实证（2026-10-20），但音质未做主观评估；" +
                 "与正式模型存在音质重叠，不建议作为长期首选。" +
                 "\n\n速度（$speedNote）。",

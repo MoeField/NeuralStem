@@ -118,6 +118,23 @@
 - JVM **433/0**（M1 reducer 52 + M2 controller 7 + 原有 374）；
   真机 edge fast path、4-stem cache/启动、开关 off/on 通过。
 
+## v0.2.54：UVR 许可口径 + AV3A 真机验证
+
+- UVR-MDX-NET 许可改为 `MIT（UVR 声明）`：UVR 官方 README 声明模型按 MIT 使用并要求署名。
+- 保留边界：Blane187 等聚合仓库混有 Demucs/MDX23C/Kim 等第三方权重，不能整包称 MIT；本应用只用 UVR-MDX-NET 系列。
+- NOTICE/README/LICENSING 增加 UVR attribution：
+  `UVR / MDX-Net models © Anjok07, aufr33 and UVR contributors, MIT.`
+- v0.2.53 的 AV3A 公开版拒绝已在真机验证：真实 m4a 日志 `reject AVS3/AV3A (no decoder)`，不再静默 ENDED。
+- JVM 503/0；lint 0。
+
+## v0.2.53：公开版 AV3A 明确拒绝
+
+- 新增公开版 MP4 codec probe：`.m4a` 内部 `stsd=av3a` 时直接拒绝加载。
+- 提示：该文件是 AVS3/AV3A 空间音频（网易云“全景声/环绕声”），因专利/许可限制本应用无法播放；请下载普通双声道 AAC/FLAC/MP3。
+- **不提及任何非公开构建**；不再让 ExoPlayer 表现为“无音轨→STATE_ENDED”。
+- 其他 m4a（AAC/ALAC）仍走原生路径。
+- JVM 503/0；lint 0。
+
 ## v0.2.52：UVR 许可/来源提示修正
 
 - UVR 弹窗不再显示 Markdown `**` 星号。

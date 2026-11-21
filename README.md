@@ -321,6 +321,9 @@ AVS3-P3 解码器的参考实现（[Dreamello/av3a](https://github.com/Dreamello
   注意：绕过 DRM 在多数法域可能构成「规避技术措施」，请自行判断合规性。
 - **AVS3-P3 解码器**：**不在本仓库内**，按 UWA 代码共享政策授权，需自行获取，见上一节。
 - 第三方库与**模型权重**许可不统一 —— 商用前请逐个核对，见 [NOTICE](NOTICE)
-- UVR / MDX-Net 系列模型上游多数**未显式声明许可**，仅供个人学习研究
+- UVR / MDX-Net 系列：UVR 官方 README 声明其模型按 **MIT** 使用，并要求第三方**署名 UVR 及其开发者**
+  （<https://github.com/Anjok07/ultimatevocalremovergui#license>）。
+  仅适用于 UVR 核心 UVR-MDX-NET 系列；Blane187 等聚合仓库混有 Demucs/MDX23C/Kim 等第三方权重，
+  不能把整个仓库统称 MIT。
   下载转发页：<https://github.com/k2-fsa/sherpa-onnx/releases/tag/source-separation-models>
-  上游权重：<https://github.com/TRvlvr/model_repo/releases/tag/all_public_uvr_models>
+  权重上游：<https://github.com/TRvlvr/model_repo/releases/tag/all_public_uvr_models>

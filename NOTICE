@@ -36,10 +36,16 @@ NeuralStem — 第三方组件与模型许可声明
   - 权重：随 sherpa-onnx 的 `source-separation-models` release 分发，通常视为 MIT。
   - ⚠️ 仍建议以官方仓库 LICENSE 为准。
 
-- **UVR / MDX-Net 系列**（Ultraviolet，如 UVR-MDX-NET-Voc_FT / 9482 / KARA / Inst_HQ_3 / Main）
+- **UVR / MDX-Net 系列**（如 UVR-MDX-NET-Voc_FT / 9482 / KARA / Inst_HQ_3 / Main）
   - 应用代码：MIT（https://github.com/Anjok07/ultimatevocalremovergui）
-  - **模型权重：许可不统一**，由各模型作者单独设定；部分仅限**非商业 / 研究用途**。
-  - ⚠️ **商用或公开分发前，必须逐个模型核对其 LICENSE**，或联系模型作者。
+  - UVR 官方 README 声明：其**模型**按 MIT 使用，第三方开发者须署名 UVR 及其开发者。
+    本项目保留如下 attribution：
+    `UVR / MDX-Net models © Anjok07, aufr33 and UVR contributors, MIT.`
+    https://github.com/Anjok07/ultimatevocalremovergui#license
+  - ⚠️ 仅适用于 **UVR 核心 UVR-MDX-NET 系列**。部分聚合仓库（如
+    Blane187/all_public_uvr_models）还混有 Demucs、MDX23C、Kim、kuielab 等
+    第三方权重，不能把整个仓库统称 MIT。
+  - ⚠️ 商用/公开分发前仍建议逐个模型核对并保留署名。
 
 - **Demucs (htdemucs)**（Meta）
   - 代码：MIT（https://github.com/facebookresearch/demucs）

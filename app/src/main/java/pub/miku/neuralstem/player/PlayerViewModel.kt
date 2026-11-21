@@ -179,6 +179,11 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     private val _brokenTracks = MutableStateFlow<Set<String>>(emptySet())
     val brokenTracks: StateFlow<Set<String>> = _brokenTracks.asStateFlow()
 
+    /** 一次性用户提示（Snackbar）；公开版 AVS3 拒绝等。 */
+    private val _userMessage = MutableStateFlow<String?>(null)
+    val userMessage: StateFlow<String?> = _userMessage.asStateFlow()
+    fun consumeUserMessage() { _userMessage.value = null }
+
     /** ★B1：上一次应用的 tracks JSON；progress extras 每 200ms 触发，避免重复解析/刷日志。 */
     private var lastTracksJson: String? = null
     /** ★B6：队列恢复每个 currentUri 只尝试一次，避免 progress extras 反复读歌单文件。 */
@@ -1047,6 +1052,18 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             session.clearQueue()
         }
         Log.i(TAG, "loadAndPlay: $displayName ($uri) start=$startPositionMs")
+
+        // ★公开版：AVS3/AV3A（av3a）没有解码器，且 MediaExtractor 会表现为“无音轨”。
+        //   不暴露内部构建，只给用户明确原因；m4a 之外不探测。
+        if (!Avs3Bridge.available && uri.scheme != "netease") {
+            if (Av3aGuard.isUnsupportedAv3a(getApplication(), uri)) {
+                Log.w(TAG, "reject AVS3/AV3A (no decoder): $displayName")
+                _userMessage.value = getApplication<Application>().getString(
+                    pub.miku.neuralstem.R.string.play_av3a_unsupported,
+                )
+                return
+            }
+        }
 
         // ★AVS3（av3a）：先转换成「能播的 uri」再走原路径。
         //

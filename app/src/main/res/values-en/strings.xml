@@ -252,4 +252,5 @@
     <string name="spike_import_first">Import audio first</string>
     <string name="spike_cancelled">Separation cancelled</string>
     <string name="settings_models_upstream_page">Upstream: %1$s</string>
+    <string name="play_av3a_unsupported">This file is AVS3/AV3A spatial audio (NetEase Cloud Music “Panoramic”/“Surround”). It cannot be played by this app due to patent/licensing restrictions. Please use a normal stereo AAC/FLAC/MP3 version.</string>
 </resources>

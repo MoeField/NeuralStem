@@ -32,7 +32,7 @@ class ModelCatalogTest {
     }
 
     @Test
-    fun `UVR 包必须如实标注许可未统一声明`() {
+    fun `UVR 包标注 UVR MIT 声明与署名要求`() {
         val uvrPacks = listOf(
             ModelPack.UVR_9482, ModelPack.UVR_KARA, ModelPack.UVR_VOC_FT,
             ModelPack.UVR_INST_HQ_3, ModelPack.UVR_MAIN,
@@ -40,12 +40,12 @@ class ModelCatalogTest {
         for (p in uvrPacks) {
             val info = ModelCatalog.info(p)
             assertTrue(
-                "${p} 的许可必须写明上游未声明（不可声称自由许可）",
-                info.license.contains("未声明"),
+                "${p} 应标注 UVR 的 MIT 模型声明",
+                info.license.contains("MIT") && info.license.contains("UVR"),
             )
             assertTrue(
-                "${p} 的许可详情应提及上游风险",
-                info.licenseNote.contains("未显式声明") || info.licenseNote.contains("未统一"),
+                "${p} 的许可详情必须包含 UVR 署名要求",
+                info.licenseNote.contains("署名") && info.licenseNote.contains("UVR"),
             )
             assertTrue(
                 "${p} 必须给出上游 TRvlvr 模型仓库地址",
