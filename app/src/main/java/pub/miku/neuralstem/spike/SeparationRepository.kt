@@ -12,6 +12,7 @@ import android.util.Log
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -46,6 +47,10 @@ internal const val AUTO_BACKFILL_LIMIT_SEC = 300.0
 
 internal fun isBackfillTooExpensive(gapFrames: Long, sampleRate: Int, rtf: Float): Boolean =
     estimateBackfillSec(gapFrames, sampleRate, rtf) > AUTO_BACKFILL_LIMIT_SEC
+
+/** TEST_HOOKS：在 edge 首块前注入延迟，用于稳定复现 Running→Stopping。release 默认 0。 */
+@Volatile
+internal var separationTestSlowMs: Long = 0L
 
 class SeparationRepository(private val app: Application) {
 
@@ -320,6 +325,12 @@ class SeparationRepository(private val app: Application) {
                 generation.get() == myGen && thisJob?.isActive != false
             try {
                 if (stillCurrent()) _state.value = State.Preparing(State.PrepPhase.DECODING)
+                // ★TEST_HOOKS：测试构建在首块前停住，让第二次 Start 能命中 Running。
+                if (separationTestSlowMs > 0L) {
+                    Log.i(TAG, "TEST: edge slow inject ${separationTestSlowMs}ms")
+                    delay(separationTestSlowMs)
+                    if (!stillCurrent()) return@launchSeparation
+                }
                 // ★P2：完整 edge 缓存命中时**不要先解码整首源**（mp3 10~13s）。
                 //   manifest + 两个 WAV 头即可验证；验证通过直接把会话置为完成。
                 val fastOutDir = File(app.filesDir, "stems-cache/${contentHash(source)}-spleeter")

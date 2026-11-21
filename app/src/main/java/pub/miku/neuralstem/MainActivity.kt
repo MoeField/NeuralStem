@@ -38,6 +38,7 @@ import pub.miku.neuralstem.settings.ModelCatalog
 import pub.miku.neuralstem.settings.ModelDownloader
 import pub.miku.neuralstem.settings.SettingsRepository
 import pub.miku.neuralstem.spike.CurrentTrackBridge
+import pub.miku.neuralstem.spike.separationTestSlowMs
 import pub.miku.neuralstem.spike.DeviceBenchmark
 import pub.miku.neuralstem.spike.SeparationRepository
 import pub.miku.neuralstem.spike.StemOrderProbe
@@ -390,16 +391,21 @@ class MainActivity : ComponentActivity() {
                             sourcePath = src.absolutePath,
                             backend = SeparationBackend.EDGE,
                         )
-                        Log.i("TestCmd", "sepdouble: first start")
+                        // ★TEST_HOOKS：即使缓存命中，也让首块前停 3s，保证第二次 Start 看到 Running。
+                        separationTestSlowMs = 3_000L
+                        Log.i("TestCmd", "sepdouble: first start (slow=${separationTestSlowMs}ms)")
                         domain.start(req)
-                        delay(100)
+                        delay(500)
                         Log.i("TestCmd", "sepdouble: second start")
                         domain.start(req)
-                        delay(3500)
-                        val j = domain.snapshot.value.job
+                        delay(5_000)
+                        separationTestSlowMs = 0L
+                        val s = domain.snapshot.value
+                        val j = s.job
                         Log.i(
                             "TestCmd",
-                            "sepdouble state: job=${j?.jobId} lc=${j?.lifecycle} op=${j?.operation}",
+                            "sepdouble state: job=${j?.jobId} lc=${j?.lifecycle} op=${j?.operation} " +
+                                "lastError=${s.lastError}",
                         )
                     }
                 }
