@@ -2,11 +2,15 @@ package pub.miku.neuralstem.settings
 
 import android.util.Log
 import java.io.File
+import java.io.FileOutputStream
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.DisposableHandle
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
@@ -197,15 +201,29 @@ class ModelDownloader(private val filesDir: File) {
                 }
 
                 val part = File(dir, "${f.fileName}.part")
-                if (part.exists()) part.delete()
+                // ★断点续传：保留 .part，不再每次启动都删除。
+                if (part.length() > 0L) {
+                    done += part.length()
+                    Log.i(TAG, "resume ${f.fileName} from ${part.length()} bytes")
+                    setState(pack, State.Downloading(done, total, f.fileName))
+                }
+                // 已经下满（可能上次在 rename 前失败）：直接校验；哈希失败会删掉重来。
+                if (f.expectedBytes > 0L && part.length() >= f.expectedBytes) {
+                    verifySha256(part, f)
+                    if (!part.renameTo(target)) throw IOException("无法重命名 ${part.name} → ${target.name}")
+                    continue
+                }
 
                 setState(pack, State.Downloading(done, total, f.fileName))
                 // ★URL 组装 + 代理改写，见 [resolveUrl]
                 val direct = rawUrl(f, base)
                 val proxied = maybeProxyGithub(direct)
-                val beforeAttempt = done
                 try {
-                    downloadOne(proxied, part) { delta ->
+                    downloadOne(proxied, part, onRestart = { skipped ->
+                        // 服务端忽略 Range 返回 200 时会从头写；把已计入的 resume 字节扣回。
+                        done = (done - skipped).coerceAtLeast(0L)
+                        setState(pack, State.Downloading(done, total, f.fileName))
+                    }) { delta ->
                         done += delta
                         setState(pack, State.Downloading(done, total, f.fileName))
                     }
@@ -213,9 +231,11 @@ class ModelDownloader(private val filesDir: File) {
                     // 代理 DNS/连接失败时回退直连；不要因为 api.gitproxy.dev 挂了就判死。
                     if (proxied == direct) throw t
                     Log.w(TAG, "proxy download failed, retry direct: ${t.message}", t)
-                    runCatching { part.delete() }
-                    done = beforeAttempt
-                    downloadOne(direct, part) { delta ->
+                    // 保留 .part；直连会带 Range 从已写位置继续。
+                    downloadOne(direct, part, onRestart = { skipped ->
+                        done = (done - skipped).coerceAtLeast(0L)
+                        setState(pack, State.Downloading(done, total, f.fileName))
+                    }) { delta ->
                         done += delta
                         setState(pack, State.Downloading(done, total, f.fileName))
                     }
@@ -228,11 +248,11 @@ class ModelDownloader(private val filesDir: File) {
             setState(pack, State.Done(base))
             Log.i(TAG, "download done: $pack via $base (${ModelCatalog.humanSize(done)})")
         } catch (ce: CancellationException) {
-            cleanupPartFiles(pack)
+            // 保留 .part：用户再次点下载时可 Range 续传。
             setState(pack, State.Idle)
             throw ce
         } catch (t: Throwable) {
-            cleanupPartFiles(pack)
+            // 保留 .part；网络失败/进程退出后可从已写位置续传。
             Log.e(TAG, "download failed: $pack", t)
             setState(pack, State.Failed(describe(t)))
         }
@@ -256,12 +276,6 @@ class ModelDownloader(private val filesDir: File) {
             msg.contains("HTTP 4") ->
                 "服务器返回错误（$msg）。模型仓库可能已变更，请到设置页查看来源链接。"
             else -> msg
-        }
-    }
-
-    private fun cleanupPartFiles(pack: ModelPack) {
-        ModelCatalog.info(pack).files.forEach { f ->
-            runCatching { File(File(filesDir, f.targetSubdir), "${f.fileName}.part").delete() }
         }
     }
 
@@ -333,53 +347,98 @@ class ModelDownloader(private val filesDir: File) {
      * `instanceFollowRedirects = true` **不会跨域名跟随** → 会得到一个
      * 空 body 并卡住（实测：UVR 从 GitHub 下载永远停在 0 B）。
      */
-    private suspend fun downloadOne(urlStr: String, dest: File, onDelta: (Long) -> Unit) =
-        withContext(Dispatchers.IO) {
-            var url = urlStr
-            var conn: HttpURLConnection? = null
-            try {
-                // 最多跟 5 跳（GitHub 一般 1 跳：github.com → objects.githubusercontent.com）
-                var hops = 0
-                while (true) {
-                    Log.i(TAG, "GET $url")
-                    val c = (URL(url).openConnection() as HttpURLConnection).apply {
-                        requestMethod = "GET"
-                        connectTimeout = CONNECT_TIMEOUT_MS
-                        readTimeout = READ_TIMEOUT_MS
-                        instanceFollowRedirects = false // 手动跟，见 KDoc
-                        setRequestProperty("User-Agent", "NeuralStem/Android")
+    private suspend fun downloadOne(
+        urlStr: String,
+        dest: File,
+        onRestart: (Long) -> Unit = {},
+        onDelta: (Long) -> Unit,
+    ) = withContext(Dispatchers.IO) {
+        var url = urlStr
+        var conn: HttpURLConnection? = null
+        var cancelHandle: DisposableHandle? = null
+        val job = coroutineContext[Job]
+        var rangeFrom = if (dest.exists()) dest.length() else 0L
+        try {
+            // 最多跟 5 跳（GitHub 一般 1 跳：github.com → objects.githubusercontent.com）
+            var hops = 0
+            while (true) {
+                Log.i(TAG, "GET $url" + if (rangeFrom > 0L) " (Range: bytes=$rangeFrom-)" else "")
+                val c = (URL(url).openConnection() as HttpURLConnection).apply {
+                    requestMethod = "GET"
+                    connectTimeout = CONNECT_TIMEOUT_MS
+                    readTimeout = READ_TIMEOUT_MS
+                    instanceFollowRedirects = false // 手动跟，见 KDoc
+                    setRequestProperty("User-Agent", "NeuralStem/Android")
+                    if (rangeFrom > 0L) setRequestProperty("Range", "bytes=$rangeFrom-")
+                }
+                // ★取消响应：read() 阻塞时仅靠 ensureActive 要等 30s 读超时；
+                //   Job 完成时直接 disconnect，让阻塞读立即返回。
+                val handle = job?.invokeOnCompletion { runCatching { c.disconnect() } }
+                val code = try {
+                    c.responseCode
+                } catch (t: Throwable) {
+                    handle?.dispose()
+                    currentCoroutineContext().ensureActive()
+                    throw t
+                }
+                if (code in 300..399) {
+                    val loc = c.getHeaderField("Location")
+                    c.disconnect()
+                    handle?.dispose()
+                    if (loc.isNullOrBlank() || ++hops > 5) {
+                        throw IOException("重定向失败（HTTP $code, Location=$loc）")
                     }
-                    val code = c.responseCode
-                    if (code in 300..399) {
-                        val loc = c.getHeaderField("Location")
+                    url = if (loc.startsWith("http")) loc else URL(URL(url), loc).toString()
+                    continue
+                }
+                if (code == 416 && rangeFrom > 0L) {
+                    // 服务端认为已经下满；交给上层 verifySha256 判断。
+                    c.disconnect()
+                    handle?.dispose()
+                    return@withContext
+                }
+                if (code == 206 && rangeFrom > 0L) {
+                    val start = parseContentRangeStart(c.getHeaderField("Content-Range"))
+                    if (start != null && start != rangeFrom) {
                         c.disconnect()
-                        if (loc.isNullOrBlank() || ++hops > 5) {
-                            throw IOException("重定向失败（HTTP $code, Location=$loc）")
-                        }
-                        url = if (loc.startsWith("http")) loc else URL(URL(url), loc).toString()
-                        continue
+                        handle?.dispose()
+                        throw IOException("Content-Range 起点不一致: $start != $rangeFrom")
                     }
-                    if (code !in 200..299) throw IOException("HTTP $code")
-                    conn = c
-                    break
+                } else if (code == 200 && rangeFrom > 0L) {
+                    // 服务端忽略 Range：必须从头写，先通知上层扣回已计入的 resume 字节。
+                    onRestart(rangeFrom)
+                    rangeFrom = 0L
+                } else if (code !in 200..299) {
+                    c.disconnect()
+                    handle?.dispose()
+                    throw IOException("HTTP $code")
                 }
-                val c = conn ?: throw IOException("no connection")
-                c.inputStream.use { input ->
-                    dest.outputStream().use { out ->
-                        val buf = ByteArray(BUF_SIZE)
-                        while (true) {
-                            coroutineScope { ensureActive() } // 响应取消（每块检查一次）
-                            val n = input.read(buf)
-                            if (n <= 0) break
-                            out.write(buf, 0, n)
-                            onDelta(n.toLong())
-                        }
-                    }
-                }
-            } finally {
-                conn?.disconnect()
+                conn = c
+                cancelHandle = handle
+                break
             }
+            val c = conn ?: throw IOException("no connection")
+            c.inputStream.use { input ->
+                FileOutputStream(dest, rangeFrom > 0L).use { out ->
+                    val buf = ByteArray(BUF_SIZE)
+                    while (true) {
+                        coroutineScope { ensureActive() } // 响应取消（每块检查一次）
+                        val n = input.read(buf)
+                        if (n <= 0) break
+                        out.write(buf, 0, n)
+                        onDelta(n.toLong())
+                    }
+                }
+            }
+        } catch (t: Throwable) {
+            // disconnect 会让阻塞读抛 IOException；若 job 已取消，统一转成 CancellationException。
+            currentCoroutineContext().ensureActive()
+            throw t
+        } finally {
+            cancelHandle?.dispose()
+            conn?.disconnect()
         }
+    }
 
     private companion object {
         const val TAG = "ModelDownload"
@@ -390,6 +449,13 @@ class ModelDownloader(private val filesDir: File) {
     }
 }
 
+
+/** 解析 `Content-Range: bytes 123-456/789` 的起点；无法解析返回 null。 */
+internal fun parseContentRangeStart(header: String?): Long? {
+    if (header.isNullOrBlank()) return null
+    val m = Regex("""bytes\s+(\d+)-""", RegexOption.IGNORE_CASE).find(header) ?: return null
+    return m.groupValues[1].toLongOrNull()
+}
 
 /** 流式 SHA-256（小写 hex）；供下载校验与单测共用。 */
 internal fun sha256Hex(file: File): String {

@@ -118,6 +118,16 @@
 - JVM **433/0**（M1 reducer 52 + M2 controller 7 + 原有 374）；
   真机 edge fast path、4-stem cache/启动、开关 off/on 通过。
 
+## v0.2.47：模型下载生命周期与断点续传
+
+- **#17** 新增进程级 `ModelDownloadManager`：每个 `ModelPack` 独立 job；离开模型库/Activity 重建不取消下载；取消 A 不影响 B。
+- `.part` 不再在启动/取消/失败时删除；`downloadOne` 支持 HTTP Range（`bytes=N-`）、206 校验 `Content-Range`、200 忽略 Range 时从头重写并校正进度。
+- 下满但未 rename 的 `.part` 直接校验并落地；SHA-256 失败仍删除重下。
+- 取消响应：`HttpURLConnection.read` 阻塞时用 `Job.invokeOnCompletion { disconnect() }` 立即打断；取消后 UI 立即回到可重下状态。
+- 真机验证：离开模型库再返回，下载仍在（0%→5%）；取消后立即恢复按钮；再次下载从 1,266,623 B 续传（`Range: bytes=1266623-`，5%）。
+- 新增 `ContentRangeTest`；JVM **496/0**。
+- 仍为进程内续传；进程被杀后依赖 `.part` + Range 恢复，不做前台服务/通知。
+
 ## v0.2.46：JNI 输出形状校验
 
 - **#9 demucs**：C 侧校验 `output=[1,4,4,2048,336]`、`add_67=[1,4,2,343980]` 的 dtype/维度/元素数；错误直接 abort copy。

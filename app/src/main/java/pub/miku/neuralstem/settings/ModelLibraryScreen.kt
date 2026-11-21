@@ -26,7 +26,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -34,8 +33,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.launch
 import pub.miku.neuralstem.R
 import pub.miku.neuralstem.spike.DeviceBenchmark
 import pub.miku.neuralstem.spike.ModelRegistry
@@ -71,13 +68,8 @@ fun ModelLibraryScreen(
     val app = ctx.applicationContext as Application
     val repo = remember { SettingsRepository(app) }
     val filesDir = remember { ctx.filesDir }
-    val downloader = remember {
-        ModelDownloader(filesDir).apply {
-            // 注入代理前缀：UVR 模型只在 GitHub，国内常需代理
-            proxyProvider = { repo.downloadProxy }
-        }
-    }
-    val scope = rememberCoroutineScope()
+    // 进程级管理器：离开本页/Activity 重建都不取消下载；每个模型一个 job。
+    val downloader = remember { ModelDownloadManager.get(app) }
 
     // 已安装状态（下载/删除后要刷新 → 用可变 state 承载）
     var installedIds by remember { mutableStateOf(ModelCatalog.installed(filesDir).toSet()) }
@@ -86,7 +78,6 @@ fun ModelLibraryScreen(
     var licenseFor by remember { mutableStateOf<ModelPack?>(null) }
     var deleteFor by remember { mutableStateOf<ModelPack?>(null) }
     var deleteError by remember { mutableStateOf(false) }
-    var downloadJob by remember { mutableStateOf<Job?>(null) }
 
     // ★按包分开的状态（支持并发下载多个模型而不互相覆盖）
     val statesMap by downloader.states.collectAsStateInComposition()
@@ -258,7 +249,7 @@ fun ModelLibraryScreen(
                             packState = statesMap[info.pack] ?: ModelDownloader.State.Idle,
                             rtfText = modelRtfText(info, rtf),
                             onDownload = { licenseFor = info.pack },
-                            onCancel = { downloadJob?.cancel() },
+                            onCancel = { downloader.cancel(info.pack) },
                             onDelete = { deleteFor = info.pack },
                         )
                     }
@@ -291,7 +282,7 @@ fun ModelLibraryScreen(
             confirmButton = {
                 TextButton(onClick = {
                     licenseFor = null
-                    downloadJob = scope.launch { downloader.download(pack, pref) }
+                    downloader.start(pack, pref)
                 }) { Text(stringResource(R.string.settings_models_license_agree)) }
             },
             dismissButton = {
