@@ -304,6 +304,19 @@ class MainActivity : ComponentActivity() {
                 if (pairs.isNotEmpty()) playerVm.playQueue(pairs, 0)
             }
             "eq" -> playerVm.setEqEnabled(a0?.toBooleanStrictOrNull() ?: false)
+            // EQ 全段压到指定 dB（如 --es a0 -15）；用于稳定性/失真测试
+            "eqall" -> {
+                val db = (a0?.toFloatOrNull() ?: -15f).coerceIn(-15f, 15f)
+                val mb = (db * 100).toInt().toShort()
+                val n = playerVm.state.value.eqFreqsHz.size
+                if (n <= 0) {
+                    Log.w("TestCmd", "eqall: EQ 未就绪/无频段")
+                } else {
+                    playerVm.setEqEnabled(true)
+                    for (b in 0 until n) playerVm.setEqBandLevel(b, mb)
+                    Log.i("TestCmd", "eqall: bands=$n level=${db}dB (${mb}mB)")
+                }
+            }
             // ★speed / pitch：变速变调（多轨与单轨走同一 UI 方法；测试用）
             "edgecancel" -> {
                 // ★B3 自动化：等价于分离页「取消分离」的 repo.cancel()，

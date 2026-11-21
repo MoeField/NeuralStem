@@ -75,6 +75,7 @@ object TestCommandBus {
           repeat  a0=seq|all|one     设置播放模式（同循环按钮选定的模式）
           cyclerepeat                 切换播放模式（同循环按钮点击）
           eq      a0=on(bool)         开关 EQ
+          eqall   a0=dB(-15..15)      所有 EQ 段设为指定 dB（默认 -15）
           speed   a0=倍率              变速（多轨走 StemMixer，单轨走 ExoPlayer）
           pitch   a0=半音              变调（±12，独立于速度）
           resetsp                    变速变调复位（1.0× / 0 半音）
