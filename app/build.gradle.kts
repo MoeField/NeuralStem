@@ -52,7 +52,7 @@ val hasReleaseSigning = listOf(
 // F-Droid/Obtainium 会把它当同一版本，自动更新静默失效。
 // 规则：major*10000 + minor*100 + patch（0.2.36 → 236，0.3.0 → 300）。
 // CI 的 tag 构建同时传 -PversionName 和 -PversionCode；本地不传则用这里的默认值。
-val defaultVersionName = "0.2.47"
+val defaultVersionName = "0.2.48"
 
 fun semverCode(name: String): Int {
     val parts = name.split(".")
@@ -103,6 +103,8 @@ android {
     }
 
     defaultConfig {
+        buildConfigField("boolean", "TEST_HOOKS", providers.gradleProperty("testHooks").orElse("false").get())
+
         applicationId = "pub.miku.neuralstem"
         minSdk = 23
         targetSdk = 37
@@ -121,6 +123,13 @@ android {
     }
 
     buildTypes {
+        debug {
+            // 仅测试用：-PdebugReleaseSigning=true 时 debug 用正式签名，
+            // 可覆盖安装 release（保留 app 数据），同时使用 debug manifest 的 TestCommandService。
+            if (hasReleaseSigning && project.hasProperty("debugReleaseSigning")) {
+                signingConfig = signingConfigs.getByName("release")
+            }
+        }
         release {
             optimization {
                 enable = true
@@ -337,6 +346,7 @@ dependencies {
     // 直接链接 sherpa 那份 .so。见 docs/DEVELOP.md 阶段 M4 与 cpp/CMakeLists.txt
 
     testImplementation(libs.junit)
+    testImplementation("org.json:json:20240303")
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     androidTestImplementation(libs.androidx.espresso.core)

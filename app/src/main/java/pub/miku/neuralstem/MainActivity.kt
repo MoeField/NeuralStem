@@ -26,6 +26,12 @@ import pub.miku.neuralstem.devtools.EdgeProbe
 import pub.miku.neuralstem.devtools.TestCommandBus
 import pub.miku.neuralstem.player.Avs3Decode
 import pub.miku.neuralstem.player.PlayerViewModel
+import pub.miku.neuralstem.spike.state.SeparationBackend
+import pub.miku.neuralstem.spike.state.TrackKey
+import pub.miku.neuralstem.spike.state.SeparationKind
+import pub.miku.neuralstem.spike.state.StartRequest
+import pub.miku.neuralstem.spike.state.SeparationDomain
+import pub.miku.neuralstem.player.StemMixer
 import pub.miku.neuralstem.player.WaveformCache
 import pub.miku.neuralstem.settings.ModelCatalog
 import pub.miku.neuralstem.settings.ModelDownloader
@@ -327,6 +333,46 @@ class MainActivity : ComponentActivity() {
                             EdgeProbe.log("Edge", "start ${src.name} from=${fromMs}ms")
                             SeparationRepository.get(application).startEdge(src, fromMs)
                         }
+                    }
+                }
+            }
+            // ★TEST_HOOKS：强制下一次 AudioTrack.write 失败，验证重建后 play + EQ 重挂。
+            "mixfail" -> {
+                StemMixer.failNextWriteForTest = true
+                Log.i("TestCmd", "mixfail: armed")
+            }
+            // ★TEST_HOOKS：连续两次 Start，验证 Stopping/看门狗能回到非 busy。
+            "sepdouble" -> {
+                val uri = playerVm.state.value.currentUri
+                if (uri.isNullOrBlank()) {
+                    Log.w("TestCmd", "sepdouble: 当前没有曲目")
+                } else {
+                    lifecycleScope.launch {
+                        val domain = SeparationDomain.get(application)
+                        val src = CurrentTrackBridge.toFile(application, uri)
+                        if (src == null) {
+                            Log.e("TestCmd", "sepdouble: toFile failed")
+                            return@launch
+                        }
+                        val key = domain.snapshot.value.currentTrackKey ?: TrackKey(uri, 0L)
+                        val req = StartRequest(
+                            kind = SeparationKind.EDGE,
+                            trackKey = key,
+                            fromPositionMs = playerVm.progress.positionMs,
+                            sourcePath = src.absolutePath,
+                            backend = SeparationBackend.EDGE,
+                        )
+                        Log.i("TestCmd", "sepdouble: first start")
+                        domain.start(req)
+                        delay(100)
+                        Log.i("TestCmd", "sepdouble: second start")
+                        domain.start(req)
+                        delay(3500)
+                        val j = domain.snapshot.value.job
+                        Log.i(
+                            "TestCmd",
+                            "sepdouble state: job=${j?.jobId} lc=${j?.lifecycle} op=${j?.operation}",
+                        )
                     }
                 }
             }

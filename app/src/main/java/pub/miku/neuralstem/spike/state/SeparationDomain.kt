@@ -37,6 +37,13 @@ data class SeparationEdgeUi(
  * - 旧 repo/EdgeSession 的回调翻译成 Domain 事件；
  * - 旧 UI 尚未切换前，本类只做“影子真源”，不改现有行为。
  */
+/** 取消 watchdog 是否应对这个 job 补发 JobStopped。 */
+internal fun shouldForceCancelWatchdog(
+    eventJobId: Long,
+    currentJobId: Long?,
+    currentIsStopping: Boolean,
+): Boolean = currentIsStopping && currentJobId == eventJobId
+
 class SeparationDomain private constructor(private val app: Application) {
 
     interface PlayerBridge {
@@ -213,7 +220,7 @@ class SeparationDomain private constructor(private val app: Application) {
                 scope.launch {
                     delay(CANCEL_WATCHDOG_MS)
                     val job = controller.snapshot.value.job
-                    if (job?.jobId == jobId && job.lifecycle is Lifecycle.Stopping) {
+                    if (shouldForceCancelWatchdog(jobId, job?.jobId, job?.lifecycle is Lifecycle.Stopping)) {
                         Log.w(TAG, "cancel watchdog: job=$jobId still Stopping → force JobStopped")
                         sendDomain(SeparationEvent.Domain.JobStopped(jobId))
                     }

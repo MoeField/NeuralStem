@@ -167,6 +167,26 @@ fun PlaylistScreen(
         }
     }
 
+    // ★B6/#13：失效曲“重新授权”入口——重新选同一个文件后替换 uri。
+    var reauthTarget by remember { mutableStateOf<Pair<String, String>?>(null) }
+    val reauthPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        val target = reauthTarget
+        reauthTarget = null
+        if (uri == null || target == null) return@rememberLauncherForActivityResult
+        val granted = runCatching {
+            context.contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION,
+            )
+        }.isSuccess
+        if (!granted) {
+            Toast.makeText(context, "持久授权失败，重启后可能需重新选择", Toast.LENGTH_LONG).show()
+        }
+        vm.replaceTrackUri(target.first, target.second, uri.toString())
+    }
+
     // ★⑪：横屏一行（否则下方没空间选歌单）；竖屏两行（命名单独一行，不挤）。
     val isLandscape =
         LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
@@ -343,12 +363,23 @@ fun PlaylistScreen(
                                             )
                                         }
                                         if (t.uri in brokenTrackUris) {
-                                            Text(
-                                                "⚠ 需重新授权",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.error,
-                                                maxLines = 1,
-                                            )
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Text(
+                                                    "⚠ 需重新授权",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.error,
+                                                    maxLines = 1,
+                                                )
+                                                TextButton(onClick = {
+                                                    reauthTarget = p.id to t.uri
+                                                    reauthPicker.launch(arrayOf("audio/*"))
+                                                }) {
+                                                    Text(
+                                                        "重新选择",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                    )
+                                                }
+                                            }
                                         }
                                     }
                                     // 排序：仅**文件歌单**可排

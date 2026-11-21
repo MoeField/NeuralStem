@@ -118,6 +118,17 @@
 - JVM **433/0**（M1 reducer 52 + M2 controller 7 + 原有 374）；
   真机 edge fast path、4-stem cache/启动、开关 off/on 通过。
 
+## v0.2.48：验证补齐与剩余 P1/P2 收尾
+
+- **#1** 新增 test-only `StemMixer.failNextWriteForTest` 注入；真机强制 write 失败后验证：重建 AudioTrack → 新 session 2817 → EQ 重挂 → heartbeat 继续。
+- **#2** watchdog 判定抽成纯函数 + 单测；`sepdouble`/`mixfail` 测试命令（TEST_HOOKS 构建）。
+- **#5** 新增损坏 playlists.json JVM 测试：`load()` 后 `recordProgress/save` 不覆盖原文件。
+- **#11** `parseTracksJson()` 抽出，单测保留 `uri`；VM 重建恢复路径有回归。
+- **#12** `StemMixer.close()` 主线程最多等 50ms，剩余 join/release 交后台 reaper；`load()` 失败不替换数据源。
+- **#13** 启动清理孤儿 persistable grant；歌单失效曲新增「重新选择」入口 + `replaceTrackUri()`。
+- **P2** `BackfillCostGateTest` 改调生产纯函数；Spleeter4 iSTFT 线程池改 daemon。
+- 测试：普通 **503/0**；with_ncm 527/0。
+
 ## v0.2.47：模型下载生命周期与断点续传
 
 - **#17** 新增进程级 `ModelDownloadManager`：每个 `ModelPack` 独立 job；离开模型库/Activity 重建不取消下载；取消 A 不影响 B。

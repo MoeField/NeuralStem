@@ -22,23 +22,16 @@ import org.junit.Test
  */
 class BackfillCostGateTest {
 
-    /** 与 SeparationRepository.AUTO_BACKFILL_LIMIT_SEC 保持一致。 */
-    private val limitSec = 300.0
-
-    /** 复刻生产代码的判定：`缺口时长 / RTF`。 */
-    private fun estimatedBackfillSec(gapFrames: Int, sampleRate: Int, rtf: Float): Double {
-        val gapSeconds = gapFrames.toDouble() / sampleRate
-        return if (rtf > 0.01f) gapSeconds / rtf else gapSeconds
-    }
+    private val limitSec = AUTO_BACKFILL_LIMIT_SEC
 
     private fun tooExpensive(gapFrames: Int, rtf: Float, sr: Int = 44_100): Boolean =
-        estimatedBackfillSec(gapFrames, sr, rtf) > limitSec
+        isBackfillTooExpensive(gapFrames.toLong(), sr, rtf)
 
     @Test
     fun `normal song from the middle still auto-backfills`() {
         // 4 分钟歌从 2 分处开始 → 缺口 2 分钟；RTF 8.5（Spleeter）→ 约 14 秒
         val gap = 120 * 44_100
-        val est = estimatedBackfillSec(gap, 44_100, 8.5f)
+        val est = estimateBackfillSec(gap.toLong(), 44_100, 8.5f)
         assertEquals(14.1, est, 0.5)
         assertFalse("普通歌曲应自动补齐", tooExpensive(gap, 8.5f))
     }
@@ -47,7 +40,7 @@ class BackfillCostGateTest {
     fun `one hour concert from minute 55 is gated`() {
         // 60 分钟，从 55 分开始 → 缺口 55 分钟；RTF 8.5 → 约 388 秒 > 300
         val gap = 55 * 60 * 44_100
-        val est = estimatedBackfillSec(gap, 44_100, 8.5f)
+        val est = estimateBackfillSec(gap.toLong(), 44_100, 8.5f)
         assertTrue("预估 $est 秒应超过阈值", est > limitSec)
         assertTrue("一小时演唱会的 55 分钟缺口应被门控", tooExpensive(gap, 8.5f))
     }
@@ -56,8 +49,8 @@ class BackfillCostGateTest {
     fun `slow model gates much earlier`() {
         // 同样的 55 分钟缺口，但用 0.34× 的 UVR → 约 9706 秒
         val gap = 55 * 60 * 44_100
-        val fast = estimatedBackfillSec(gap, 44_100, 8.5f)
-        val slow = estimatedBackfillSec(gap, 44_100, 0.34f)
+        val fast = estimateBackfillSec(gap.toLong(), 44_100, 8.5f)
+        val slow = estimateBackfillSec(gap.toLong(), 44_100, 0.34f)
         assertTrue("慢模型预估应远大于快模型", slow > fast * 10)
         assertTrue(tooExpensive(gap, 0.34f))
     }
@@ -74,7 +67,7 @@ class BackfillCostGateTest {
     @Test
     fun `no gap means no backfill at all`() {
         // 从 0 开始分离 → 缺口为 0 → 阶段 2 根本不会跑
-        assertEquals(0.0, estimatedBackfillSec(0, 44_100, 8.5f), 0.001)
+        assertEquals(0.0, estimateBackfillSec(0L, 44_100, 8.5f), 0.001)
         assertFalse(tooExpensive(0, 8.5f))
     }
 
@@ -82,7 +75,7 @@ class BackfillCostGateTest {
     fun `rtf of zero falls back to gap duration`() {
         // 未测速的模型 rtf=0 → 保守按 1× 估（不会因为除以 0 得到无穷大而误判）
         val gap = 120 * 44_100
-        val est = estimatedBackfillSec(gap, 44_100, 0f)
+        val est = estimateBackfillSec(gap.toLong(), 44_100, 0f)
         assertEquals("rtf=0 时应退化为缺口秒数", 120.0, est, 0.5)
         assertFalse("2 分钟缺口仍应自动补齐", tooExpensive(gap, 0f))
     }

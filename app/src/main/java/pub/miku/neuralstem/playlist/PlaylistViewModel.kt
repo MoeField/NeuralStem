@@ -34,6 +34,10 @@ internal fun grantReleaseFlags(read: Boolean, write: Boolean): Int {
     return flags
 }
 
+/** 启动清理：系统里仍有持久授权、但已不被任何歌单引用的 uri。 */
+internal fun orphanGrantUris(persistedUris: Collection<String>, referencedUris: Set<String>): List<String> =
+    persistedUris.filterNot { it in referencedUris }
+
 class PlaylistViewModel(app: Application) : AndroidViewModel(app) {
 
     private val store = PlaylistStore(app)
@@ -56,6 +60,34 @@ class PlaylistViewModel(app: Application) : AndroidViewModel(app) {
             _lists.value = store.load()
             loaded = true
             ensureValidSelection()
+            cleanupOrphanGrants()
+        }
+    }
+
+    /**
+     * 释放“系统里还留着、但已无歌单引用”的 persistable grant。
+     * 只清单文件 grant；tree grant 由文件夹歌单的 folderUri 持有，删除时已释放。
+     */
+    private fun cleanupOrphanGrants() {
+        val cr = getApplication<Application>().contentResolver
+        val referenced = buildSet {
+            _lists.value.forEach { p ->
+                p.tracks.forEach { add(it.uri) }
+                p.folderUri?.let(::add)
+            }
+        }
+        val persisted = cr.persistedUriPermissions
+        val orphans = orphanGrantUris(persisted.map { it.uri.toString() }, referenced)
+        if (orphans.isEmpty()) return
+        val byUri = persisted.associateBy { it.uri.toString() }
+        orphans.forEach { uri ->
+            val perm = byUri[uri] ?: return@forEach
+            val flags = grantReleaseFlags(perm.isReadPermission, perm.isWritePermission)
+            if (flags == 0) return@forEach
+            runCatching {
+                cr.releasePersistableUriPermission(Uri.parse(uri), flags)
+                Log.i(TAG, "cleanup orphan grant: $uri")
+            }.onFailure { Log.w(TAG, "cleanup orphan grant failed: $uri", it) }
         }
     }
 
@@ -115,6 +147,7 @@ class PlaylistViewModel(app: Application) : AndroidViewModel(app) {
             _lists.value = store.load()
             loaded = true
             ensureValidSelection()
+            cleanupOrphanGrants()
         }
     }
 
@@ -206,6 +239,21 @@ class PlaylistViewModel(app: Application) : AndroidViewModel(app) {
         }
         persist()
         releaseFileGrantIfUnused(trackUri)
+    }
+
+    /** 重新授权：把旧 uri 替换为重新选择后的 uri（保留标题与列表位置）。 */
+    fun replaceTrackUri(listId: String, oldUri: String, newUri: String) {
+        if (newUri.isBlank() || newUri == oldUri) return
+        _lists.value = _lists.value.map { p ->
+            if (p.id != listId) p
+            else p.copy(
+                tracks = p.tracks.map { t -> if (t.uri == oldUri) t.copy(uri = newUri) else t },
+                lastPlayedUri = if (p.lastPlayedUri == oldUri) newUri else p.lastPlayedUri,
+            )
+        }
+        persist()
+        releaseFileGrantIfUnused(oldUri)
+        Log.i(TAG, "replace track uri in $listId: $oldUri → $newUri")
     }
 
     /**

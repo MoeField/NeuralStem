@@ -184,6 +184,8 @@ class Spleeter4Separator(
         const val DEFAULT_BLOCK_FRAMES = 441_000
 
         /** 4 个 stem 的 iSTFT 并行池（进程级共享，避免每块重建）。 */
-        private val esttPool = Executors.newFixedThreadPool(4)
+        private val esttPool = Executors.newFixedThreadPool(4) { r ->
+            Thread(r, "spleeter4-istft").apply { isDaemon = true }
+        }
     }
 }

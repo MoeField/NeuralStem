@@ -165,7 +165,11 @@ class MultiTrackController(
         val m = StemMixer(sampleRate = sr, channels = ch, gainProvider = { id ->
             tracks[id]?.effectiveVolume ?: 0f
         }, onAudioSessionChanged = onAudioSessionChanged)
-        m.load(sources)
+        if (!m.load(sources)) {
+            Log.w(TAG, "startMixer aborted: mixer load failed")
+            runCatching { m.close() }
+            return
+        }
         mixer = m
         Log.i(
             TAG,

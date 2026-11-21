@@ -1,14 +1,14 @@
 # 审计整改状态与计划
 
-> 基线：v0.2.47 (247)，tag `v0.2.47`，HEAD 以 `git log` 为准。  
+> 基线：v0.2.48 (248)，tag `v0.2.48`，HEAD 以 `git log` 为准。  
 > 本文是**整改看板**；不变量见 [ARCHITECTURE.md](ARCHITECTURE.md)，发布历史见 [STEP_HISTORY.md](STEP_HISTORY.md)。
 
 ## 0. TL;DR
 
 - 6 条 P0 已全部有代码修复并进入正式版本；其中 #3/#4/#14 有自动化或真机验证，#1/#2/#5/#6 仍是“代码修复、缺故障注入”。
-- 12 条 P1 中：**10 条已修，2 条部分修（#12/#13）**。
+- 12 条 P1 中：**12 条已修**（#12/#13 有代码修复与专项验证；#2 仍是代码+纯函数验证，未复现到完整 UI Stopping）。
 - 当前不宜再混版做 UI/架构重构；下一步按 **#9 → #17 → 验证补齐 → P2** 四阶段推进。
-- 普通 JVM **496/0**；`with_ncm` **520/0**；`lintVitalRelease`、NCM 编译、APK 无 AVS3 断言均已进 CI。
+- 普通 JVM **503/0**；`with_ncm` **527/0**；`lintVitalRelease`、NCM 编译、APK 无 AVS3 断言均已进 CI。
 
 ### 验证等级
 
@@ -23,12 +23,12 @@
 
 | # | 问题 | 状态 | 版本 | 验证 | 缺口 |
 |---|---|---|---|---|---|
-| 1 | AudioTrack 重建后没 `play()`、EQ 挂旧 session | 已修 | 0.2.42 | V0 | 未注入 write 失败；未验证新 session 重挂 EQ |
-| 2 | `Stopping` 永久卡死（activeJobId 提前清空、无 watchdog） | 已修 | 0.2.43 | V0 | 未做“二次 Start”真机复现 |
+| 1 | AudioTrack 重建后没 `play()`、EQ 挂旧 session | 已修 | 0.2.42/48 | V3 | 已注入 write 失败：新 session/EQ/heartbeat 均验证 |
+| 2 | `Stopping` 永久卡死（activeJobId 提前清空、无 watchdog） | 已修 | 0.2.43/48 | V1 | watchdog 纯函数测试；完整 UI 二次 Start 未复现 |
 | 3 | 导出未检查 `coverage.complete` | 已修 | 0.2.42 | V1 | 有 guard 单测；未做半截结果导出真机 |
 | 4 | release 自动化 Intent 无 DEBUG 守卫 | 已修 | 0.2.42 | V2 | release 包已验证忽略 `auto_play` |
-| 5 | 损坏歌单被下一次进度写覆盖 | 已修 | 0.2.42 | V0 | 未做损坏 JSON fixture/仪器测试 |
-| 6 | 默认第三方模型代理 | 已修 | 0.2.44 | V0 | 默认直连；未做真实下载路径验证 |
+| 5 | 损坏歌单被下一次进度写覆盖 | 已修 | 0.2.42/48 | V1 | 损坏 JSON fixture 已测 |
+| 6 | 默认第三方模型代理 | 已修 | 0.2.44 | V2 | 默认直连；UVR 直连下载/Range 真机验证 |
 
 ## 2. P1 状态
 
@@ -37,14 +37,14 @@
 | 7 | PcmStore 只信 length、clear/Ready 窗口 | 已修 | 0.2.43 | V1 | WAV 完整性 + activeTemps；已有 PcmStore 测试 |
 | 8 | 分离缓存/WAV 长度未校验、close 无 sync | 已修 | 0.2.43 | V1 | `isCompleteWav` + `fd.sync()`；截断 WAV 测试 |
 | 9 | demucs/spleeter4 输出形状未校验 | 已修 | 0.2.46 | V1 | C 形状/dtype + Kotlin 长度断言；需真机三后端 smoke |
-| 10 | `isPlaying` 多写者 | 已修 | 0.2.43 | V1 | `PlayingSource/updatePlaying`；纯函数测试；缺设备长播 |
-| 11 | tracks URI 丢失 | 已修 | 0.2.42 | V0 | 补 `uri`；未做 VM 重建验证 |
-| 12 | 主线程 join 卡顿 | **部分** | 0.2.41 | V0 | 有 join300/800；未异步回收 |
-| 13 | SAF grant 泄漏/失效曲 | **部分** | 0.2.43 | V0 | 释放已补；缺“重新授权/重定位/启动清理” |
+| 10 | `isPlaying` 多写者 | 已修 | 0.2.43 | V1 | `PlayingSource/updatePlaying`；纯函数测试 |
+| 11 | tracks URI 丢失 | 已修 | 0.2.42/48 | V1 | `parseTracksJson` 单测保留 uri |
+| 12 | 主线程 join 卡顿 | 已修 | 0.2.41/48 | V1 | close 主线程 50ms + 后台 reaper；load 失败不替换数据源 |
+| 13 | SAF grant 泄漏/失效曲 | 已修 | 0.2.43/48 | V1 | 启动孤儿 grant 清理 + 重新选择入口 |
 | 14 | 全轨静音进度冻结 | 已修 | 0.2.42 | V2 | 两轨全 mute 后位置仍走 |
 | 15 | CI 不跑 lintVital | 已修 | 0.2.44 | V2 | `lintVitalRelease` 进 CI |
 | 16 | CI 不编译 NCM/不断言 APK | 已修 | 0.2.44 | V2 | `with_ncm` 测试 + APK 无 AVS3/VMF |
-| 17 | 下载任务生命周期/续传 | 已修 | 0.2.47 | V1 | 进程级 manager + Range；需弱网/取消隔离真机 smoke |
+| 17 | 下载任务生命周期/续传 | 已修 | 0.2.47 | V2 | 真机：离页不中断、取消立即生效、1,266,623 B Range 续传 |
 | 18 | 无 BackHandler | 已修 | 0.2.43 | V2 | 歌单页返回回播放器 |
 
 ## 3. P2 / 文档债

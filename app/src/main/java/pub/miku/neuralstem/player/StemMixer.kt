@@ -119,7 +119,7 @@ class StemMixer(
      * 所有 source 的 `channels` / `sampleRate` 必须与构造参数一致
      * （混音器不做重采样；不一致会让某轨“变速播放”或直接崩）。
      */
-    fun load(items: List<Pair<String, StemSource>>) {
+    fun load(items: List<Pair<String, StemSource>>): Boolean {
         require(items.isNotEmpty()) { "no stems" }
         items.forEach {
             require(it.second.channels == channels) {
@@ -129,7 +129,10 @@ class StemMixer(
                 "${it.first}: sampleRate=${it.second.sampleRate} 期望 $sampleRate"
             }
         }
-        stopThread()
+        if (!stopThread(800)) {
+            Log.w(TAG, "load aborted: 旧渲染线程未退出，拒绝替换数据源")
+            return false
+        }
         voices.clear()
         items.forEach { voices += Voice(it.first, it.second) }
         framePos = 0L
@@ -143,6 +146,7 @@ class StemMixer(
         appliedPitchRate = 1f
         ensureTrack()
         Log.i(TAG, "load: ${voices.size} voice(s) ${voices.map { it.id }} @${sampleRate}Hz/${channels}ch")
+        return true
     }
 
     /**
@@ -235,8 +239,37 @@ class StemMixer(
         Log.i(TAG, "seek → ${positionMs}ms (${f}frame)")
     }
 
+    @Volatile private var closed = false
+
     override fun close() {
-        stopThread()
+        if (closed) return
+        closed = true
+        running = false
+        playing = false
+        renderGeneration++
+        val t = thread
+        thread = null
+        // 先 pause/flush 解开可能的阻塞写；暂停后即使旧线程还没退也不会继续出声。
+        runCatching { track?.pause() }
+        runCatching { track?.flush() }
+        t?.interrupt()
+        if (t != null && t.isAlive) {
+            // 主线程最多等 50ms；剩余 join/release 交给后台，避免 ANR。
+            runCatching { t.join(50) }
+            if (t.isAlive) {
+                Log.w(TAG, "close: 旧渲染线程仍存活，异步回收")
+                Thread({
+                    runCatching { t.join(800) }
+                    cleanupAfterStop()
+                }, "StemMixer-close").start()
+                return
+            }
+        }
+        cleanupAfterStop()
+    }
+
+    /** 旧线程确认退出后再释放资源；不要在它还可能读 voices/track 时调用。 */
+    private fun cleanupAfterStop() {
         voices.forEach { runCatching { it.source.close() } }
         voices.clear()
         runCatching { track?.release() }
@@ -246,7 +279,7 @@ class StemMixer(
 
     // ---------------- 内部 ----------------
 
-    private fun stopThread() {
+    private fun stopThread(timeoutMs: Long = 800): Boolean {
         running = false
         playing = false
         renderGeneration++
@@ -258,13 +291,15 @@ class StemMixer(
         runCatching { track?.pause() }
         runCatching { track?.flush() }
         t?.interrupt()
-        t?.let { runCatching { it.join(800) } }
+        t?.let { runCatching { it.join(timeoutMs) } }
         if (t?.isAlive == true) {
             // join 超时：旧线程可能还卡在 AudioTrack.write。保留引用，
             // play() 看到 isAlive 会拒绝启动第二个 writer，等它退出后再启动。
             thread = t
-            Log.w(TAG, "stopThread: 旧渲染线程未在 800ms 内退出，延迟复用")
+            Log.w(TAG, "stopThread: 旧渲染线程未在 ${timeoutMs}ms 内退出，延迟复用")
+            return false
         }
+        return true
     }
 
     private fun ensureTrack() {
@@ -408,7 +443,7 @@ class StemMixer(
                                 // ★AudioTrack.write 会**自己推进** buffer.position；
                                 //   传 duplicate，让 SonicStage 统一推进原 buffer（否则 double-advance）。
                                 val w = runCatching {
-                                    t.write(buf.duplicate(), len, AudioTrack.WRITE_BLOCKING)
+                                    writeBlock(t, buf.duplicate(), len)
                                 }.getOrDefault(-1)
                                 if (w < 0) {
                                     err = -1
@@ -444,7 +479,7 @@ class StemMixer(
 
                 if (!stage.isActive) {
                     // ---- 旁路：1.0×，与旧路径完全一致 ----
-                    val written = t.write(mix, 0, framesRead * channels, AudioTrack.WRITE_BLOCKING)
+                    val written = writeBlock(t, mix, framesRead * channels)
                     if (written < 0) {
                         Log.w(TAG, "AudioTrack.write 失败: $written → 重建 AudioTrack")
                         runCatching {
@@ -465,7 +500,7 @@ class StemMixer(
                     stage.process(mix, framesRead) { buf, len ->
                         // ★同上：AudioTrack 会推进传入 buffer 的 position，必须给它 duplicate。
                         val w = runCatching {
-                            t.write(buf.duplicate(), len, AudioTrack.WRITE_BLOCKING)
+                            writeBlock(t, buf.duplicate(), len)
                         }.getOrDefault(-1)
                         if (w < 0) {
                             writeErr = -1
@@ -567,6 +602,30 @@ class StemMixer(
 
     companion object {
         private const val TAG = "StemMixer"
+
+        /** 仅 debug/TEST_HOOKS 构建：强制下一次 AudioTrack.write 失败，验证重建恢复。 */
+        @Volatile
+        var failNextWriteForTest: Boolean = false
+
+        @JvmStatic
+        fun writeBlock(track: AudioTrack, buf: FloatArray, len: Int): Int {
+            if (failNextWriteForTest) {
+                failNextWriteForTest = false
+                Log.w(TAG, "TEST: forced write failure")
+                return -1
+            }
+            return track.write(buf, 0, len, AudioTrack.WRITE_BLOCKING)
+        }
+
+        @JvmStatic
+        fun writeBlock(track: AudioTrack, buf: ByteBuffer, len: Int): Int {
+            if (failNextWriteForTest) {
+                failNextWriteForTest = false
+                Log.w(TAG, "TEST: forced write failure")
+                return -1
+            }
+            return track.write(buf, len, AudioTrack.WRITE_BLOCKING)
+        }
 
         /** 每次混合的帧数。1024 @44.1k ≈ 23ms，兼顾延迟与调用开销。 */
         private const val CHUNK_FRAMES = 1024

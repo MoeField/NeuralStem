@@ -35,7 +35,7 @@ class TestCommandService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val i = intent
-        if (!BuildConfig.DEBUG || i == null) {
+        if ((!BuildConfig.DEBUG && !BuildConfig.TEST_HOOKS) || i == null) {
             stopSelf(startId)
             return START_NOT_STICKY
         }

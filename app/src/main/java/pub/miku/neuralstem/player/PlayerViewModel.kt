@@ -70,6 +70,25 @@ internal fun resolvePlayingUpdate(
     else -> null
 }
 
+/** 解析 Service 的多轨快照；URI 必须保留（B1 的 VM 重建恢复依赖它）。 */
+internal fun parseTracksJson(json: String?): List<PlayerViewModel.TrackUiState> {
+    if (json.isNullOrBlank()) return emptyList()
+    return runCatching {
+        val arr = JSONArray(json)
+        (0 until arr.length()).map { i ->
+            val o = arr.getJSONObject(i)
+            PlayerViewModel.TrackUiState(
+                id = o.getString("id"),
+                label = o.getString("label"),
+                volume = o.optDouble("volume", 1.0).toFloat(),
+                muted = o.optBoolean("muted", false),
+                solo = o.optBoolean("solo", false),
+                uri = o.optString("uri").takeIf { it.isNotBlank() },
+            )
+        }
+    }.getOrDefault(emptyList())
+}
+
 class PlayerViewModel(app: Application) : AndroidViewModel(app) {
 
     private val separationDomain = SeparationDomain.get(app)
@@ -1707,24 +1726,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 把 Service 回传的多轨快照镜像到 UI state。 */
     private fun applyTracksSnapshot(json: String?) {
-        val tracks = if (json.isNullOrBlank()) {
-            emptyList()
-        } else {
-            runCatching {
-                val arr = JSONArray(json)
-                (0 until arr.length()).map { i ->
-                    val o = arr.getJSONObject(i)
-                    TrackUiState(
-                        id = o.getString("id"),
-                        label = o.getString("label"),
-                        volume = o.optDouble("volume", 1.0).toFloat(),
-                        muted = o.optBoolean("muted", false),
-                        solo = o.optBoolean("solo", false),
-                        uri = o.optString("uri").takeIf { it.isNotBlank() },
-                    )
-                }
-            }.getOrDefault(emptyList())
-        }
+        val tracks = parseTracksJson(json)
         val inMt = tracks.isNotEmpty()
         // ★状态机：把“真源”的多轨状态同步进来（不触发副作用）。
         session.syncMode(

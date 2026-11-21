@@ -35,6 +35,18 @@ import java.security.MessageDigest
  * 附带 F3.3 缓存:分离结果按「输入文件内容哈希 + 引擎」落盘到
  * `filesDir/stems-cache/<hash>-<engine>/`,同一首歌重复分离直接命中,不重跑。
  */
+/** 成本门控：缺口帧 → 预估分离秒数（rtf<=0.01 时保守按 1×）。 */
+internal fun estimateBackfillSec(gapFrames: Long, sampleRate: Int, rtf: Float): Double {
+    if (sampleRate <= 0) return Double.POSITIVE_INFINITY
+    val gapSeconds = gapFrames.toDouble() / sampleRate
+    return if (rtf > 0.01f) gapSeconds / rtf else gapSeconds
+}
+
+internal const val AUTO_BACKFILL_LIMIT_SEC = 300.0
+
+internal fun isBackfillTooExpensive(gapFrames: Long, sampleRate: Int, rtf: Float): Boolean =
+    estimateBackfillSec(gapFrames, sampleRate, rtf) > AUTO_BACKFILL_LIMIT_SEC
+
 class SeparationRepository(private val app: Application) {
 
     /** 分离进度/结果状态 */
@@ -620,7 +632,8 @@ class SeparationRepository(private val app: Application) {
                             val missing = manifest.missingRanges()
                             val missingFrames = missing.sumOf { it.last - it.first + 1 }
                             val gapSeconds = missingFrames.toDouble() / frameSource.sampleRate
-                            val estimatedBackfillSec = if (rtf > 0.01f) gapSeconds / rtf else gapSeconds
+                            val estimatedBackfillSec =
+                                estimateBackfillSec(missingFrames.toLong(), frameSource.sampleRate, rtf)
                             val tooExpensive = estimatedBackfillSec > AUTO_BACKFILL_LIMIT_SEC
 
                             when {
@@ -1351,7 +1364,6 @@ class SeparationRepository(private val app: Application) {
          * - 超过 5 分钟说明缺口很大，大概率是长音频/播客/演唱会
          * - 不自动补 ≠ 不补：manifest 记为未完成，用户可在分离页手动续补
          */
-        private const val AUTO_BACKFILL_LIMIT_SEC = 300.0
 
         const val NUM_THREADS = 4
 
