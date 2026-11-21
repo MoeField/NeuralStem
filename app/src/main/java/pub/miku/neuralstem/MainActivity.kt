@@ -314,6 +314,12 @@ class MainActivity : ComponentActivity() {
             "speed" -> a0?.toFloatOrNull()?.let { playerVm.setSpeed(it) }
             "pitch" -> a0?.toFloatOrNull()?.let { playerVm.setPitchSemitones(it) }
             "resetsp" -> playerVm.resetSpeedPitch()
+            // 测试：多轨单轨音量（0f 用于全静音稳定性验证）
+            "mtvol" -> if (a0 != null) {
+                val v = a1?.toFloatOrNull() ?: 0f
+                playerVm.setTrackVolume(a0, v)
+                Log.i("TestCmd", "mtvol $a0=$v")
+            }
             "inmt" -> if (a0 != null && a1 != null) {
                 playerVm.loadMultiTrack(
                     listOf(

@@ -33,8 +33,16 @@ echo "soak: ${DURATION_SEC}s, out=$OUT_DIR, uri=${TEST_URI:-<none>}"
 LOG_PID=$!
 trap 'kill "$LOG_PID" 2>/dev/null || true' EXIT
 
+ensure_app() {
+  if ! "${ADB[@]}" shell pidof pub.miku.neuralstem >/dev/null 2>&1; then
+    "${ADB[@]}" shell am start -n pub.miku.neuralstem/.MainActivity >/dev/null 2>&1 || true
+    sleep 2
+  fi
+}
+
 send() { # send <cmd> [a0] [a1]
   local cmd="$1"; shift
+  ensure_app
   local args=()
   local i=0
   for a in "$@"; do args+=(--es "a$i" "$a"); i=$((i+1)); done
@@ -80,7 +88,9 @@ while [ "$SECONDS" -lt "$end" ]; do
       if [ $((RANDOM % 6)) -eq 0 ]; then
         "${ADB[@]}" shell am force-stop pub.miku.neuralstem || true
         sleep 1
-        "${ADB[@]}" shell monkey -p pub.miku.neuralstem -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 || true
+        "${ADB[@]}" shell am start -n pub.miku.neuralstem/.MainActivity >/dev/null 2>&1 || true
+        sleep 2
+        ensure_app
         restarts=$((restarts+1))
       fi
       ;;

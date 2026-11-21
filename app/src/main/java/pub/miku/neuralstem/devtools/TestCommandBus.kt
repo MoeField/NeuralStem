@@ -79,6 +79,7 @@ object TestCommandBus {
           pitch   a0=半音              变调（±12，独立于速度）
           resetsp                    变速变调复位（1.0× / 0 半音）
           inmt    a0=vocals a1=accomp 载入多轨（abs 路径）
+          mtvol   a0=trackId a1=0..1 设置多轨单轨音量（0=全静音验证）
           exitsmt                     退出多轨
           edge    [a0=fromMs]         启动「边播分离」（默认从当前位置；测试 Gate 用）
           sepdouble                   ★TEST_HOOKS：连续两次启动 edge（验证 Stopping/看门狗）

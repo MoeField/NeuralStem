@@ -91,3 +91,6 @@ keystore.properties
 
 # 本地 F-Droid 仓库私钥/生成物
 fdroid/local/
+
+# stability soak artifacts
+stability-out/
