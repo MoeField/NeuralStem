@@ -1,6 +1,6 @@
 # 审计整改状态与计划
 
-> 基线：v0.2.48 (248)，tag `v0.2.48`，HEAD 以 `git log` 为准。  
+> 基线：v0.2.49 (249)，tag `v0.2.49`，HEAD 以 `git log` 为准。  
 > 本文是**整改看板**；不变量见 [ARCHITECTURE.md](ARCHITECTURE.md)，发布历史见 [STEP_HISTORY.md](STEP_HISTORY.md)。
 
 ## 0. TL;DR
@@ -40,7 +40,7 @@
 | 10 | `isPlaying` 多写者 | 已修 | 0.2.43 | V1 | `PlayingSource/updatePlaying`；纯函数测试 |
 | 11 | tracks URI 丢失 | 已修 | 0.2.42/48 | V1 | `parseTracksJson` 单测保留 uri |
 | 12 | 主线程 join 卡顿 | 已修 | 0.2.41/48 | V1 | close 主线程 50ms + 后台 reaper；load 失败不替换数据源 |
-| 13 | SAF grant 泄漏/失效曲 | 已修 | 0.2.43/48 | V1 | 启动孤儿 grant 清理 + 重新选择入口 |
+| 13 | SAF grant 泄漏/失效曲 | 已修 | 0.2.43/49 | V2 | 真机：删除释放 grant；revoke→broken→重新选择→播放成功 |
 | 14 | 全轨静音进度冻结 | 已修 | 0.2.42 | V2 | 两轨全 mute 后位置仍走 |
 | 15 | CI 不跑 lintVital | 已修 | 0.2.44 | V2 | `lintVitalRelease` 进 CI |
 | 16 | CI 不编译 NCM/不断言 APK | 已修 | 0.2.44 | V2 | `with_ncm` 测试 + APK 无 AVS3/VMF |

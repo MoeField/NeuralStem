@@ -83,6 +83,8 @@ object TestCommandBus {
           edge    [a0=fromMs]         启动「边播分离」（默认从当前位置；测试 Gate 用）
           sepdouble                   ★TEST_HOOKS：连续两次启动 edge（验证 Stopping/看门狗）
           mixfail                     ★TEST_HOOKS：强制下一次 AudioTrack.write 失败（验证重建）
+          grants                      ★TEST_HOOKS：列出 persistable grant 数量/URI
+          revoke  a0=uri              ★TEST_HOOKS：释放指定 persistable grant（验证重新授权）
                                       取证：files/edge_probe.txt
           clearcache                  清分离缓存（分离进行中返回 -1）
           dlmodel a0=all|<packId,...> 下载模型（all=全部；或逗号分隔的 pack id）

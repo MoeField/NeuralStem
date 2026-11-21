@@ -118,6 +118,13 @@
 - JVM **433/0**（M1 reducer 52 + M2 controller 7 + 原有 374）；
   真机 edge fast path、4-stem cache/启动、开关 off/on 通过。
 
+## v0.2.49：SAF 重新授权真机修复
+
+- **#13 真机验证**：导入→grant=1；删除→grant=0 且日志 `released file grant`；revoke→重启后播放失败并显示“⚠ 需重新授权”；重新选择→标记消失、播放成功、grant=1。
+- **真实 bug 修复**：系统文档选择器可能触发 Activity 重建，`remember` 的 `reauthTarget` 丢失，表现为“授权成功但曲目未替换”。改为 `rememberSaveable` 保存 `reauthListId/reauthOldUri`。
+- 新增 TEST_HOOKS 命令 `grants`/`revoke`（release 不暴露）。
+- 未新增 JVM 测试；普通 503/0。
+
 ## v0.2.48：验证补齐与剩余 P1/P2 收尾
 
 - **#1** 新增 test-only `StemMixer.failNextWriteForTest` 注入；真机强制 write 失败后验证：重建 AudioTrack → 新 session 2817 → EQ 重挂 → heartbeat 继续。

@@ -168,13 +168,19 @@ fun PlaylistScreen(
     }
 
     // ★B6/#13：失效曲“重新授权”入口——重新选同一个文件后替换 uri。
-    var reauthTarget by remember { mutableStateOf<Pair<String, String>?>(null) }
+    // 必须 rememberSaveable：系统文档选择器可能触发 Activity 重建，普通 remember 会丢 target。
+    var reauthListId by rememberSaveable { mutableStateOf<String?>(null) }
+    var reauthOldUri by rememberSaveable { mutableStateOf<String?>(null) }
     val reauthPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument(),
     ) { uri ->
-        val target = reauthTarget
-        reauthTarget = null
-        if (uri == null || target == null) return@rememberLauncherForActivityResult
+        val listId = reauthListId
+        val oldUri = reauthOldUri
+        reauthListId = null
+        reauthOldUri = null
+        if (uri == null || listId == null || oldUri == null) {
+            return@rememberLauncherForActivityResult
+        }
         val granted = runCatching {
             context.contentResolver.takePersistableUriPermission(
                 uri,
@@ -184,7 +190,7 @@ fun PlaylistScreen(
         if (!granted) {
             Toast.makeText(context, "持久授权失败，重启后可能需重新选择", Toast.LENGTH_LONG).show()
         }
-        vm.replaceTrackUri(target.first, target.second, uri.toString())
+        vm.replaceTrackUri(listId, oldUri, uri.toString())
     }
 
     // ★⑪：横屏一行（否则下方没空间选歌单）；竖屏两行（命名单独一行，不挤）。
@@ -371,7 +377,8 @@ fun PlaylistScreen(
                                                     maxLines = 1,
                                                 )
                                                 TextButton(onClick = {
-                                                    reauthTarget = p.id to t.uri
+                                                    reauthListId = p.id
+                                                    reauthOldUri = t.uri
                                                     reauthPicker.launch(arrayOf("audio/*"))
                                                 }) {
                                                     Text(

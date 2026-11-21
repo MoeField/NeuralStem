@@ -1,5 +1,6 @@
 package pub.miku.neuralstem
 
+import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.os.SystemClock
@@ -334,6 +335,33 @@ class MainActivity : ComponentActivity() {
                             SeparationRepository.get(application).startEdge(src, fromMs)
                         }
                     }
+                }
+            }
+            // ★TEST_HOOKS：列出/释放 persistable grants，验证 SAF 生命周期。
+            "grants" -> {
+                val perms = contentResolver.persistedUriPermissions
+                perms.forEach {
+                    Log.i(
+                        "TestCmd",
+                        "GRANT $it read=${it.isReadPermission} write=${it.isWritePermission}",
+                    )
+                }
+                Log.i("TestCmd", "GRANTS count=${perms.size}")
+            }
+            "revoke" -> {
+                val u = a0?.let(Uri::parse)
+                val perm = u?.let { uri ->
+                    contentResolver.persistedUriPermissions.firstOrNull { it.uri == uri }
+                }
+                if (u == null || perm == null) {
+                    Log.w("TestCmd", "revoke: no grant for $a0")
+                } else {
+                    var flags = 0
+                    if (perm.isReadPermission) flags = flags or Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    if (perm.isWritePermission) flags = flags or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                    runCatching { contentResolver.releasePersistableUriPermission(u, flags) }
+                        .onSuccess { Log.i("TestCmd", "revoke: released $u flags=$flags") }
+                        .onFailure { Log.e("TestCmd", "revoke failed: $u", it) }
                 }
             }
             // ★TEST_HOOKS：强制下一次 AudioTrack.write 失败，验证重建后 play + EQ 重挂。
