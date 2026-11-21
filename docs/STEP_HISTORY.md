@@ -118,6 +118,14 @@
 - JVM **433/0**（M1 reducer 52 + M2 controller 7 + 原有 374）；
   真机 edge fast path、4-stem cache/启动、开关 off/on 通过。
 
+## v0.2.51（续）：B1 第一切口 PlaybackConnection
+
+- 新增 `PlaybackConnection`：只负责 MediaController 构建/连接/释放与 extras 转发。
+- `PlayerViewModel.connectToService()` 缩减为构造连接；ready/extras 业务逻辑仍在 VM。
+- `release()` 改为释放 connection；行为不变。
+- JVM 503/0；B3 androidTest 1/0；真机启动日志 `MediaController connected`。
+- 未拆 QueueController/MainActivity/AppShell；B1 仍分步进行。
+
 ## v0.2.51：B3 仪器化 smoke
 
 - 新增 `MultiTrackEngineSmokeTest`（androidTest）：合成 5s WAV → 多轨 load/play → 位置推进；全轨 volume=0 后位置仍推进（#14）；pause/close 不崩。

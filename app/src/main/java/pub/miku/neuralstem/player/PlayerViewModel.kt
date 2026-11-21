@@ -450,88 +450,87 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
      */
     val player: Player? get() = mediaController
 
-    /** 连接 Service 的 session。listen 回调用于把所有 UI 监听挂上去。 */
+    /** 连接 Service 的 session（真正的构建/释放由 PlaybackConnection 负责）。 */
+    private var connection: PlaybackConnection? = null
+
     private fun connectToService() {
-        val token = SessionToken(
-            getApplication(),
-            ComponentName(getApplication(), PlaybackService::class.java),
-        )
-        val future = MediaController.Builder(getApplication(), token)
-            // M3/P2:media3 的 MediaController.Listener 只能在构建时注册
-            // （addListener 只收 Player.Listener）—— 用它收多轨状态快照
-            .setListener(object : MediaController.Listener {
-                override fun onExtrasChanged(controller: MediaController, extras: Bundle) {
-                    val tracksJson = extras.getString(MultiTrackSession.KEY_TRACKS_JSON)
-                    if (tracksJson != lastTracksJson) {
-                    lastTracksJson = tracksJson
-                    applyTracksSnapshot(tracksJson)
-                    // ★B1：VM/Activity 重建后恢复 originalUri/lastStems/变速变调。
-                    val isMt = !tracksJson.isNullOrBlank() &&
-                        runCatching { JSONArray(tracksJson).length() > 0 }.getOrDefault(false)
-                    if (isMt) {
-                        val ou = extras.getString(MultiTrackSession.KEY_ORIGINAL_URI)
-                        if (!ou.isNullOrBlank()) {
-                            originalUri = Uri.parse(ou)
-                            val title = extras.getString(MultiTrackSession.KEY_ORIGINAL_TITLE).orEmpty()
-                            if (title.isNotBlank()) originalName = title
-                            _state.value = _state.value.copy(
-                                hasMedia = true,
-                                fileName = if (title.isNotBlank()) title else _state.value.fileName,
-                                currentUri = ou,
-                            )
-                        }
-                        val sp = extras.getFloat(MultiTrackSession.KEY_SPEED, 1f)
-                        val pr = extras.getFloat(MultiTrackSession.KEY_PITCH_RATE, 1f)
-                        val semis = if (pr > 0f) {
-                            (12.0 * kotlin.math.log2(pr.toDouble())).toFloat()
-                        } else {
-                            0f
-                        }
-                        _state.value = _state.value.copy(speed = sp, pitchSemitones = semis)
-                        Log.i(TAG, "B1 extras: originalUri=$ou speed=$sp pitchRate=$pr")
-                    }
-                    restoreQueueFromPlaylistIfIdle()
-                    }   // tracksJson 变化时才应用
-                    applyEqSnapshot(extras.getString(MultiTrackSession.KEY_EQ_JSON))
-                    // ★2026-11-01：多轨真实位置来自 StemMixer（单 AudioTrack），
-                    //   主轨 ExoPlayer 只是静音门面，它的 currentPosition 不可用。
-                    //   这里只**缓存**，不直接写 _progress ——
-                    //   否则它会与 100ms 轮询的门面位置交替覆盖 → 时间显示来回跳。
-                    if (extras.containsKey(MultiTrackSession.KEY_MIX_POS_MS)) {
-                        mixPosMs = extras.getLong(MultiTrackSession.KEY_MIX_POS_MS, 0L)
-                        mixDurationMs = extras.getLong(MultiTrackSession.KEY_MIX_DUR_MS, 0L)
-                        mixEnded = extras.getBoolean(MultiTrackSession.KEY_MIX_ENDED, false)
-                        mixPosAtClock = android.os.SystemClock.elapsedRealtime()
-                        val playing = extras.getBoolean(MultiTrackSession.KEY_MIX_PLAYING, false)
-                        updatePlaying(playing, PlayingSource.MIX)
-                    }
-                }
-            })
-            .buildAsync()
-        future.addListener({
-            val c = future.get()
-            mediaController = c
-            attachPlayerListeners(c)
-            Log.i(TAG, "MediaController connected to PlaybackService")
-            // ★P3：先从 Session 回填 VM 本地状态（治“VM 重建后显示‘尚未导入音频’却有声音”）。
-            //   置于重放 pendingLoad **之前**：若本次确实有待载入请求，replay 的 doLoad
-            //   会覆盖回填值（以新曲为准）；无待载入请求时回填值保留（=重建场景）。
-            restoreFromSession(c)
-            // ★B1：循环模式从 SettingsRepository 回填（多轨/重建都不丢）。
-            val savedRepeat = settingsRepo.repeatMode
-            _state.value = _state.value.copy(repeatMode = savedRepeat)
-            c.repeatMode = savedRepeat.toPlayerRepeatMode()
-            Log.i(TAG, "B1 restore repeatMode=$savedRepeat")
-            // 重放连接前收到的载入请求
-            val replay = pendingLoad
-            pendingLoad = {}
-            replay(c)
-            // ★⑧：冷启动续播——若仍无当前曲（Service 被冷杀后重建）→ 从落盘歌单进度恢复。
-            //   置于 replay 之后：若本次确实有待载入请求，已由 replay 处理，此处因“已有曲”跳过。
-            restoreLastSessionIfIdle()
-            // M3/P2:重放连接前收到的多轨命令
-            flushMtCommands(c)
-        }, MoreExecutors.directExecutor())
+        connection = PlaybackConnection(
+            context = getApplication(),
+            onControllerReady = ::onControllerReady,
+            onExtrasChanged = ::onExtrasChanged,
+        ).also { it.connect() }
+    }
+
+    private fun onControllerReady(c: MediaController) {
+        mediaController = c
+        attachPlayerListeners(c)
+        Log.i(TAG, "MediaController connected to PlaybackService")
+        // ★P3：先从 Session 回填 VM 本地状态（治“VM 重建后显示‘尚未导入音频’却有声音”）。
+        //   置于重放 pendingLoad **之前**：若本次确实有待载入请求，replay 的 doLoad
+        //   会覆盖回填值（以新曲为准）；无待载入请求时回填值保留（=重建场景）。
+        restoreFromSession(c)
+        // ★B1：循环模式从 SettingsRepository 回填（多轨/重建都不丢）。
+        val savedRepeat = settingsRepo.repeatMode
+        _state.value = _state.value.copy(repeatMode = savedRepeat)
+        c.repeatMode = savedRepeat.toPlayerRepeatMode()
+        Log.i(TAG, "B1 restore repeatMode=$savedRepeat")
+        // 重放连接前收到的载入请求
+        val replay = pendingLoad
+        pendingLoad = {}
+        replay(c)
+        // ★⑧：冷启动续播——若仍无当前曲（Service 被冷杀后重建）→ 从落盘歌单进度恢复。
+        //   置于 replay 之后；若本次确实有待载入请求，已由 replay 处理，此处因“已有曲”跳过。
+        restoreLastSessionIfIdle()
+        // M3/P2:重放连接前收到的多轨命令
+        flushMtCommands(c)
+    }
+
+    /** MediaController extras 变化（多轨快照/EQ/位置）。 */
+    private fun onExtrasChanged(extras: Bundle) {
+        val tracksJson = extras.getString(MultiTrackSession.KEY_TRACKS_JSON)
+        if (tracksJson != lastTracksJson) {
+        lastTracksJson = tracksJson
+        applyTracksSnapshot(tracksJson)
+        // ★B1：VM/Activity 重建后恢复 originalUri/lastStems/变速变调。
+        val isMt = !tracksJson.isNullOrBlank() &&
+            runCatching { JSONArray(tracksJson).length() > 0 }.getOrDefault(false)
+        if (isMt) {
+            val ou = extras.getString(MultiTrackSession.KEY_ORIGINAL_URI)
+            if (!ou.isNullOrBlank()) {
+                originalUri = Uri.parse(ou)
+                val title = extras.getString(MultiTrackSession.KEY_ORIGINAL_TITLE).orEmpty()
+                if (title.isNotBlank()) originalName = title
+                _state.value = _state.value.copy(
+                    hasMedia = true,
+                    fileName = if (title.isNotBlank()) title else _state.value.fileName,
+                    currentUri = ou,
+                )
+            }
+            val sp = extras.getFloat(MultiTrackSession.KEY_SPEED, 1f)
+            val pr = extras.getFloat(MultiTrackSession.KEY_PITCH_RATE, 1f)
+            val semis = if (pr > 0f) {
+                (12.0 * kotlin.math.log2(pr.toDouble())).toFloat()
+            } else {
+                0f
+            }
+            _state.value = _state.value.copy(speed = sp, pitchSemitones = semis)
+            Log.i(TAG, "B1 extras: originalUri=$ou speed=$sp pitchRate=$pr")
+        }
+        restoreQueueFromPlaylistIfIdle()
+        }   // tracksJson 变化时才应用
+        applyEqSnapshot(extras.getString(MultiTrackSession.KEY_EQ_JSON))
+        // ★2026-11-01：多轨真实位置来自 StemMixer（单 AudioTrack），
+        //   主轨 ExoPlayer 只是静音门面，它的 currentPosition 不可用。
+        //   这里只**缓存**，不直接写 _progress ——
+        //   否则它会与 100ms 轮询的门面位置交替覆盖 → 时间显示来回跳。
+        if (extras.containsKey(MultiTrackSession.KEY_MIX_POS_MS)) {
+            mixPosMs = extras.getLong(MultiTrackSession.KEY_MIX_POS_MS, 0L)
+            mixDurationMs = extras.getLong(MultiTrackSession.KEY_MIX_DUR_MS, 0L)
+            mixEnded = extras.getBoolean(MultiTrackSession.KEY_MIX_ENDED, false)
+            mixPosAtClock = android.os.SystemClock.elapsedRealtime()
+            val playing = extras.getBoolean(MultiTrackSession.KEY_MIX_PLAYING, false)
+            updatePlaying(playing, PlayingSource.MIX)
+        }
     }
 
     /**
@@ -2416,7 +2415,8 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
      * 让 Activity 重建后再连(见 [connectToService])。
      */
     fun release() {
-        mediaController?.release()
+        connection?.release()
+        connection = null
         mediaController = null
     }
 
