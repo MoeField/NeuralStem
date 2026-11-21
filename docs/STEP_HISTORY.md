@@ -118,6 +118,14 @@
 - JVM **433/0**（M1 reducer 52 + M2 controller 7 + 原有 374）；
   真机 edge fast path、4-stem cache/启动、开关 off/on 通过。
 
+## v0.2.50：B2 生产 UI i18n
+
+- Settings 的 NCM/解码缓存/PCM 缓存二级页文案全部迁 `values/strings.xml` + `values-en`。
+- 歌单页导入/授权/重新选择/再加载文案迁资源。
+- SpikeViewModel 的导入/解析/取消错误文案迁资源。
+- 未改逻辑/布局；普通 503/0；lint 0 error。
+- 说明：分离 Domain/Reducer 内部的错误串仍为中文常量（无 Context，需后续通过消息 ID 映射）；日志/测试命令不迁。
+
 ## v0.2.50 准备：C 项测试注入（未发版）
 
 - 新增 TEST_HOOKS `separationTestSlowMs`：edge 首块前可注入延迟。

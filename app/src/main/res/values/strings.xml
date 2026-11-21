@@ -215,4 +215,47 @@
     <string name="pl_delete">删列表</string>
     <string name="pl_remove">移除</string>
     <string name="pl_rescan">刷新文件夹</string>
+    <!-- 设置：缓存/NCM 二级页（B2 i18n） -->
+    <string name="settings_ncm_unavailable">NCM 导入不可用：%1$s</string>
+    <string name="settings_ncm_import_title">NCM 导入</string>
+    <string name="settings_ncm_import_sub">从网易云音乐导入加密的 .ncm 文件（需 Shizuku）</string>
+    <string name="settings_decode_cache_title">解码缓存</string>
+    <string name="settings_decode_cache_sub">AVS3 曲目的解码结果缓存，决定占用空间与预解码数量</string>
+    <string name="settings_pcm_cache_title">PCM 缓存</string>
+    <string name="settings_pcm_cache_sub">波形与分离共享的 WAV 解码结果；当前播放曲不会被清理</string>
+    <string name="settings_current_usage">当前占用</string>
+    <string name="settings_cache_files">%1$s MB ・ %2$d 个文件</string>
+    <string name="settings_cache_limit">上限：%1$s GB（LRU）</string>
+    <string name="settings_cache_last_clear">上次清理：删除 %1$d 个未使用文件</string>
+    <string name="settings_refresh">刷新</string>
+    <string name="settings_clear_unused">清理未使用缓存</string>
+    <string name="settings_pcm_intro">波形和分离共用同一份解码 WAV。缓存命中时，分离不再二次解码；当前播放曲会被 pin 住，清理时不会删除。</string>
+    <string name="settings_pcm_note">说明：高采样率源会保留原始采样率，单首可能上百 MB；WAV 直接用于后续分离，因此优先保证复用而不是压缩。</string>
+    <string name="settings_pcm_clear_title">清理 PCM 缓存？</string>
+    <string name="settings_pcm_clear_body">将删除未被播放/分离占用的 PCM WAV；当前播放曲和正在分离的文件会保留。</string>
+    <string name="settings_clear_confirm">清理</string>
+    <string name="settings_decode_intro">AVS3（av3a）音频需要先解码才能播放，一首 4 分钟的歌约需 30–40 秒。解码结果会存成 WAV，下次打开即可秒开。</string>
+    <string name="settings_decode_limit_title">缓存占用上限</string>
+    <string name="settings_decode_limit_hint">一首 4 分钟的歌约 42MB。调小后会按「最久未使用」自动淘汰旧文件，不需要重装 App。</string>
+    <string name="settings_decode_pre_title">预解码后续歌曲</string>
+    <string name="settings_decode_pre_hint">播放时提前把后面几首解好，避免自动切歌时静音等待。数量越大占用磁盘越多（每首约 42MB）。0 = 关闭。</string>
+    <string name="settings_decode_off">关</string>
+    <string name="settings_decode_count">%1$d 首</string>
+    <string name="settings_decode_used">%1$s MB ・ %2$d 个文件（上限 %3$d GB）</string>
+    <string name="settings_decode_clear_title">清除解码缓存？</string>
+    <string name="settings_decode_clear_body">将删除全部 %1$d 个缓存文件（%2$s MB）。下次播放 AVS3 曲目需要重新解码（每首约 30–40 秒）。</string>
+    <string name="settings_decode_clear_confirm">清除</string>
+    <string name="pl_import_single">导入单曲</string>
+    <string name="pl_grant_failed">持久授权失败，重启后可能需重新选择</string>
+    <string name="pl_grant_failed_many">%1$d 首未能持久授权，重启后可能需重新选择</string>
+    <string name="pl_folder_grant_failed">文件夹持久授权失败，重启后可能需重新选择</string>
+    <string name="pl_need_reauth">⚠ 需重新授权</string>
+    <string name="pl_reauth">重新选择</string>
+    <string name="pl_load_more">再加载 %1$d 首（还有 %2$d 首）</string>
+    <string name="spike_import_failed">导入失败：%1$s</string>
+    <string name="spike_external_load_failed">外部文件加载失败：%1$s</string>
+    <string name="spike_audio_parse_failed">音频解析失败：%1$s</string>
+    <string name="spike_track_changed_retry">当前曲已切换，请重试</string>
+    <string name="spike_import_first">先导入音频</string>
+    <string name="spike_cancelled">分离已取消</string>
 </resources>

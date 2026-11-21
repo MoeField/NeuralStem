@@ -208,4 +208,47 @@
     <string name="pl_remove">Remove</string>
     <string name="pl_rescan">Rescan folder</string>
     <string name="sep_cache_disable_in_multitrack">Turn off the separation switch before clearing cache during multitrack playback</string>
+    <!-- Settings: cache/NCM pages (B2 i18n) -->
+    <string name="settings_ncm_unavailable">NCM import unavailable: %1$s</string>
+    <string name="settings_ncm_import_title">NCM import</string>
+    <string name="settings_ncm_import_sub">Import encrypted .ncm files from NetEase Cloud Music (requires Shizuku)</string>
+    <string name="settings_decode_cache_title">Decode cache</string>
+    <string name="settings_decode_cache_sub">Decoded AVS3 audio cache; controls disk usage and pre-decode count</string>
+    <string name="settings_pcm_cache_title">PCM cache</string>
+    <string name="settings_pcm_cache_sub">Shared WAV decode cache for waveform and separation; the current track is never cleared</string>
+    <string name="settings_current_usage">Current usage</string>
+    <string name="settings_cache_files">%1$s MB · %2$d files</string>
+    <string name="settings_cache_limit">Limit: %1$s GB (LRU)</string>
+    <string name="settings_cache_last_clear">Last clear: removed %1$d unused files</string>
+    <string name="settings_refresh">Refresh</string>
+    <string name="settings_clear_unused">Clear unused cache</string>
+    <string name="settings_pcm_intro">Waveform and separation share the same decoded WAV. On a cache hit separation does not decode again; the current track is pinned and never removed by cleanup.</string>
+    <string name="settings_pcm_note">Note: high-sample-rate sources keep their original rate and a single track can be hundreds of MB. WAV is reused by separation, so reuse is preferred over compression.</string>
+    <string name="settings_pcm_clear_title">Clear PCM cache?</string>
+    <string name="settings_pcm_clear_body">This removes PCM WAVs not used by playback/separation; the current track and files being separated are kept.</string>
+    <string name="settings_clear_confirm">Clear</string>
+    <string name="settings_decode_intro">AVS3 (av3a) audio must be decoded before playback; a 4-minute track takes about 30–40 s. The decoded WAV is kept so the next open is instant.</string>
+    <string name="settings_decode_limit_title">Cache limit</string>
+    <string name="settings_decode_limit_hint">A 4-minute track is about 42 MB. Lowering the limit evicts the least-recently-used files; no reinstall needed.</string>
+    <string name="settings_decode_pre_title">Pre-decode following tracks</string>
+    <string name="settings_decode_pre_hint">Decode upcoming tracks in advance to avoid silence when auto-advancing. More tracks use more disk (about 42 MB each). 0 = off.</string>
+    <string name="settings_decode_off">Off</string>
+    <string name="settings_decode_count">%1$d tracks</string>
+    <string name="settings_decode_used">%1$s MB · %2$d files (limit %3$d GB)</string>
+    <string name="settings_decode_clear_title">Clear decode cache?</string>
+    <string name="settings_decode_clear_body">This deletes all %1$d cached files (%2$s MB). AVS3 tracks must be decoded again on next play (about 30–40 s each).</string>
+    <string name="settings_decode_clear_confirm">Clear</string>
+    <string name="pl_import_single">Import track</string>
+    <string name="pl_grant_failed">Could not persist access; you may need to pick it again after restart</string>
+    <string name="pl_grant_failed_many">%1$d track(s) could not be persisted; you may need to pick them again after restart</string>
+    <string name="pl_folder_grant_failed">Could not persist folder access; you may need to pick it again after restart</string>
+    <string name="pl_need_reauth">⚠ Re-authorize needed</string>
+    <string name="pl_reauth">Pick again</string>
+    <string name="pl_load_more">Load %1$d more (%2$d remaining)</string>
+    <string name="spike_import_failed">Import failed: %1$s</string>
+    <string name="spike_external_load_failed">Could not load external file: %1$s</string>
+    <string name="spike_audio_parse_failed">Audio parse failed: %1$s</string>
+    <string name="spike_track_changed_retry">The current track changed; please retry</string>
+    <string name="spike_import_first">Import audio first</string>
+    <string name="spike_cancelled">Separation cancelled</string>
 </resources>

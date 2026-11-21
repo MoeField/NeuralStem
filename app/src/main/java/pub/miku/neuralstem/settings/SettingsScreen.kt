@@ -133,7 +133,7 @@ fun SettingsScreen(
                     ).invoke(inst, c, Runnable { page = SettingsPage.ROOT }) as android.view.View
                 }.getOrElse {
                     android.widget.TextView(c).apply {
-                        text = "NCM 导入不可用：${it.message}"
+                        text = c.getString(R.string.settings_ncm_unavailable, it.message ?: "")
                         setPadding(60, 60, 60, 60)
                     }
                 }
@@ -309,8 +309,8 @@ private fun SettingsRoot(
         if (onOpenNcm != null) {
             HorizontalDivider()
             EntryRow(
-                title = "NCM 导入",
-                subtitle = "从网易云音乐导入加密的 .ncm 文件（需 Shizuku）",
+                title = stringResource(R.string.settings_ncm_import_title),
+                subtitle = stringResource(R.string.settings_ncm_import_sub),
                 onClick = onOpenNcm,
             )
         }
@@ -319,8 +319,8 @@ private fun SettingsRoot(
         if (onOpenCache != null) {
             HorizontalDivider()
             EntryRow(
-                title = "解码缓存",
-                subtitle = "AVS3 曲目的解码结果缓存，决定占用空间与预解码数量",
+                title = stringResource(R.string.settings_decode_cache_title),
+                subtitle = stringResource(R.string.settings_decode_cache_sub),
                 onClick = onOpenCache,
             )
         }
@@ -329,8 +329,8 @@ private fun SettingsRoot(
         if (onOpenPcmCache != null) {
             HorizontalDivider()
             EntryRow(
-                title = "PCM 缓存",
-                subtitle = "波形与分离共享的 WAV 解码结果；当前播放曲不会被清理",
+                title = stringResource(R.string.settings_pcm_cache_title),
+                subtitle = stringResource(R.string.settings_pcm_cache_sub),
                 onClick = onOpenPcmCache,
             )
         }
@@ -378,9 +378,9 @@ private fun PcmCacheScreen(modifier: Modifier = Modifier, onBack: () -> Unit) {
             modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            TextButton(onClick = onBack) { Text("‹ 返回") }
+            TextButton(onClick = onBack) { Text("‹ " + stringResource(R.string.page_back)) }
             Text(
-                "PCM 缓存",
+                stringResource(R.string.settings_pcm_cache_title),
                 style = MaterialTheme.typography.titleLarge,
                 modifier = Modifier.padding(start = 8.dp),
             )
@@ -394,42 +394,40 @@ private fun PcmCacheScreen(modifier: Modifier = Modifier, onBack: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Text(
-                "波形和分离共用同一份解码 WAV。缓存命中时，分离不再二次解码；" +
-                    "当前播放曲会被 pin 住，清理时不会删除。",
+                stringResource(R.string.settings_pcm_intro),
                 style = MaterialTheme.typography.bodyMedium,
             )
 
             HorizontalDivider()
 
-            Text("当前占用", style = MaterialTheme.typography.titleMedium)
+            Text(stringResource(R.string.settings_current_usage), style = MaterialTheme.typography.titleMedium)
             Text(
-                "${mb(usedBytes)} MB ・ $files 个文件",
+                stringResource(R.string.settings_cache_files, mb(usedBytes), files),
                 style = MaterialTheme.typography.bodyMedium,
             )
             Text(
-                "上限：${"%.0f".format(store.cacheLimitBytes / 1_073_741_824.0)} GB（LRU）",
+                stringResource(R.string.settings_cache_limit, "%.0f".format(store.cacheLimitBytes / 1_073_741_824.0)),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             if (lastCleared >= 0) {
                 Text(
-                    "上次清理：删除 $lastCleared 个未使用文件",
+                    stringResource(R.string.settings_cache_last_clear, lastCleared),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = { scope.launch { refresh() } }) { Text("刷新") }
+                OutlinedButton(onClick = { scope.launch { refresh() } }) { Text(stringResource(R.string.settings_refresh)) }
                 OutlinedButton(
                     onClick = { showClearConfirm = true },
                     enabled = files > 0,
-                ) { Text("清理未使用缓存") }
+                ) { Text(stringResource(R.string.settings_clear_unused)) }
             }
 
             Text(
-                "说明：高采样率源会保留原始采样率，单首可能上百 MB；" +
-                    "WAV 直接用于后续分离，因此优先保证复用而不是压缩。",
+                stringResource(R.string.settings_pcm_note),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -439,11 +437,10 @@ private fun PcmCacheScreen(modifier: Modifier = Modifier, onBack: () -> Unit) {
     if (showClearConfirm) {
         AlertDialog(
             onDismissRequest = { showClearConfirm = false },
-            title = { Text("清理 PCM 缓存？") },
+            title = { Text(stringResource(R.string.settings_pcm_clear_title)) },
             text = {
                 Text(
-                    "将删除未被播放/分离占用的 PCM WAV；" +
-                        "当前播放曲和正在分离的文件会保留。",
+                    stringResource(R.string.settings_pcm_clear_body),
                 )
             },
             confirmButton = {
@@ -453,10 +450,10 @@ private fun PcmCacheScreen(modifier: Modifier = Modifier, onBack: () -> Unit) {
                         refresh()
                     }
                     showClearConfirm = false
-                }) { Text("清理") }
+                }) { Text(stringResource(R.string.settings_clear_confirm)) }
             },
             dismissButton = {
-                TextButton(onClick = { showClearConfirm = false }) { Text("取消") }
+                TextButton(onClick = { showClearConfirm = false }) { Text(stringResource(R.string.settings_models_license_cancel)) }
             },
         )
     }
@@ -662,9 +659,9 @@ private fun DecodeCacheScreen(modifier: Modifier = Modifier, onBack: () -> Unit)
             verticalAlignment = Alignment.CenterVertically,
         ) {
             // 零图标依赖：用文本字形做返回
-            TextButton(onClick = onBack) { Text("‹ 返回") }
+            TextButton(onClick = onBack) { Text("‹ " + stringResource(R.string.page_back)) }
             Text(
-                "解码缓存",
+                stringResource(R.string.settings_decode_cache_title),
                 style = MaterialTheme.typography.titleLarge,
                 modifier = Modifier.padding(start = 8.dp),
             )
@@ -678,18 +675,16 @@ private fun DecodeCacheScreen(modifier: Modifier = Modifier, onBack: () -> Unit)
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Text(
-                "AVS3（av3a）音频需要先解码才能播放，一首 4 分钟的歌约需 30–40 秒。" +
-                    "解码结果会存成 WAV，下次打开即可秒开。",
+                stringResource(R.string.settings_decode_intro),
                 style = MaterialTheme.typography.bodyMedium,
             )
 
             HorizontalDivider()
 
             // ---- 缓存上限 ----
-            Text("缓存占用上限", style = MaterialTheme.typography.titleMedium)
+            Text(stringResource(R.string.settings_decode_limit_title), style = MaterialTheme.typography.titleMedium)
             Text(
-                "一首 4 分钟的歌约 42MB。调小后会按「最久未使用」自动淘汰旧文件，" +
-                    "不需要重装 App。",
+                stringResource(R.string.settings_decode_limit_hint),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -710,10 +705,9 @@ private fun DecodeCacheScreen(modifier: Modifier = Modifier, onBack: () -> Unit)
             HorizontalDivider()
 
             // ---- 预解码数量 ----
-            Text("预解码后续歌曲", style = MaterialTheme.typography.titleMedium)
+            Text(stringResource(R.string.settings_decode_pre_title), style = MaterialTheme.typography.titleMedium)
             Text(
-                "播放时提前把后面几首解好，避免自动切歌时静音等待。" +
-                    "数量越大占用磁盘越多（每首约 42MB）。0 = 关闭。",
+                stringResource(R.string.settings_decode_pre_hint),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -731,7 +725,7 @@ private fun DecodeCacheScreen(modifier: Modifier = Modifier, onBack: () -> Unit)
                             pre = v
                             repo.preDecodeCount = v
                         },
-                        label = { Text(if (v == 0) "关" else "$v 首") },
+                        label = { Text(if (v == 0) stringResource(R.string.settings_decode_off) else stringResource(R.string.settings_decode_count, v)) },
                     )
                 }
             }
@@ -739,18 +733,17 @@ private fun DecodeCacheScreen(modifier: Modifier = Modifier, onBack: () -> Unit)
             HorizontalDivider()
 
             // ---- 当前占用 ----
-            Text("当前占用", style = MaterialTheme.typography.titleMedium)
+            Text(stringResource(R.string.settings_current_usage), style = MaterialTheme.typography.titleMedium)
             Text(
-                "${"%.1f".format(usedMb)} MB ・ $fileCount 个文件" +
-                    "（上限 ${gb} GB）",
+                stringResource(R.string.settings_decode_used, "%.1f".format(usedMb), fileCount, gb),
                 style = MaterialTheme.typography.bodyMedium,
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = { refreshUsage() }) { Text("刷新") }
+                OutlinedButton(onClick = { refreshUsage() }) { Text(stringResource(R.string.settings_refresh)) }
                 OutlinedButton(
                     onClick = { showClearConfirm = true },
                     enabled = fileCount > 0,
-                ) { Text("清除解码缓存") }
+                ) { Text(stringResource(R.string.settings_decode_clear_confirm)) }
             }
         }
     }
@@ -758,11 +751,14 @@ private fun DecodeCacheScreen(modifier: Modifier = Modifier, onBack: () -> Unit)
     if (showClearConfirm) {
         AlertDialog(
             onDismissRequest = { showClearConfirm = false },
-            title = { Text("清除解码缓存？") },
+            title = { Text(stringResource(R.string.settings_decode_clear_title)) },
             text = {
                 Text(
-                    "将删除全部 ${fileCount} 个缓存文件（${"%.1f".format(usedMb)} MB）。" +
-                        "下次播放 AVS3 曲目需要重新解码（每首约 30–40 秒）。",
+                    stringResource(
+                        R.string.settings_decode_clear_body,
+                        fileCount,
+                        "%.1f".format(usedMb),
+                    ),
                 )
             },
             confirmButton = {
@@ -775,10 +771,12 @@ private fun DecodeCacheScreen(modifier: Modifier = Modifier, onBack: () -> Unit)
                     }
                     showClearConfirm = false
                     refreshUsage()
-                }) { Text("清除") }
+                }) { Text(stringResource(R.string.settings_decode_clear_confirm)) }
             },
             dismissButton = {
-                TextButton(onClick = { showClearConfirm = false }) { Text("取消") }
+                TextButton(onClick = { showClearConfirm = false }) {
+                    Text(stringResource(R.string.settings_models_license_cancel))
+                }
             },
         )
     }

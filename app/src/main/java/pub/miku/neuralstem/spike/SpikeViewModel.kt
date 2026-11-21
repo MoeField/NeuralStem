@@ -1,5 +1,7 @@
 package pub.miku.neuralstem.spike
 
+import pub.miku.neuralstem.R
+
 import android.app.Application
 import android.net.Uri
 import android.util.Log
@@ -265,7 +267,7 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
                 loadLocalFileInternal(local)
             } catch (t: Throwable) {
                 Log.e(TAG, "importAudio failed", t)
-                _state.value = State.Error("导入失败: ${t.message}", t)
+                _state.value = State.Error(getApplication<Application>().getString(R.string.spike_import_failed, t.message ?: ""), t)
             }
         }
     }
@@ -296,7 +298,7 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
             loadLocalFileInternal(local)
         } catch (t: Throwable) {
             Log.e(TAG, "loadExternalInternal failed", t)
-            _state.value = State.Error("外部文件加载失败: ${t.message}", t)
+            _state.value = State.Error(getApplication<Application>().getString(R.string.spike_external_load_failed, t.message ?: ""), t)
             false
         }
     }
@@ -354,7 +356,7 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
             true
         } catch (t: Throwable) {
             Log.e(TAG, "probe failed: ${local.absolutePath}", t)
-            _state.value = State.Error("音频解析失败: ${t.message}", t)
+            _state.value = State.Error(getApplication<Application>().getString(R.string.spike_audio_parse_failed, t.message ?: ""), t)
             false
         }
     }
@@ -390,7 +392,7 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
         _cancelledNotice.value = false
         val ok = domain.start(request)
         if (!ok) {
-            _state.value = State.Error("当前曲已切换，请重试")
+            _state.value = State.Error(getApplication<Application>().getString(R.string.spike_track_changed_retry))
             _lastEdgeDone.value = null
         }
         return ok
@@ -495,7 +497,7 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun startSeparation() {
         val srcFile = pendingFile ?: run {
-            _state.value = State.Error("先导入音频")
+            _state.value = State.Error(getApplication<Application>().getString(R.string.spike_import_first))
             return
         }
         // M2-F:若自动化未显式指定引擎,则每次按设置里的默认引擎刷新
@@ -610,7 +612,7 @@ class SpikeViewModel(app: Application) : AndroidViewModel(app) {
     fun cancelSeparation() {
         domain.cancel()
         _cancelledNotice.value = true
-        _state.value = State.Error("分离已取消")
+        _state.value = State.Error(getApplication<Application>().getString(R.string.spike_cancelled))
     }
 
     /**

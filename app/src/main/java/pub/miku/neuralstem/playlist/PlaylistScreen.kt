@@ -1,5 +1,6 @@
 package pub.miku.neuralstem.playlist
 
+import android.annotation.SuppressLint
 import android.content.Intent
 import android.widget.Toast
 import android.content.res.Configuration
@@ -52,6 +53,7 @@ import pub.miku.neuralstem.R
  * - **移除只移列表**（删列表项/曲目不动磁盘文件）。
  * - 点曲目 → 交给播放器 VM 播放原曲。
  */
+@SuppressLint("LocalContextGetResourceValueCall")
 @Composable
 fun PlaylistScreen(
     modifier: Modifier = Modifier,
@@ -128,7 +130,7 @@ fun PlaylistScreen(
             // ★B6：授权失败不再静默（重启后会 SecurityException）。
             Toast.makeText(
                 context,
-                "$failed 首未能持久授权，重启后可能需重新选择",
+                context.getString(R.string.pl_grant_failed_many, failed),
                 Toast.LENGTH_LONG,
             ).show()
         }
@@ -158,7 +160,7 @@ fun PlaylistScreen(
             if (!ok) {
                 Toast.makeText(
                     context,
-                    "文件夹持久授权失败，重启后可能需重新选择",
+                    context.getString(R.string.pl_folder_grant_failed),
                     Toast.LENGTH_LONG,
                 ).show()
             }
@@ -188,7 +190,7 @@ fun PlaylistScreen(
             )
         }.isSuccess
         if (!granted) {
-            Toast.makeText(context, "持久授权失败，重启后可能需重新选择", Toast.LENGTH_LONG).show()
+            Toast.makeText(context, context.getString(R.string.pl_grant_failed), Toast.LENGTH_LONG).show()
         }
         vm.replaceTrackUri(listId, oldUri, uri.toString())
     }
@@ -240,7 +242,7 @@ fun PlaylistScreen(
                     ),
                 )
             }) {
-                Text("导入单曲", maxLines = 1)
+                Text(stringResource(R.string.pl_import_single), maxLines = 1)
             }
         }
         if (isLandscape) {
@@ -371,7 +373,7 @@ fun PlaylistScreen(
                                         if (t.uri in brokenTrackUris) {
                                             Row(verticalAlignment = Alignment.CenterVertically) {
                                                 Text(
-                                                    "⚠ 需重新授权",
+                                                    stringResource(R.string.pl_need_reauth),
                                                     style = MaterialTheme.typography.labelSmall,
                                                     color = MaterialTheme.colorScheme.error,
                                                     maxLines = 1,
@@ -382,7 +384,7 @@ fun PlaylistScreen(
                                                     reauthPicker.launch(arrayOf("audio/*"))
                                                 }) {
                                                     Text(
-                                                        "重新选择",
+                                                        stringResource(R.string.pl_reauth),
                                                         style = MaterialTheme.typography.labelSmall,
                                                     )
                                                 }
@@ -415,8 +417,11 @@ fun PlaylistScreen(
                                     modifier = Modifier.fillMaxWidth(),
                                 ) {
                                     Text(
-                                        "再加载 ${minOf(PAGE, p.tracks.size - shown)} 首" +
-                                            "（还有 ${p.tracks.size - shown} 首）",
+                                        stringResource(
+                                            R.string.pl_load_more,
+                                            minOf(PAGE, p.tracks.size - shown),
+                                            p.tracks.size - shown,
+                                        ),
                                     )
                                 }
                             }
