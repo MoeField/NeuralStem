@@ -26,6 +26,8 @@
 | SAF grant | **PASS**：导入后 GRANTS=1；删除后 released file grant、GRANTS=0 |
 | Demucs 4 轨真机 | **PASS**：181MB 模型（首次 Socket closed，断点续传重试成功）→ 280s 分离 → 4 轨多轨 → 导出 4 文件 |
 | 损坏 playlists.json | **PASS**：启动保留 `.corrupt-<ts>` 副本，不覆盖损坏文件 |
+| 队列/repeat | **PASS**：2 首 queue + repeat one/all + next/prev，无播放错误 |
+| 分离中取消 | **PARTIAL**：fresh edge 中 `repo.cancel()` 触发 `EdgeSession.abort`，但未做完整 UI 回退断言 |
 
 2h 产物：`stability-out/soak-2h-c/`（本地，未入库）  
 关键序列产物：`stability-out/key-20261122-015434/`
@@ -60,6 +62,8 @@
 | SAF 导入→删除→grant | PASS（count 1→0） |
 | Demucs 分离/导出 | PASS（280s，0.60x，peakPss≈4966MB） |
 | 损坏 playlists.json | PASS（保留 corrupt 副本，不覆盖） |
+| 队列/repeat | PASS（2 首，one/all，next/prev） |
+| 分离中取消 | PARTIAL（abort 已触发；UI 回退未完全断言） |
 
 ## 5. 未完成/仍需补测
 
