@@ -65,6 +65,9 @@ class SeparationService : Service() {
         // ★C 修复：repo.start* 先 startService、后 launch separation；
         // 服务第一次 collect 到的可能还是上一次的 terminal/Idle。给新任务 2s 启动窗口，
         // 且只有真的见过 active 状态，才允许终态 stopSelf。
+        // 新一次 Start：取消上一次排的宽限定时器，避免旧定时器在新任务窗口内 stopSelf。
+        graceStopJob?.cancel()
+        graceStopJob = null
         startGraceUntil = SystemClock.uptimeMillis() + START_GRACE_MS
         sawActive = false
         stopped = false
@@ -122,7 +125,11 @@ class SeparationService : Service() {
                             if (graceStopJob?.isActive != true) {
                                 graceStopJob = scope.launch {
                                     delay(startGraceUntil - now)
-                                    if (!repo.isRunning) stopSelfCleanly()
+                                    if (SystemClock.uptimeMillis() >= startGraceUntil &&
+                                        !repo.isRunning
+                                    ) {
+                                        stopSelfCleanly()
+                                    }
                                 }
                             }
                         } else if (sawActive) {
