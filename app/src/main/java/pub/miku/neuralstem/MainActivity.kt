@@ -370,6 +370,13 @@ class MainActivity : ComponentActivity() {
                 }
             }
             // ★TEST_HOOKS：列出/释放 persistable grants，验证 SAF 生命周期。
+            // 测试：把真实 playlists.json 写坏；启动后应保留 .corrupt-* 副本且不覆盖
+            "corruptplaylist" -> {
+                val f = java.io.File(filesDir, "playlists.json")
+                if (f.exists()) f.copyTo(java.io.File(filesDir, "playlists.json.corrupt-test"), overwrite = true)
+                f.writeText("{ this is not valid json")
+                Log.i("TestCmd", "corruptplaylist: wrote invalid JSON (backup .corrupt-test)")
+            }
             "grants" -> {
                 val perms = contentResolver.persistedUriPermissions
                 perms.forEach {
