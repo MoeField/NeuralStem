@@ -1,79 +1,77 @@
 # 状态稳定性测试报告（v0.2.55 候选）
 
-> 状态：**进行中**，未发 v0.2.55。  
-> 目标门禁见 [STABILITY_TEST_PLAN.md](STABILITY_TEST_PLAN.md)。  
-> 设备：BF00A（Android 16，arm64），volume 3/15。
+> 状态：**测试执行中，门禁未全绿，未发 v0.2.55**。  
+> 计划：[STABILITY_TEST_PLAN.md](STABILITY_TEST_PLAN.md)。  
+> 设备：BF00A（Android 16，arm64），音量 0/15。
 
 ## 1. 构建
 
-- 被测 debug：`0.2.55-test (255)`，`-PtestHooks=true`，TEST_HOOKS 测试入口
+- 被测 debug：`0.2.55-test (255)`，`-PtestHooks=true`
 - 正式基线：`0.2.54 (254)`
-- 代码 HEAD：`503ce4e` + 本轮稳定性修复/测试
+- 代码：`9e154e6` + 稳定性测试/修复
 
-## 2. 自动化
+## 2. 结果总览
 
 | 项 | 结果 |
 |---|---|
-| JVM 全量 | **507/0**（含随机 reducer 2000 seeds、MP4 codec probe、损坏歌单、WAV 完整性） |
-| androidTest | **1/0**（MultiTrackEngineSmokeTest：多轨/全静音/退出） |
+| JVM 全量 | **507/0** |
+| `MultiTrackEngineSmokeTest` | **1/0** |
+| `Av3aGuardTest` | **1/0** |
 | 5min soak | 319 ops / 3 restarts / 0 FATAL / 0 ANR / 0 player error |
-| 2h soak | **进行中** |
+| 2h soak | **7128 ops / 90 restarts / 0 FATAL / 0 ANR / 0 player error / 0 waveform error** |
+| 关键序列脚本（5 组） | **5/5 PASS**：basic / multi / eq / av3a / restart |
+| write 故障注入 | **PASS**：重建 AudioTrack → session 3913→3921 → EQ 重挂 → heartbeat 5015ms |
 
-### 本轮发现并修复
+2h 产物：`stability-out/soak-2h-c/`（本地，未入库）  
+关键序列产物：`stability-out/key-20261122-015434/`
 
-- **Stopping 时迟到 `StemsLoaded` 清空 Cancelling/pendingStart**：
-  - 随机模型测试 seed=4 复现
-  - 修复 `SeparationReducer.onStemsLoaded()`：Stopping 直接忽略迟到加载
-  - 加回归测试
+## 3. 本轮发现/修复
 
-### 测试环境问题（非 App 缺陷）
+### Stopping 时迟到 StemsLoaded 清空 pendingStart
 
-- 第一次 2h soak 无效：`connectedDebugAndroidTest` 结束后 App 被卸载，`monkey` 未拉起 App；已停止，不计入结果。
-- 第二次重试用 debug 重装 + READ_MEDIA_AUDIO 授权 + `file://` 曲目，确认 App 进程和命令总线存活后再跑。
+- 随机 reducer 测试 seed=4 step=35 复现
+- 修复 `SeparationReducer.onStemsLoaded()`：Stopping 直接忽略迟到加载
+- 回归测试：`SeparationReducerTest.stopping_stemsLoaded_must_not_drop_pendingStart`
+- 随机模型：2000 seeds × 40 events 全绿
 
-## 3. 2h soak
+### 测试环境问题（非 App 缺陷，已排除）
 
-- 目录：`stability-out/soak-2h-c/`
-- 结果：待填
-- 检查项：
-  - FATAL / ANR
-  - 播放失败（`播放失败` / `ERROR_CODE_`）
-  - 波形失败（`waveform extraction failed` / `no audio track`）
-  - heartbeat（多轨时）
-  - 重启后是否恢复
+- 第一次 2h soak 无效：`connectedDebugAndroidTest` 结束后 App 被卸载，`monkey` 拉起失败；已停止，不计入结果。
+- 第二次重试：debug 重装 + READ_MEDIA_AUDIO 授权 + `file://` 曲目，App 进程/命令总线存活后才计入。
 
-## 4. 关键序列
+## 4. 已验证序列
 
-待执行：
+| 序列 | 结果 |
+|---|---|
+| 基础播放：load/play/pause/seek/next/prev | PASS |
+| 多轨：inmt + 全轨 volume=0 + mtpos + exitsmt | PASS |
+| EQ：eqall -15 / +15 / 关闭 | PASS |
+| AV3A m4a：公开版明确拒绝 | PASS |
+| force-stop + 冷启动 | PASS |
+| write 失败注入 + AudioTrack 重建 + EQ 重挂 | PASS |
+| 2h 随机播放/重启 | PASS |
 
-1. 冷启动→播放→暂停→seek→后台→前台→曲尾
-2. LOOP_ONE→重播→LOOP_ALL→队列尾
-3. 多轨→全静音→位置推进→退出
-4. 多轨中切歌不双声
-5. 分离完成→attach→退出→再 attach
-6. 分离中切歌/取消/清缓存
-7. 半截 coverage 不可导出
-8. 波形提取中切歌/清缓存
-9. 删除当前曲/歌单
-10. revoke grant→重新选择
-11. 损坏 playlists.json
-12. write 失败→AudioTrack 重建→EQ 重挂
-13. Service lost / force-stop
-14. AV3A 明确拒绝
-15. 进程重启恢复
+## 5. 未完成/仍需补测
 
-## 5. 已知剩余问题
-
-- C：SeparationService 启动竞态仍是专项问题
-- #2 Stopping 完整 UI 复现仍不稳定性
-- B1 只完成 PlaybackConnection 切口
+- 分离相关关键序列（edge/4-stem/attach/export/coverage）需要模型，当前设备未装模型
+- SAF 导入→删除→grant 计数（本会话早前手工验证过，未纳入本轮脚本）
+- 损坏 playlists.json 真机（JVM 已测）
+- 15 条序列中剩余的分离/歌单/导出人工序列
+- **#2 完整 UI Stopping 仍不稳定性**；C SeparationService 启动竞态仍开放
+- 未做 2h 以外的低内存/后台杀进程专项
 
 ## 6. 发布决定
 
-- [ ] 2h soak 通过
-- [ ] 15 条关键序列通过
-- [ ] androidTest 扩展通过
-- [ ] 无未解释 P0/P1
-- [ ] 报告收口
+**v0.2.55 暂不发布。**
 
-**未全绿前不发 v0.2.55；下一版若包含 B1 架构改动则跳 v0.3.0。**
+门禁状态：
+
+- [x] JVM 全绿
+- [x] 2h soak 无 FATAL/ANR/播放错误
+- [x] 核心多轨/AV3A/EQ/write 故障序列
+- [ ] 15 条关键序列全部执行
+- [ ] 分离/导出/SAF/损坏歌单真机序列
+- [ ] #2 Stopping 完整验证
+- [ ] 无未解释 P0/P1
+
+下一版若包含 B1 架构改动，按计划跳 **v0.3.0**；否则先完成上述剩余测试再发 v0.2.55。
