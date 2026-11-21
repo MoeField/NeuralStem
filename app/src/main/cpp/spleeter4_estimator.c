@@ -28,6 +28,53 @@
 
 static const char *STEM_NAMES[NUM_STEMS] = {"vocals", "drums", "bass", "other"};
 
+// 输出 y 必须严格是 [2, splits, 512, 1024] FLOAT；只比较元素数不够。
+static int validate_output_shape(const OrtApi *api, const OrtValue *value, jint splits) {
+    OrtTensorTypeAndShapeInfo *ti = NULL;
+    OrtStatus *st = api->GetTensorTypeAndShape(value, &ti);
+    if (st || !ti) {
+        LOGE("GetTensorTypeAndShape failed: %s", st ? api->GetErrorMessage(st) : "null");
+        if (st) api->ReleaseStatus(st);
+        return 0;
+    }
+    ONNXTensorElementDataType dtype = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
+    size_t count = 0;
+    size_t ndim = 0;
+    int ok = 1;
+    st = api->GetTensorElementType(ti, &dtype);
+    if (st) { LOGE("dtype failed: %s", api->GetErrorMessage(st)); api->ReleaseStatus(st); ok = 0; }
+    if (ok && dtype != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
+        LOGE("dtype=%d != FLOAT", (int)dtype);
+        ok = 0;
+    }
+    if (ok) {
+        st = api->GetTensorShapeElementCount(ti, &count);
+        if (st) { LOGE("count failed: %s", api->GetErrorMessage(st)); api->ReleaseStatus(st); ok = 0; }
+    }
+    if (ok) {
+        st = api->GetDimensionsCount(ti, &ndim);
+        if (st) { LOGE("ndim failed: %s", api->GetErrorMessage(st)); api->ReleaseStatus(st); ok = 0; }
+    }
+    if (ok && ndim != 4) { LOGE("ndim=%zu != 4", ndim); ok = 0; }
+    if (ok) {
+        int64_t dims[4];
+        const int64_t expected[4] = {NCH, splits, SPLIT_FRAMES, BINS};
+        st = api->GetDimensions(ti, dims, 4);
+        if (st) { LOGE("GetDimensions failed: %s", api->GetErrorMessage(st)); api->ReleaseStatus(st); ok = 0; }
+        else {
+            for (int i = 0; i < 4; i++) {
+                if (dims[i] != expected[i]) {
+                    LOGE("dim[%d]=%lld != %lld", i, (long long)dims[i], (long long)expected[i]);
+                    ok = 0;
+                    break;
+                }
+            }
+        }
+    }
+    api->ReleaseTensorTypeAndShapeInfo(ti);
+    return ok;
+}
+
 // 句柄：一个 env + 4 个会话（+ 共享 options/meminfo）
 typedef struct {
     const OrtApi *api;
@@ -146,25 +193,31 @@ Java_pub_miku_neuralstem_spike_Spleeter4Estimator_nativeEstimate(
             continue;
         }
 
-        // 校验输出元素数并拷回 Java
-        OrtTensorTypeAndShapeInfo *ti = NULL;
-        size_t count = 0;
-        api->GetTensorTypeAndShape(outputs[0], &ti);
-        api->GetTensorShapeElementCount(ti, &count);
-        api->ReleaseTensorTypeAndShapeInfo(ti);
-        if (count != (size_t)inLen) {
-            LOGE("unexpected out count %zu != %d", count, (int)inLen);
+        // 校验 dtype + 4 维 shape + 元素数，再拷回 Java
+        if (!validate_output_shape(api, outputs[0], splits)) {
+            LOGE("%s output shape mismatch; skip", STEM_NAMES[s]);
             api->ReleaseValue(outputs[0]);
             continue;
         }
 
         float *outData = NULL;
-        api->GetTensorMutableData(outputs[0], (void **)&outData);
-        if (outData) {
-            jfloatArray arr = (*env)->NewFloatArray(env, inLen);
-            if (arr) {
-                (*env)->SetFloatArrayRegion(env, arr, 0, inLen, outData);
+        OrtStatus *mst = api->GetTensorMutableData(outputs[0], (void **)&outData);
+        if (mst || !outData) {
+            LOGE("GetTensorMutableData(%s) failed: %s", STEM_NAMES[s], mst ? api->GetErrorMessage(mst) : "null");
+            if (mst) api->ReleaseStatus(mst);
+            api->ReleaseValue(outputs[0]);
+            continue;
+        }
+        jfloatArray arr = (*env)->NewFloatArray(env, inLen);
+        if (arr) {
+            (*env)->SetFloatArrayRegion(env, arr, 0, inLen, outData);
+            if ((*env)->ExceptionCheck(env)) {
+                LOGE("SetFloatArrayRegion(%s) threw", STEM_NAMES[s]);
+                (*env)->ExceptionClear(env);
+                (*env)->DeleteLocalRef(env, arr);
+            } else {
                 (*env)->SetObjectArrayElement(env, result, s, arr);
+                (*env)->DeleteLocalRef(env, arr);
             }
         }
         api->ReleaseValue(outputs[0]);

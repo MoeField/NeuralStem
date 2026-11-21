@@ -20,6 +20,20 @@ import java.io.File
  * 输出按 stem 顺序 `[vocals, drums, bass, other]`，每个是长度
  * `2 * splits * 512 * 1024` 的行优先数组。
  */
+/** JNI 边界二次校验：每个 stem 都必须非 null 且长度严格匹配。 */
+internal fun checkedSpleeter4Outputs(
+    outputs: Array<FloatArray?>,
+    splits: Int,
+): Array<FloatArray> {
+    require(outputs.size == 4) { "expected 4 stems, got ${outputs.size}" }
+    val expected = 2 * splits * Spleeter4Dsp.SPLIT_FRAMES * Spleeter4Dsp.MODEL_BINS
+    return Array(4) { i ->
+        val a = outputs[i] ?: error("stem[$i] output is null")
+        require(a.size == expected) { "stem[$i] size=${a.size} != $expected" }
+        a
+    }
+}
+
 class Spleeter4Estimator private constructor(private var handle: Long) : Closeable {
 
     private var released = false
@@ -35,8 +49,7 @@ class Spleeter4Estimator private constructor(private var handle: Long) : Closeab
         require(mag.size == expected) { "mag.size=${mag.size} != $expected" }
         val r = nativeEstimate(handle, mag, splits)
             ?: error("nativeEstimate returned null")
-        require(r.size == 4) { "expected 4 stems, got ${r.size}" }
-        return r
+        return checkedSpleeter4Outputs(r, splits)
     }
 
     override fun close() {
@@ -47,7 +60,7 @@ class Spleeter4Estimator private constructor(private var handle: Long) : Closeab
         }
     }
 
-    private external fun nativeEstimate(handle: Long, mag: FloatArray, splits: Int): Array<FloatArray>?
+    private external fun nativeEstimate(handle: Long, mag: FloatArray, splits: Int): Array<FloatArray?>?
 
     companion object {
         private const val TAG = "Spleeter4Est"

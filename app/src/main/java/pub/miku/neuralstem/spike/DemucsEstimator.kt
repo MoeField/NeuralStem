@@ -16,6 +16,20 @@ import java.io.File
  * ```
  * 最终每源波形 = `iSTFT(output) + add_67`（在 [DemucsSeparator] 里做）。
  */
+/** JNI 边界二次校验：即使 C 侧漏了，也不能把 null/错长度数组交给 iSTFT。 */
+internal fun checkedDemucsOutputs(outputs: Array<FloatArray?>): Array<FloatArray> {
+    require(outputs.size == 2) { "expected 2 outputs, got ${outputs.size}" }
+    val spec = outputs[0] ?: error("demucs output[0] is null")
+    val wave = outputs[1] ?: error("demucs output[1] is null")
+    require(spec.size == DemucsEstimator.OUT_SPEC_LEN) {
+        "spec output=${spec.size} != ${DemucsEstimator.OUT_SPEC_LEN}"
+    }
+    require(wave.size == DemucsEstimator.OUT_WAVE_LEN) {
+        "wave output=${wave.size} != ${DemucsEstimator.OUT_WAVE_LEN}"
+    }
+    return arrayOf(spec, wave)
+}
+
 class DemucsEstimator private constructor(private var handle: Long) : Closeable {
 
     private var released = false
@@ -32,8 +46,8 @@ class DemucsEstimator private constructor(private var handle: Long) : Closeable 
         require(wave.size == 2 * WAVE_LEN) { "wave.size=${wave.size} != ${2 * WAVE_LEN} (2ch×$WAVE_LEN)" }
         require(spec.size == SPEC_LEN) { "spec.size=${spec.size} != $SPEC_LEN" }
         val r = nativeEstimate(handle, wave, spec) ?: error("nativeEstimate null")
-        require(r.size == 2) { "expected 2 outputs, got ${r.size}" }
-        return Output(r[0], r[1])
+        val (outSpec, outWave) = checkedDemucsOutputs(r)
+        return Output(outSpec, outWave)
     }
 
     override fun close() {
@@ -44,12 +58,14 @@ class DemucsEstimator private constructor(private var handle: Long) : Closeable 
         }
     }
 
-    private external fun nativeEstimate(handle: Long, wave: FloatArray, spec: FloatArray): Array<FloatArray>?
+    private external fun nativeEstimate(handle: Long, wave: FloatArray, spec: FloatArray): Array<FloatArray?>?
 
     companion object {
         private const val TAG = "DemucsEst"
         const val WAVE_LEN = 343_980
         const val SPEC_LEN = 4 * 2048 * 336
+        const val OUT_SPEC_LEN = 4 * 4 * 2048 * 336
+        const val OUT_WAVE_LEN = 4 * 2 * WAVE_LEN
 
         init {
             System.loadLibrary("onnxruntime")

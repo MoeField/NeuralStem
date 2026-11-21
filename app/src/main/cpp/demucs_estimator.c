@@ -28,6 +28,67 @@ extern OrtStatus *OrtSessionOptionsAppendExecutionProvider_Nnapi(OrtSessionOptio
 #define OUT_SPEC_LEN (4 * 4 * 2048 * 336)  // 11,010,048
 #define OUT_WAVE_LEN (4 * 2 * WAVE_LEN)    // 2,751,840
 
+// 输出张量校验：dtype=FLOAT + 逐维 shape + 元素数。
+// 不能只信元素数：demucs 的 spec/add 两路形状不同，错位会 OOB 拷贝。
+static int validate_output_tensor(const OrtApi *api, const OrtValue *value,
+                                  const int64_t *expectedDims, size_t expectedNdim,
+                                  const char *label) {
+    OrtTensorTypeAndShapeInfo *ti = NULL;
+    OrtStatus *st = api->GetTensorTypeAndShape(value, &ti);
+    if (st || !ti) {
+        LOGE("%s: GetTensorTypeAndShape failed: %s", label, st ? api->GetErrorMessage(st) : "null");
+        if (st) api->ReleaseStatus(st);
+        return 0;
+    }
+    ONNXTensorElementDataType dtype = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
+    size_t count = 0;
+    size_t ndim = 0;
+    int ok = 1;
+    st = api->GetTensorElementType(ti, &dtype);
+    if (st) { LOGE("%s: GetTensorElementType failed: %s", label, api->GetErrorMessage(st)); api->ReleaseStatus(st); ok = 0; }
+    if (ok && dtype != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
+        LOGE("%s: dtype=%d != FLOAT", label, (int)dtype);
+        ok = 0;
+    }
+    if (ok) {
+        st = api->GetTensorShapeElementCount(ti, &count);
+        if (st) { LOGE("%s: element count failed: %s", label, api->GetErrorMessage(st)); api->ReleaseStatus(st); ok = 0; }
+    }
+    if (ok) {
+        st = api->GetDimensionsCount(ti, &ndim);
+        if (st) { LOGE("%s: dim count failed: %s", label, api->GetErrorMessage(st)); api->ReleaseStatus(st); ok = 0; }
+    }
+    if (ok && ndim != expectedNdim) {
+        LOGE("%s: ndim=%zu != %zu", label, ndim, expectedNdim);
+        ok = 0;
+    }
+    if (ok) {
+        int64_t dims[8];
+        if (ndim > 8) { ok = 0; }
+        else {
+            st = api->GetDimensions(ti, dims, ndim);
+            if (st) { LOGE("%s: GetDimensions failed: %s", label, api->GetErrorMessage(st)); api->ReleaseStatus(st); ok = 0; }
+            else {
+                size_t expectedCount = 1;
+                for (size_t i = 0; i < expectedNdim; i++) {
+                    if (dims[i] != expectedDims[i]) {
+                        LOGE("%s: dim[%zu]=%lld != %lld", label, i, (long long)dims[i], (long long)expectedDims[i]);
+                        ok = 0;
+                        break;
+                    }
+                    expectedCount *= (size_t)expectedDims[i];
+                }
+                if (ok && count != expectedCount) {
+                    LOGE("%s: count=%zu != %zu", label, count, expectedCount);
+                    ok = 0;
+                }
+            }
+        }
+    }
+    api->ReleaseTensorTypeAndShapeInfo(ti);
+    return ok;
+}
+
 typedef struct {
     const OrtApi *api;
     OrtEnv *env;
@@ -147,6 +208,16 @@ Java_pub_miku_neuralstem_spike_DemucsEstimator_nativeEstimate(
         goto cleanup;
     }
 
+    {
+        const int64_t specDims[5] = {1, 4, 4, 2048, 336};
+        const int64_t waveDims[4] = {1, 4, 2, WAVE_LEN};
+        if (!validate_output_tensor(api, outputs[0], specDims, 5, "output") ||
+            !validate_output_tensor(api, outputs[1], waveDims, 4, "add_67")) {
+            LOGE("demucs output shape mismatch; abort copy");
+            goto cleanup;
+        }
+    }
+
     // 拷回 Java
     jclass floatArrCls = (*env)->FindClass(env, "[F");
     if (!floatArrCls) goto cleanup;
@@ -157,8 +228,10 @@ Java_pub_miku_neuralstem_spike_DemucsEstimator_nativeEstimate(
     }
     {
         float *p = NULL;
-        if (!outputs[0] || api->GetTensorMutableData(outputs[0], (void **)&p) != NULL || !p) {
-            LOGE("GetTensorMutableData(output) failed");
+        OrtStatus *mst = api->GetTensorMutableData(outputs[0], (void **)&p);
+        if (mst || !p) {
+            LOGE("GetTensorMutableData(output) failed: %s", mst ? api->GetErrorMessage(mst) : "null");
+            if (mst) api->ReleaseStatus(mst);
             goto cleanup;
         }
         jfloatArray a = (*env)->NewFloatArray(env, OUT_SPEC_LEN);
@@ -169,8 +242,10 @@ Java_pub_miku_neuralstem_spike_DemucsEstimator_nativeEstimate(
         (*env)->DeleteLocalRef(env, a);
 
         p = NULL;
-        if (!outputs[1] || api->GetTensorMutableData(outputs[1], (void **)&p) != NULL || !p) {
-            LOGE("GetTensorMutableData(add_67) failed");
+        mst = api->GetTensorMutableData(outputs[1], (void **)&p);
+        if (mst || !p) {
+            LOGE("GetTensorMutableData(add_67) failed: %s", mst ? api->GetErrorMessage(mst) : "null");
+            if (mst) api->ReleaseStatus(mst);
             goto cleanup;
         }
         jfloatArray b = (*env)->NewFloatArray(env, OUT_WAVE_LEN);

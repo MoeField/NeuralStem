@@ -118,6 +118,14 @@
 - JVM **433/0**（M1 reducer 52 + M2 controller 7 + 原有 374）；
   真机 edge fast path、4-stem cache/启动、开关 off/on 通过。
 
+## v0.2.46：JNI 输出形状校验
+
+- **#9 demucs**：C 侧校验 `output=[1,4,4,2048,336]`、`add_67=[1,4,2,343980]` 的 dtype/维度/元素数；错误直接 abort copy。
+- **#9 spleeter4**：C 侧校验每个 stem 的 `[2,splits,512,1024]` 四维 shape/dtype/元素数；不再只比总元素。
+- Kotlin 二次校验：`checkedDemucsOutputs`/`checkedSpleeter4Outputs` 拒绝 null/错长度数组。
+- 新增 6 条 JVM 测试；普通 **495/0**。
+- C 侧仍保留 `GetTensorMutableData` status 检查与异常清理。
+
 ## v0.2.45：架构不变量文档 + 单源测试
 
 - 新增 `docs/ARCHITECTURE.md`：播放/分离/持久化不变量、被否决方案、维护规则。

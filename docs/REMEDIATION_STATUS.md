@@ -1,14 +1,14 @@
 # 审计整改状态与计划
 
-> 基线：v0.2.45 (245)，tag `v0.2.45`，HEAD 以 `git log` 为准。  
+> 基线：v0.2.46 (246)，tag `v0.2.46`，HEAD 以 `git log` 为准。  
 > 本文是**整改看板**；不变量见 [ARCHITECTURE.md](ARCHITECTURE.md)，发布历史见 [STEP_HISTORY.md](STEP_HISTORY.md)。
 
 ## 0. TL;DR
 
 - 6 条 P0 已全部有代码修复并进入正式版本；其中 #3/#4/#14 有自动化或真机验证，#1/#2/#5/#6 仍是“代码修复、缺故障注入”。
-- 12 条 P1 中：**8 条已修，2 条部分修（#12/#13），2 条未修（#9/#17）**。
+- 12 条 P1 中：**9 条已修，2 条部分修（#12/#13），1 条未修（#17）**。
 - 当前不宜再混版做 UI/架构重构；下一步按 **#9 → #17 → 验证补齐 → P2** 四阶段推进。
-- 普通 JVM **489/0**；`with_ncm` **513/0**；`lintVitalRelease`、NCM 编译、APK 无 AVS3 断言均已进 CI。
+- 普通 JVM **495/0**；`with_ncm` **519/0**；`lintVitalRelease`、NCM 编译、APK 无 AVS3 断言均已进 CI。
 
 ### 验证等级
 
@@ -36,7 +36,7 @@
 |---|---|---|---|---|---|
 | 7 | PcmStore 只信 length、clear/Ready 窗口 | 已修 | 0.2.43 | V1 | WAV 完整性 + activeTemps；已有 PcmStore 测试 |
 | 8 | 分离缓存/WAV 长度未校验、close 无 sync | 已修 | 0.2.43 | V1 | `isCompleteWav` + `fd.sync()`；截断 WAV 测试 |
-| 9 | demucs/spleeter4 输出形状未校验 | **未修** | — | — | 下一版第一项 |
+| 9 | demucs/spleeter4 输出形状未校验 | 已修 | 0.2.46 | V1 | C 形状/dtype + Kotlin 长度断言；需真机三后端 smoke |
 | 10 | `isPlaying` 多写者 | 已修 | 0.2.43 | V1 | `PlayingSource/updatePlaying`；纯函数测试；缺设备长播 |
 | 11 | tracks URI 丢失 | 已修 | 0.2.42 | V0 | 补 `uri`；未做 VM 重建验证 |
 | 12 | 主线程 join 卡顿 | **部分** | 0.2.41 | V0 | 有 join300/800；未异步回收 |
@@ -72,7 +72,7 @@
 
 ## 5. 计划
 
-### Phase A — v0.2.46：JNI 输出形状校验（#9）
+### Phase A — v0.2.46：JNI 输出形状校验（#9，已完成代码）
 
 范围：
 
