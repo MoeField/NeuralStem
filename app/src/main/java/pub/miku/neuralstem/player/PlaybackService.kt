@@ -610,6 +610,10 @@ class PlaybackService : MediaSessionService() {
         // 混音器释放（它不再持有任何 ExoPlayer；singlePlayer 不受影响）
         multiTrack?.close()
         multiTrack = null
+        // ★先暂停门面再恢复音量：exitMultiTrack 后面才 doLoad 原曲；
+        //   若先 volume=1，门面还在播旧主轨 stem，会与关闭中的 mixer 短暂叠音。
+        //   这里 pause 后由 exitMultiTrack/doLoad 重新拉起原曲。
+        runCatching { singlePlayer?.pause() }
         // ★恢复主轨音量：多轨期间它是 0（静音当门面），退出后必须还原，
         //   否则回原曲会“没有声音”（重构后新增的隐藏坑）。
         singlePlayer?.volume = 1f
