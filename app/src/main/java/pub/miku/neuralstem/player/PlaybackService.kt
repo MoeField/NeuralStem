@@ -23,6 +23,12 @@ import androidx.media3.session.SessionError
 import androidx.media3.session.SessionResult
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -60,6 +66,15 @@ class PlaybackService : MediaSessionService() {
 
     /** 主线程 handler（用于快照推送去抖）。 */
     private val handler = Handler(Looper.getMainLooper())
+
+    /**
+     * ★P1-1：多轨 load/close 的专用单线程 IO。
+     * MediaSession 主线程只做状态切换；文件打开/WAV 头解析/800ms join 全在这里。
+     */
+    private val multiIo = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
+    private var multiLoadJob: Job? = null
+    private var multiLoadPending = false
+    private var multiLoadGen = 0L
     /** multi-track EQ 会话未就绪的延迟重试（退出/销毁时必须取消）。 */
     private var eqRetry: Runnable? = null
 
@@ -474,7 +489,8 @@ class PlaybackService : MediaSessionService() {
     /** 多轨 load 失败：确保不会留下“门面静音 + 无 mixer”的无声状态。 */
     private fun abortMultiLoad(c: MultiTrackController): SessionResult {
         Log.w(TAG, "multi load failed → restore single-track facade")
-        c.close()
+        // P1-1：close 可能 join 渲染线程，放到 multiIo，主线程只清状态。
+        multiIo.launch { runCatching { c.close() } }
         multiTrack = null
         if (inMultiTrack) {
             inMultiTrack = false
@@ -492,35 +508,44 @@ class PlaybackService : MediaSessionService() {
         if (items.isEmpty()) return err("items 为空")
 
         val c = ensureMultiTrack()
-        // ★2026-11-01 重构：多轨不再有“主轨 ExoPlayer”。
-        //   数据全部进 StemMixer（单 AudioTrack），singlePlayer 只当**门面**：
-        //   通知/前台服务/MediaController 都看它，但我们把它静音，只让它跑时钟。
-        //   （为何不换成 SimpleBasePlayer：v1 用 ForwardingPlayer 实测**不出通知**，
-        //    所以保留“session 认真实 ExoPlayer”这条已验证的路径。）
+        // 旧 mixer 先暂停，避免 IO 等待 join 期间还在出声。
+        runCatching { multiTrack?.pause() }
+        val gen = ++multiLoadGen
+        multiLoadPending = true
         mtOriginalUri = singlePlayer?.currentMediaItem?.localConfiguration?.uri?.toString()
         mtOriginalTitle = singlePlayer?.currentMediaItem?.mediaMetadata?.title?.toString()
-        c.load(items, args.getString(MultiTrackSession.KEY_TITLE))
-        if (!c.isReady()) return abortMultiLoad(c)
-        // ★把单轨期间/上次多轨的变速变调带给新混音器（否则会从 1.0× 开始，与 UI 不一致）。
-        c.setSpeedPitch(lastSpeed, lastPitchRate)
-        singlePlayer?.volume = 0f
-        inMultiTrack = true
-        c.playWhenAllReady(args.getLong(MultiTrackSession.KEY_START_MS, 0L))
-        // ★2026-11-06：门面也必须真的在播 —— 否则 MediaSession 停在 PAUSED，
-        //   UI 的 play/pause 按钮会显示「播放」而混音器实际在响（用户一按反而暂停）。
-        //   之前只依赖 VM 侧的 CMD_PLAY，实测偶发丢失。
-        singlePlayer?.play()
-        enterMultiTrackFocus()
-        attachMultiTrackEq(c)
-        handler.removeCallbacks(progressRunnable)
-        handler.post(progressRunnable)      // ★开始推送 mix 进度（真实位置来自 StemMixer）
-        pushTracksSnapshot()
-        Log.i(
-            TAG,
-            "loadMultiTrack(mix): ${items.size} track(s) ids=${items.map { it.first }} " +
-                "（singlePlayer 静音当门面，实际声音来自 StemMixer）",
-        )
-        return ok("loaded")
+        val startMs = args.getLong(MultiTrackSession.KEY_START_MS, 0L)
+        val title = args.getString(MultiTrackSession.KEY_TITLE)
+        multiLoadJob = multiIo.launch {
+            runCatching { c.load(items, title) }
+                .onFailure { Log.e(TAG, "multi load failed on io", it) }
+            val loaded = c.isReady()
+            withContext(Dispatchers.Main.immediate) {
+                if (gen != multiLoadGen) return@withContext
+                multiLoadPending = false
+                if (!loaded || !c.isReady()) {
+                    abortMultiLoad(c)
+                    return@withContext
+                }
+                // ★把单轨期间/上次多轨的变速变调带给新混音器。
+                c.setSpeedPitch(lastSpeed, lastPitchRate)
+                singlePlayer?.volume = 0f
+                inMultiTrack = true
+                c.playWhenAllReady(startMs)
+                singlePlayer?.play()
+                enterMultiTrackFocus()
+                attachMultiTrackEq(c)
+                handler.removeCallbacks(progressRunnable)
+                handler.post(progressRunnable)
+                pushTracksSnapshot()
+                Log.i(
+                    TAG,
+                    "loadMultiTrack(mix): ${items.size} track(s) ids=${items.map { it.first }} " +
+                        "（singlePlayer 静音当门面，实际声音来自 StemMixer）",
+                )
+            }
+        }
+        return ok("loading")
     }
 
     /**
@@ -548,23 +573,39 @@ class PlaybackService : MediaSessionService() {
         }
         if (items.isEmpty()) return err("items 为空")
 
+        val c = ensureMultiTrack()
+        runCatching { multiTrack?.pause() }
+        val gen = ++multiLoadGen
+        multiLoadPending = true
         mtOriginalUri = singlePlayer?.currentMediaItem?.localConfiguration?.uri?.toString()
         mtOriginalTitle = singlePlayer?.currentMediaItem?.mediaMetadata?.title?.toString()
-        val c = ensureMultiTrack()
-        c.loadStream(items, args.getString(MultiTrackSession.KEY_TITLE))
-        if (!c.isReady()) return abortMultiLoad(c)
-        c.setSpeedPitch(lastSpeed, lastPitchRate)
-        singlePlayer?.volume = 0f
-        inMultiTrack = true
-        c.playWhenAllReady(args.getLong(MultiTrackSession.KEY_START_MS, 0L))
-        singlePlayer?.play()   // 同上：门面必须与混音器同播
-        enterMultiTrackFocus()
-        attachMultiTrackEq(c)
-        handler.removeCallbacks(progressRunnable)
-        handler.post(progressRunnable)      // ★开始推送 mix 进度
-        pushTracksSnapshot()
-        Log.i(TAG, "loadStream: ${items.size} streaming track(s) → StemMixer")
-        return ok("loaded-stream")
+        val startMs = args.getLong(MultiTrackSession.KEY_START_MS, 0L)
+        val title = args.getString(MultiTrackSession.KEY_TITLE)
+        multiLoadJob = multiIo.launch {
+            runCatching { c.loadStream(items, title) }
+                .onFailure { Log.e(TAG, "multi stream load failed on io", it) }
+            val loaded = c.isReady()
+            withContext(Dispatchers.Main.immediate) {
+                if (gen != multiLoadGen) return@withContext
+                multiLoadPending = false
+                if (!loaded || !c.isReady()) {
+                    abortMultiLoad(c)
+                    return@withContext
+                }
+                c.setSpeedPitch(lastSpeed, lastPitchRate)
+                singlePlayer?.volume = 0f
+                inMultiTrack = true
+                c.playWhenAllReady(startMs)
+                singlePlayer?.play()
+                enterMultiTrackFocus()
+                attachMultiTrackEq(c)
+                handler.removeCallbacks(progressRunnable)
+                handler.post(progressRunnable)
+                pushTracksSnapshot()
+                Log.i(TAG, "loadStream: ${items.size} streaming track(s) → StemMixer")
+            }
+        }
+        return ok("loading-stream")
     }
 
     private fun handleSetVolume(args: Bundle): SessionResult {
@@ -602,14 +643,18 @@ class PlaybackService : MediaSessionService() {
                 "followers=${multiTrack?.trackList.orEmpty().joinToString { "${it.id}:${it.uri}" }}",
         )
         inMultiTrack = false
+        multiLoadGen++                 // 使在途 load 的发布失效
+        multiLoadPending = false
         mtOriginalUri = null
         mtOriginalTitle = null
         exitMultiTrackFocus()
         handler.removeCallbacks(progressRunnable)   // ★停止 mix 进度推送
         cancelEqRetry()
-        // 混音器释放（它不再持有任何 ExoPlayer；singlePlayer 不受影响）
-        multiTrack?.close()
+        // 先暂停旧 mixer（立即静音），真正的 close join 放到 multiIo。
+        val closing = multiTrack
+        runCatching { closing?.pause() }
         multiTrack = null
+        if (closing != null) multiIo.launch { runCatching { closing.close() } }
         // ★先暂停门面再恢复音量：exitMultiTrack 后面才 doLoad 原曲；
         //   若先 volume=1，门面还在播旧主轨 stem，会与关闭中的 mixer 短暂叠音。
         //   这里 pause 后由 exitMultiTrack/doLoad 重新拉起原曲。
@@ -738,16 +783,20 @@ class PlaybackService : MediaSessionService() {
                 MultiTrackSession.CMD_TOGGLE_SOLO -> handleToggleSolo(args)
                 MultiTrackSession.CMD_EXIT -> handleExit()
                 MultiTrackSession.CMD_PLAY -> {
-                    // 多轨播/停：驱动 mixer，并同步主轨（保持通知/会话状态一致）
-                    multiTrack?.play()
-                    singlePlayer?.play()
-                    ok()
+                    // 多轨 load 在 IO 中，完成前命令只接受、不触碰半初始化 mixer。
+                    if (multiLoadPending) ok("loading") else {
+                        multiTrack?.play()
+                        singlePlayer?.play()
+                        ok()
+                    }
                 }
                 MultiTrackSession.CMD_PAUSE -> {
-                    multiTrack?.pause()
-                    singlePlayer?.pause()
-                    mtFocusWasPlaying = false
-                    ok()
+                    if (multiLoadPending) ok("loading") else {
+                        multiTrack?.pause()
+                        singlePlayer?.pause()
+                        mtFocusWasPlaying = false
+                        ok()
+                    }
                 }
                 MultiTrackSession.CMD_TOGGLE -> {
                     // ★状态真源在 Service（mixer），不让 VM 自己判 isPlaying（有滞后）
@@ -811,8 +860,11 @@ class PlaybackService : MediaSessionService() {
         eqRetry = null
         eqController.detachAll()   // M3-P3：EQ 随 Service 释放
         exitMultiTrackFocus()
-        multiTrack?.close()
+        val closing = multiTrack
         multiTrack = null
+        multiLoadGen++
+        multiLoadPending = false
+        multiIo.launch { runCatching { closing?.close() } }
         mediaSession?.run {
             player.release()
             release()

@@ -1,8 +1,13 @@
 package pub.miku.neuralstem.spike
 
+import android.Manifest
 import android.app.Application
+import android.content.pm.PackageManager
 import android.content.res.Configuration
+import android.os.Build
 import android.util.Log
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -37,6 +42,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -179,6 +185,46 @@ fun SeparationScreen(
     val haptic = LocalHapticFeedback.current
     var cacheMsg by remember { mutableStateOf<String?>(null) }
     var exportMsg by remember { mutableStateOf<String?>(null) }
+    var pendingExportFiles by remember { mutableStateOf<List<File>?>(null) }
+
+    fun doExport(files: List<File>) {
+        val song = fileName.ifBlank { "song" }
+        scope.launch(Dispatchers.IO) {
+            val msg = StemExporter.export(
+                app,
+                song,
+                files,
+                modelName = StemExporter.inferModelDirName(files),
+            )
+            withContext(Dispatchers.Main) { exportMsg = msg }
+        }
+    }
+
+    // ★P1-3：API<29 写公共 Music 需要 WRITE_EXTERNAL_STORAGE；API29+ 走 MediaStore。
+    val exportPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        val files = pendingExportFiles
+        pendingExportFiles = null
+        if (granted && files != null) {
+            doExport(files)
+        } else {
+            exportMsg = app.getString(R.string.sep_export_need_permission)
+        }
+    }
+    fun requestExport(files: List<File>) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q &&
+            ContextCompat.checkSelfPermission(
+                ctx,
+                Manifest.permission.WRITE_EXTERNAL_STORAGE,
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            pendingExportFiles = files
+            exportPermission.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        } else {
+            doExport(files)
+        }
+    }
 
     val hasSong = fileName.isNotBlank() && !currentUri.isNullOrBlank()
     val busy = domainUi?.busy == true
@@ -717,18 +763,7 @@ fun SeparationScreen(
             // ★⑬：导出——常在位；有 4 轨**或 2 轨**结果时可用（否则禁用置灰）。
             Button(
                 onClick = {
-                    exportableFiles?.let { files ->
-                        val song = fileName.ifBlank { "song" }
-                        scope.launch(Dispatchers.IO) {
-                            val msg = StemExporter.export(
-                                app,
-                                song,
-                                files,
-                                modelName = StemExporter.inferModelDirName(files),
-                            )
-                            withContext(Dispatchers.Main) { exportMsg = msg }
-                        }
-                    }
+                    exportableFiles?.let { files -> requestExport(files) }
                 },
                 enabled = exportableFiles != null,
             ) { Text(stringResource(R.string.sep_export)) }

@@ -267,4 +267,5 @@
     <string name="pl_corrupt_confirm_message">当前损坏文件会保留为备份；重建后歌单为空，可重新导入。</string>
     <string name="pl_corrupt_confirm">重建</string>
     <string name="pl_corrupt_cancel">取消</string>
+    <string name="sep_export_need_permission">导出到公共 Music 目录需要存储权限（Android 9 及以下）</string>
 </resources>

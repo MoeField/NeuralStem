@@ -2,6 +2,13 @@
 
 > 记录“改了什么、为什么、怎么验证”，方便后来人理解代码演进。这里不记录内部设备流水号或个人环境信息。
 
+## v0.2.57：评审 3 条 P1 阻断修复
+
+- P1-1：多轨 `load/loadStream/close` 移到独立单线程 `multiIo`，MediaSession 主线程不再做文件 IO / join；载入期间命令 accepted。
+- P1-2：`StemMixer.voices` 改为 `@Volatile List<Voice>` 整体替换；`MultiTrackController` 增益改为不可变 `gainSnapshot`，消除渲染线程与主线程共享可变容器。
+- P1-3：MediaStore 导出改成“先写新 pending → 成功后删旧 → 改名”；API<29 改临时文件写完再 rename；失败保留旧文件并返回原因；补 API<29 写权限声明与导出时请求。
+- 验证：JVM 508/0、lintDebug 通过；`StemExporterSafetyTest` 真机 1/0；2min 多轨 soak 0 FATAL/ANR、`max_unmuted_started=1`。
+
 ## v0.2.56：恢复 UVR 默认 GitHub 代理
 
 - `DEFAULT_GITHUB_PROXY` 恢复为 `https://api.gitproxy.dev`。

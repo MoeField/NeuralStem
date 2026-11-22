@@ -53,16 +53,15 @@ class MultiTrackController(
         val uri: Uri,
     ) {
         /** 用户设定音量 0..1。 */
+        @Volatile
         var volume: Float = 1f
             set(value) {
                 field = value.coerceIn(0f, 1f)
             }
 
         /** 用户静音。 */
+        @Volatile
         var muted: Boolean = false
-
-        /** 本轨生效增益（音量 × 静音 × 独奏）。由控制器计算。 */
-        internal var effectiveVolume: Float = 1f
     }
 
     /** 流式载入项（边分离边播）。 */
@@ -80,6 +79,12 @@ class MultiTrackController(
         private set
 
     private var mixer: StemMixer? = null
+
+    /**
+     * ★P1-2：渲染线程唯一读取的增益快照。
+     * 主线程算完整体替换；不做逐字段写，避免无 happens-before 的共享可变状态。
+     */
+    @Volatile private var gainSnapshot: Map<String, Float> = emptyMap()
 
     val trackList: List<Track> get() = tracks.values.toList()
     val isEmpty: Boolean get() = tracks.isEmpty()
@@ -158,12 +163,11 @@ class MultiTrackController(
     private fun startMixer(sources: List<Pair<String, StemSource>>, title: String?) {
         val sr = sources.first().second.sampleRate
         val ch = sources.first().second.channels
-        // ★顺序很重要：先把 effectiveVolume 算出来，再建 mixer。
-        //   否则第一轮混音读到 gain=0（字段默认值），会整体无声。
+        // ★顺序很重要：先发布增益快照，再建 mixer；否则第一轮混音读到空 map。
         applySoloMute()
-        // 增益回调：混音时实时读（音量/静音/独奏改动立即生效，不用重启 mixer）
+        // 增益回调：只读不可变快照（音量/静音/独奏改动立即生效，不用重启 mixer）
         val m = StemMixer(sampleRate = sr, channels = ch, gainProvider = { id ->
-            tracks[id]?.effectiveVolume ?: 0f
+            gainSnapshot[id] ?: 0f
         }, onAudioSessionChanged = onAudioSessionChanged)
         if (!m.load(sources)) {
             Log.w(TAG, "startMixer aborted: mixer load failed")
@@ -264,19 +268,22 @@ class MultiTrackController(
      * **唯一**的增益计算入口。
      *
      * 优先级：独奏 > 静音 > 设定音量。
-     * 结果写进 `Track.effectiveVolume`，由 [StemMixer] 的 gainProvider 在混音时读取
+     * 结果生成不可变 `gainSnapshot`，由 [StemMixer] 的 gainProvider 在混音时读取
      * —— 所以改动**立即生效**，不需要重启渲染线程。
      */
     private fun applySoloMute() {
         val solo = soloTrackId
+        val next = HashMap<String, Float>(tracks.size)
         tracks.values.forEach { t ->
-            t.effectiveVolume = when {
+            val gain = when {
                 solo != null && t.id != solo -> 0f     // 有独奏且不是本轨
                 t.muted -> 0f
                 else -> t.volume
             }
-            Log.d(TAG, "gain[${t.id}]=${t.effectiveVolume} (vol=${t.volume} muted=${t.muted} solo=${solo ?: "-"})")
+            next[t.id] = gain
+            Log.d(TAG, "gain[${t.id}]=$gain (vol=${t.volume} muted=${t.muted} solo=${solo ?: "-"})")
         }
+        gainSnapshot = next
     }
 
     // ==================== 监听（保持旧签名，Service 已注册）====================

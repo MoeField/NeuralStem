@@ -44,7 +44,11 @@ class StemMixer(
 
     private class Voice(val id: String, val source: StemSource)
 
-    private val voices = ArrayList<Voice>()
+    /**
+     * 不可变 voice 快照：主线程只**整体替换**，渲染线程只在 chunk 开头取一次本地引用。
+     * 禁止 clear()/add() 原地修改，避免渲染线程遍历到半更新容器。
+     */
+    @Volatile private var voices: List<Voice> = emptyList()
 
     private var track: AudioTrack? = null
     private var thread: Thread? = null
@@ -133,8 +137,8 @@ class StemMixer(
             Log.w(TAG, "load aborted: 旧渲染线程未退出，拒绝替换数据源")
             return false
         }
-        voices.clear()
-        items.forEach { voices += Voice(it.first, it.second) }
+        // ★P1-2：整体替换快照，不做 clear()+add()。
+        voices = items.map { Voice(it.first, it.second) }
         framePos = 0L
         playFrame = 0L
         seekRequest = -1L
@@ -270,8 +274,9 @@ class StemMixer(
 
     /** 旧线程确认退出后再释放资源；不要在它还可能读 voices/track 时调用。 */
     private fun cleanupAfterStop() {
-        voices.forEach { runCatching { it.source.close() } }
-        voices.clear()
+        val closing = voices
+        voices = emptyList()
+        closing.forEach { runCatching { it.source.close() } }
         runCatching { track?.release() }
         track = null
         Log.i(TAG, "closed")
@@ -399,8 +404,10 @@ class StemMixer(
                 // ★P0 #14：全轨静音不是“没有数据”。若所有 gain=0 就跳过读取，
                 //   framesRead 永远为 0，framePos/ended 永远不推进（进度冻结、100Hz 空转）。
                 //   此时仍从第一条源读一帧块，写零保持 AudioTrack 时钟。
-                val anyAudible = voices.any { gainProvider(it.id) > 0f }
-                for ((index, v) in voices.withIndex()) {
+                // ★P1-2：本 chunk 只读一次快照；主线程换轨不会让这里遍历半更新 List。
+                val chunkVoices = voices
+                val anyAudible = chunkVoices.any { gainProvider(it.id) > 0f }
+                for ((index, v) in chunkVoices.withIndex()) {
                     val g = gainProvider(v.id)
                     if (anyAudible && g <= 0f) continue   // 有可听轨时，静音轨省 IO
                     if (!anyAudible && index > 0) continue // 全静音：只读一条 canonical 源推进时钟
@@ -424,8 +431,8 @@ class StemMixer(
                         Log.w(
                             TAG,
                             "renderLoop 无数据: framePos=$framePos total=$totalFrames " +
-                                "finished=${voices.map { "${it.id}=${it.source.isFinished}" }} " +
-                                "gains=${voices.map { "${it.id}=${gainProvider(it.id)}" }}",
+                                "finished=${chunkVoices.map { "${it.id}=${it.source.isFinished}" }} " +
+                                "gains=${chunkVoices.map { "${it.id}=${gainProvider(it.id)}" }}",
                         )
                     }
                     // ★2026-11-06：曲终必须同时满足「所有源都不会再有数据」。
@@ -433,7 +440,7 @@ class StemMixer(
                     //   不等于结束；旧判断会在这里 break，渲染线程永久退出。
                     //   旧实现靠阻塞读掩盖了这点（读不到数据时会等），现在读是非阻塞的，
                     //   必须显式区分“暂时没数据”和“真的没了”。
-                    val allFinished = voices.all { it.source.isFinished }
+                    val allFinished = chunkVoices.all { it.source.isFinished }
                     if (allFinished && totalFrames > 0 && framePos >= totalFrames) {
                         Log.i(TAG, "renderLoop: 到达曲尾 @${framePos}/${totalFrames}")
                         // Sonic 有延迟线：把最后 ~31ms 排空，否则曲尾会被截掉。

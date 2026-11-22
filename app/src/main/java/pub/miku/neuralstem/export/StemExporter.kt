@@ -66,12 +66,14 @@ object StemExporter {
 
         stemFiles.forEach { f ->
             val outName = outNameFor(f.name)
-            if (copyTo(context, f, dirRel, outName)) ok++ else errors += f.name
+            val err = copyTo(context, f, dirRel, outName)
+            if (err == null) ok++ else errors += "$outName: $err"
         }
         original?.let { o ->
             // 原曲：文件名用原名（英文清洗）+ 原扩展名
             val ext = o.extension.ifBlank { "wav" }
-            if (copyTo(context, o, dirRel, "original.$ext")) ok++ else errors += o.name
+            val err = copyTo(context, o, dirRel, "original.$ext")
+            if (err == null) ok++ else errors += "original.$ext: $err"
         }
 
         val msg = buildString {
@@ -110,26 +112,28 @@ object StemExporter {
         }
     }
 
-    /** 拷贝 [src] 到 Music 下的 [dirRel]/[outName]。返回是否成功。 */
-    private fun copyTo(context: Context, src: File, dirRel: String, outName: String): Boolean {
-        if (!src.exists()) return false
+    /** 拷贝 [src] 到 Music 下的 [dirRel]/[outName]。返回 null = 成功，否则为失败原因。 */
+    private fun copyTo(context: Context, src: File, dirRel: String, outName: String): String? {
+        if (!src.exists()) return "源文件不存在"
         return try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val ok = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 copyViaMediaStore(context, src, dirRel, outName)
             } else {
                 copyViaPublicDir(src, dirRel, outName)
             }
+            if (ok) null else "写入失败"
         } catch (t: Throwable) {
             Log.w(TAG, "copyTo($outName) failed", t)
-            false
+            "写入失败: ${t.message ?: t.javaClass.simpleName}"
         }
     }
 
     private fun copyViaMediaStore(context: Context, src: File, dirRel: String, outName: String): Boolean {
         val resolver = context.contentResolver
-        // ★B6：同名覆盖（用户默认选择）：先删旧行，避免 MediaStore 自动生成 (1).wav。
-        //   只删本应用可见的同目录同名媒体；失败不影响后续 insert。
-        deleteExisting(resolver, dirRel, outName)
+        // ★P1-3：先插入 pending 新行并写完，再删旧同名行。
+        //   旧实现先 delete 再 insert：拷贝失败时旧导出已消失，新行又是 0 字节。
+        //   MediaStore 可能因旧行存在把 DISPLAY_NAME 自动改成 "name (1).wav"；
+        //   写入成功后删旧行，再把新行改回最终名；改不回也保留新内容而不是丢旧。
         val values = ContentValues().apply {
             put(MediaStore.Audio.Media.DISPLAY_NAME, outName)
             put(MediaStore.Audio.Media.MIME_TYPE, "audio/wav")
@@ -141,7 +145,6 @@ object StemExporter {
         try {
             val out = resolver.openOutputStream(uri)
                 ?: run {
-                    // ★B6：拿不到输出流 → 必须删掉 pending 行，否则隐藏残留。
                     runCatching { resolver.delete(uri, null, null) }
                     return false
                 }
@@ -149,12 +152,27 @@ object StemExporter {
             values.clear()
             values.put(MediaStore.Audio.Media.IS_PENDING, 0)
             resolver.update(uri, values, null, null)
-            return true
         } catch (t: Throwable) {
-            // ★B6：拷贝异常 → 删 pending 行后交给外层记录失败。
+            // 新文件没写成：删掉 pending 新行，旧文件仍未动。
             runCatching { resolver.delete(uri, null, null) }
             throw t
         }
+
+        // 新内容已完整落盘，才允许删旧同名。
+        val keepId = runCatching { android.content.ContentUris.parseId(uri) }.getOrNull()
+        deleteExisting(resolver, dirRel, outName, keepId)
+        // 若旧行存在导致新行被自动改名，尝试恢复最终名；失败不影响新内容。
+        if (keepId != null) {
+            runCatching {
+                resolver.update(
+                    uri,
+                    ContentValues().apply { put(MediaStore.Audio.Media.DISPLAY_NAME, outName) },
+                    null,
+                    null,
+                )
+            }.onFailure { Log.w(TAG, "restore display name failed: $outName", it) }
+        }
+        return true
     }
 
     /** 删除同 `RELATIVE_PATH + DISPLAY_NAME` 的旧导出（同名覆盖）。 */
@@ -162,6 +180,7 @@ object StemExporter {
         resolver: android.content.ContentResolver,
         dirRel: String,
         outName: String,
+        keepId: Long? = null,
     ) {
         runCatching {
             val sel = "${MediaStore.Audio.Media.RELATIVE_PATH}=? AND " +
@@ -179,7 +198,7 @@ object StemExporter {
                 val idCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
                 while (c.moveToNext()) ids += c.getLong(idCol)
             }
-            ids.forEach { id ->
+            ids.filter { it != keepId }.forEach { id ->
                 runCatching {
                     resolver.delete(
                         android.content.ContentUris.withAppendedId(
@@ -200,8 +219,22 @@ object StemExporter {
         val dir = File(root, dirRel.substringAfter("Music/"))
         if (!dir.exists() && !dir.mkdirs()) return false
         val out = File(dir, outName)
-        src.inputStream().use { ins -> out.outputStream().use { ins.copyTo(it) } }
-        return true
+        // ★P1-3：先写临时文件，成功后再 rename 覆盖；失败时旧 out 保持原样。
+        val tmp = File(dir, ".$outName.${System.nanoTime()}.tmp")
+        return try {
+            src.inputStream().use { ins -> tmp.outputStream().use { ins.copyTo(it) } }
+            if (!tmp.renameTo(out)) {
+                Log.w(TAG, "rename tmp failed: ${tmp.name} → $outName（旧文件保留）")
+                tmp.delete()
+                false
+            } else {
+                true
+            }
+        } catch (t: Throwable) {
+            runCatching { tmp.delete() }
+            Log.w(TAG, "copyViaPublicDir($outName) failed（旧文件保留）", t)
+            false
+        }
     }
 
     /**

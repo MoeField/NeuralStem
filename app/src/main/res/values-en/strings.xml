@@ -260,4 +260,5 @@
     <string name="pl_corrupt_confirm_message">The damaged file will be kept as a backup. The rebuilt playlist will be empty; you can import tracks again.</string>
     <string name="pl_corrupt_confirm">Rebuild</string>
     <string name="pl_corrupt_cancel">Cancel</string>
+    <string name="sep_export_need_permission">Storage permission is required to export to public Music on Android 9 and below.</string>
 </resources>
