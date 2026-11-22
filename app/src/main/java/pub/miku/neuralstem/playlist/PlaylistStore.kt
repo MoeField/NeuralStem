@@ -318,39 +318,39 @@ class PlaylistStore internal constructor(private val dir: File) {
     }
 
     private fun writeAtomic(list: List<Playlist>): Boolean = runCatching {
-            val arr = JSONArray()
-                list.forEach { p ->
-                    arr.put(JSONObject().apply {
-                        put("id", p.id)
-                        put("name", p.name)
-                        put("type", p.type.name)
-                        put("folderUri", p.folderUri ?: "")
-                        put("isDefault", p.isDefault)
-                        put("lastPlayedUri", p.lastPlayedUri ?: "")
-                        put("lastPositionMs", p.lastPositionMs)
-                        put("tracks", JSONArray().apply {
-                            p.tracks.forEach { t ->
-                                put(JSONObject().apply {
-                                    put("uri", t.uri)
-                                    put("title", t.title)
-                                })
-                            }
+        val arr = JSONArray()
+        list.forEach { p ->
+            arr.put(JSONObject().apply {
+                put("id", p.id)
+                put("name", p.name)
+                put("type", p.type.name)
+                put("folderUri", p.folderUri ?: "")
+                put("isDefault", p.isDefault)
+                put("lastPlayedUri", p.lastPlayedUri ?: "")
+                put("lastPositionMs", p.lastPositionMs)
+                put("tracks", JSONArray().apply {
+                    p.tracks.forEach { t ->
+                        put(JSONObject().apply {
+                            put("uri", t.uri)
+                            put("title", t.title)
                         })
-                    })
-                }
-                val text = arr.toString()
-                val tmp = File(file.parentFile, "${file.name}.tmp")
-                java.io.FileOutputStream(tmp).use { out ->
-                    out.write(text.toByteArray(Charsets.UTF_8))
-                    out.fd.sync()
-                }
-                if (!tmp.renameTo(file)) {
-                    // 极少数文件系统不支持同目录 rename → 退化为覆盖写（仍比直写安全）
-                    tmp.copyTo(file, overwrite = true)
-                    tmp.delete()
-                }
-                true
-            }.onFailure { Log.w(TAG, "save failed", it) }.getOrDefault(false)
+                    }
+                })
+            })
+        }
+        val text = arr.toString()
+        val tmp = File(file.parentFile, "${file.name}.tmp")
+        java.io.FileOutputStream(tmp).use { out ->
+            out.write(text.toByteArray(Charsets.UTF_8))
+            out.fd.sync()
+        }
+        if (!tmp.renameTo(file)) {
+            // 极少数文件系统不支持同目录 rename → 退化为覆盖写（仍比直写安全）
+            tmp.copyTo(file, overwrite = true)
+            tmp.delete()
+        }
+        true
+    }.onFailure { Log.w(TAG, "save failed", it) }.getOrDefault(false)
 
     companion object {
         private const val TAG = "PlaylistStore"
