@@ -2,6 +2,14 @@
 
 > 记录“改了什么、为什么、怎么验证”，方便后来人理解代码演进。这里不记录内部设备流水号或个人环境信息。
 
+## v0.2.56：恢复 UVR 默认 GitHub 代理
+
+- `DEFAULT_GITHUB_PROXY` 恢复为 `https://api.gitproxy.dev`。
+- 旧版本把空字符串写入 `model_download_proxy`：增加一次性迁移，升级后空值 → 默认代理；用户之后主动清空仍为直连。
+- 代理失败保留自动回退直连；UVR SHA-256 校验不变。
+- 真机：迁移后下载 `UVR_MDXNET_9482.onnx` 走 `api.gitproxy.dev`，SHA-256 ok，29MB 完成。
+- `settings_models_proxy_hint` 中英文同步。
+
 ## 版本总览
 
 | 版本 | 重点 |
