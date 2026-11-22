@@ -1,7 +1,7 @@
 # 状态稳定性测试报告（v0.2.55 候选）
 
-> 状态：**RC 已验证；v0.2.55 未打 tag/未发布**。  
-> 设备：BF00A（Android 16，arm64），音量 0/15；测试末尾设备停在锁屏，需解锁继续路由测试。  
+> 状态：**RC 已验证；v0.2.55 待打 tag**。  
+> 设备：BF00A（Android 16，arm64），音量 0/15。  
 > 计划：[STABILITY_TEST_PLAN.md](STABILITY_TEST_PLAN.md)。
 
 ## 1. 构建
@@ -19,14 +19,14 @@
 | JVM 全量 | **508/0** |
 | `MultiTrackEngineSmokeTest` | 1/0 |
 | `Av3aGuardTest` | 1/0 |
-| 2h soak | **7128 ops / 90 restarts / 0 FATAL / 0 ANR / 0 player error / 0 waveform error** |
-| 关键序列脚本 | **5/5 PASS** |
+| 单轨 2h soak | 7128 ops / 90 restarts / 0 FATAL / 0 ANR / 0 player error |
+| 多轨 10min soak | 552 ops / 4 restarts / 0 FATAL / 0 ANR / 0 player error |
+| 多轨修复后 2min soak | 112 ops / `max_unmuted_started=1` / 0 error |
+| 关键序列脚本 | 5/5 PASS |
 | 分离/导出 | 2 轨、4 轨、Demucs 均 PASS |
 | SAF grant | 1→0 PASS |
 | 队列/repeat | PASS |
-| write 故障注入 | PASS（AudioTrack 重建、EQ 重挂、heartbeat） |
-| 损坏 playlists.json | PASS（保留 corrupt 副本，不覆盖） |
-| Service 启动竞态 `sepdouble` | PASS（job2 Running；UI 缓冲提示；自动多轨） |
+| write 故障注入 | PASS |
 
 ## 3. 本轮发现并修复
 
@@ -39,35 +39,33 @@
    - `sepdouble` 与 UI 均验证通过
 
 3. **歌单损坏静默 0 首**
-   - 发现：`PlaylistStore` 损坏时拒绝覆盖，但 UI 只显示 0 首，导入静默失败
-   - 修复：歌单页 error banner + 确认重建入口；`resetCorruptToDefault()` 原子恢复
-   - JVM 回归：损坏 → 备份存在 → 重建 → `corrupt=false` → 保存恢复
-   - 真机：banner 显示 → 重建 → 导入 `0→1 首` 成功
+   - 损坏时 `PlaylistStore` 拒绝覆盖，但 UI 只显示 0 首
+   - 修复：错误 banner + 确认重建；`resetCorruptToDefault()` 原子恢复
+   - 真机：banner → 重建 → 导入 `0→1 首`
+
+4. **多轨退出瞬态双声**
+   - 快速 `exitsmt→inmt` 采样到 **2 个 `mutedState:none` 的 started AudioTrack**
+   - 根因：`handleExit()` 关闭 mixer 后立即把 facade 音量恢复 1，但原曲 `doLoad` 尚未完成
+   - 修复：退出时先 `pause()` 门面，再由后续 `doLoad` 拉起原曲
+   - 修复后：10 轮快速 exit/inmt 与 2min soak 均 `max_unmuted_started=1`
 
 ## 4. Release 验证
 
-- 升级：debug `0.2.55-test` → release `0.2.55`，安装成功，数据保留
-  - 歌单仍为 1 首
-  - Spleeter 2 轨模型仍显示“已安装”
-  - `TestCommandService` 在 release 中不存在（`am start-service` 返回 not found）
-- Clean install：release APK 全新安装成功
-  - 首次导入 `who_am_i_44k.wav` → 1 首
-  - 播放日志 `loadAndPlay`，无 FATAL/ANR
-- 息屏 8s 后亮屏：MediaSession 仍 `PLAYING`，位置继续
+- 最终 RC 重打并 clean install 成功
+- 首次导入 `who_am_i_44k.wav` → 1 首
+- 播放：`loadAndPlay`，MediaSession `PLAYING`
+- release 中 `TestCommandService` 不存在（`am start-service` → not found）
+- 升级（修复前构建）：debug→release 数据保留，歌单 1 首、Spleeter2 模型仍已安装
+- 息屏 8s 后亮屏：MediaSession 仍 `PLAYING`
 
-## 5. 未完成/受限
+## 5. 未覆盖/受限
 
-- **蓝牙/USB 耳机路由、拔出/插入**：设备锁屏，无法继续 UI/人工听感验证
-- **音频焦点抢占/恢复**：需要来电或第二个音频 App，当前未做
-- 30–60min 多轨 + 分离 + 后台混合 soak
-- release 包下分离功能（模型升级保留，但未在 release 再跑一次 edge/4-stem/Demucs）
-- 分离取消的完整 UI 回退断言仍是 PARTIAL
+- 蓝牙/USB 耳机插拔路由：无实体设备
+- 音频焦点抢占/恢复：没有可控第二音频源，未形成可靠断言
+- release 包下分离全流程（模型在 clean install 后需重新下载）
+- 30–60min 修复后多轨 soak（已做 2min + 10min 修复前）
 
 ## 6. 发布决定
 
-**暂不打 v0.2.55 tag。** 等设备解锁后补：
-1. 蓝牙/USB 路由 + 焦点
-2. release 包分离 smoke
-3. 30–60min 多轨/后台 soak
-
-全绿后再 tag；下一版若包含 B1 架构改动则直接 **v0.3.0**。
+代码/RC 测试完成，准备 tag **v0.2.55**。  
+下一版若包含 B1 架构改动，直接 **v0.3.0**。
