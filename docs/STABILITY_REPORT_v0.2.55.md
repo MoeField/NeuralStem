@@ -1,6 +1,6 @@
 # 状态稳定性测试报告（v0.2.55 候选）
 
-> 状态：**RC 已验证；v0.2.55 待打 tag**。  
+> 状态：**v0.2.55 已发布；CI + F-Droid 已验证**。  
 > 设备：BF00A（Android 16，arm64），音量 0/15。  
 > 计划：[STABILITY_TEST_PLAN.md](STABILITY_TEST_PLAN.md)。
 
@@ -67,5 +67,5 @@
 
 ## 6. 发布决定
 
-代码/RC 测试完成，准备 tag **v0.2.55**。  
+已 tag 并发布 **v0.2.55**：CI success，F-Droid index 已确认 0.2.55 (255)。  
 下一版若包含 B1 架构改动，直接 **v0.3.0**。
