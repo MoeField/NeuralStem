@@ -81,3 +81,5 @@
 - P1-1：`multiIo` 异步 load/close；真机 2min soak + 快速 exit/inmt
 - P1-2：`voices`/`gainSnapshot` 不可变快照；JVM 508/0 + 多轨 soak
 - P1-3：导出先写后删 + 失败保留旧文件；`StemExporterSafetyTest`
+- P1-4/5/6/9/10/11/12/13：第二批已修（见 `STEP_HISTORY` v0.2.58）
+- 未完成：P1-7 单写者 actor、P1-8 OperationTimeout 发送者、P1-14 I1–I3 守护测试
