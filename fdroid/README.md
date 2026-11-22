@@ -50,7 +50,7 @@ release asset: app-arm64-v8a-release.apk
 
 ```text
 run 45053256947: success
-gh-pages commit 45053314130: publish: NeuralStem F-Droid repo v0.2.57
+gh-pages commit 2f1058f: publish: NeuralStem F-Droid repo v0.2.57
 ```
 
 该 run 也验证了 APK `versionName`/签名证书校验步骤。
