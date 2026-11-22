@@ -49,11 +49,15 @@ class PlaylistStore internal constructor(private val dir: File) {
 
     private val file = File(dir, PLAYLISTS_FILE)
 
-    /** 损坏文件已备份但尚未恢复；期间绝不能 save() 覆盖现场。 */
-    @Volatile
-    private var corrupt = false
+    /**
+     * P1-10：损坏状态按文件路径进程级共享；同一文件的多个 Store 实例
+     * （PlaylistViewModel / PlayerViewModel）不会互相看不到。
+     */
+    private val corruptKey: String get() = file.absolutePath
+    val isCorrupt: Boolean get() = corruptKey in corruptFiles
 
-    val isCorrupt: Boolean get() = corrupt
+    /** readRaw 最近一次失败是否为 IO（可重试），而非 JSON 解析失败（真损坏）。 */
+    private var lastReadIoError = false
 
     /** 默认歌单的稳定 id（便于"取默认歌单"）。 */
     val defaultListId: String = DEFAULT_LIST_ID
@@ -64,14 +68,19 @@ class PlaylistStore internal constructor(private val dir: File) {
     fun load(): List<Playlist> {
         val raw = readRaw()
         if (raw == null) {
+            if (lastReadIoError) {
+                // P1-10：IO 失败不等于文件损坏，不能永久拒写；保留文件，下次再试。
+                Log.w(TAG, "playlists.json 读取 IO 失败，暂按空歌单运行（不标记 corrupt）")
+                return ensureDefault(emptyList())
+            }
             // ★2026-11-09（P0-2）：解析失败**绝不能**用空结果回写覆盖原文件
             //   （旧行为：ensureDefault(empty) → save → 1000+ 首永久丢失）。
             //   保留一份损坏副本，本次只在内存里返回默认歌单；文件保持原样。
-            corrupt = true
+            corruptFiles += corruptKey
             backupCorrupt()
             return ensureDefault(emptyList())
         }
-        corrupt = false
+        corruptFiles -= corruptKey
         val withDefault = ensureDefault(raw)
         val migrated = migrateUnreadableFileUris(withDefault)
         // ★ 只要规范化**产生了任何变化**（新增默认歌单，或改动了字段）就落盘，
@@ -155,6 +164,7 @@ class PlaylistStore internal constructor(private val dir: File) {
     /** @return null = 文件存在但解析失败（调用方必须保留原文件，不得回写空数据）。 */
     private fun readRaw(): List<Playlist>? {
         if (!file.exists()) return emptyList()
+        lastReadIoError = false
         return runCatching {
             val arr = JSONArray(file.readText())
             (0 until arr.length()).map { i ->
@@ -180,7 +190,10 @@ class PlaylistStore internal constructor(private val dir: File) {
                     lastPositionMs = o.optLong("lastPositionMs", 0L),
                 )
             }
-        }.onFailure { Log.w(TAG, "load failed", it) }.getOrNull()
+        }.onFailure {
+            lastReadIoError = it is java.io.IOException
+            Log.w(TAG, "load failed (io=${lastReadIoError})", it)
+        }.getOrNull()
     }
 
     /** 确保存在一个默认歌单；若已有标记为 default 的，保留（且强制规范）。 */
@@ -205,7 +218,7 @@ class PlaylistStore internal constructor(private val dir: File) {
 
     /** 记某歌单“最后播放的曲目 + 位置”(ms)。（播放器直接调用，不经 PlaylistViewModel。） */
     fun recordProgress(listId: String, trackUri: String?, positionMs: Long) {
-        if (corrupt) {
+        if (isCorrupt) {
             Log.w(TAG, "recordProgress refused: playlists.json is corrupt")
             return
         }
@@ -258,7 +271,7 @@ class PlaylistStore internal constructor(private val dir: File) {
      * 只把磁盘上仍存在的进度合并回来（曲目被删/清空时自然清除）。
      */
     fun saveMerged(incoming: List<Playlist>): Boolean {
-        if (corrupt) {
+        if (isCorrupt) {
             Log.w(TAG, "saveMerged refused: playlists.json is corrupt; preserve corrupt file")
             return false
         }
@@ -286,7 +299,7 @@ class PlaylistStore internal constructor(private val dir: File) {
     }
 
     fun save(list: List<Playlist>): Boolean {
-        if (corrupt) {
+        if (isCorrupt) {
             Log.w(TAG, "save refused: playlists.json is corrupt; preserve corrupt file")
             return false
         }
@@ -310,7 +323,7 @@ class PlaylistStore internal constructor(private val dir: File) {
             val default = ensureDefault(emptyList())
             val ok = writeAtomic(default)
             if (ok) {
-                corrupt = false
+                corruptFiles -= corruptKey
                 Log.i(TAG, "resetCorruptToDefault: rebuilt default playlist")
             }
             return ok
@@ -358,6 +371,11 @@ class PlaylistStore internal constructor(private val dir: File) {
 
         /** 进程内串行化所有 save（多实例共享同一文件）。 */
         private val IO_LOCK = Any()
+
+        /** P1-10：按文件路径共享 corrupt 状态，避免多 Store 实例各持一份。 */
+        private val corruptFiles: MutableSet<String> = java.util.Collections.newSetFromMap(
+            java.util.concurrent.ConcurrentHashMap<String, Boolean>(),
+        )
 
         /** 默认歌单的固定 id（避免"找不到默认歌单"）。 */
         const val DEFAULT_LIST_ID = "default"

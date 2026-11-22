@@ -264,7 +264,13 @@ class StemMixer(
                 Log.w(TAG, "close: 旧渲染线程仍存活，异步回收")
                 Thread({
                     runCatching { t.join(800) }
-                    cleanupAfterStop()
+                    if (t.isAlive) {
+                        // P1-4：join 超时说明旧线程仍可能持有 AudioTrack/voices；
+                        // 此时释放资源属于框架未定义使用，宁可泄漏到进程退出也不冒险。
+                        Log.e(TAG, "close: 旧渲染线程 800ms 后仍存活，跳过资源释放")
+                    } else {
+                        cleanupAfterStop()
+                    }
                 }, "StemMixer-close").start()
                 return
             }

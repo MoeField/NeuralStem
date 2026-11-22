@@ -74,11 +74,13 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        // ★G-2a/G-1b：应用启动即尝试“精确命中内置表 → 免跑填 benchmark 缓存”。
-        //   这样即使不打开设置页，已知 CPU 也不会被 G-1b 门控拦住（免跑即视为“已检测”）。
-        runCatching { DeviceBenchmark(application).seedFromBuiltinIfExact() }
-        // ★⑭c：启动清理损坏/半截的波形缓存（防“外圈波形只占一段”）。
-        runCatching { WaveformCache.cleanCorrupt(application) }
+        // ★P1-12：启动扫盘/缓存清理不能在主线程；放 IO，不阻塞首帧。
+        lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            // G-2a/G-1b：精确命中内置表 → 免跑填 benchmark 缓存。
+            runCatching { DeviceBenchmark(application).seedFromBuiltinIfExact() }
+            // ⑭c：启动清理损坏/半截的波形缓存。
+            runCatching { WaveformCache.cleanCorrupt(application) }
+        }
         // ★仅 debug：边播 Gate/混音器取证文件（vivo 吞 logcat → 写 files/edge_probe.txt）
         EdgeProbe.init(application)
 

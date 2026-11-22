@@ -2,6 +2,18 @@
 
 > 记录“改了什么、为什么、怎么验证”，方便后来人理解代码演进。这里不记录内部设备流水号或个人环境信息。
 
+## v0.2.58：评审 P1 第二批
+
+- P1-4：`StemMixer.close` join 超时后不再释放可能仍被渲染线程使用的 AudioTrack/voices，改为记录并交给进程退出。
+- P1-5：`progressRunnable` 每 tick 调 `reconcileFacadeToMixer()`，通知/媒体键播放态跟真源一致。
+- P1-6：FULL Done/Done4 的 `coverage.complete` 由 `totalFrames > 0` 推导，不再无条件 true。
+- P1-9：`PlaylistStore.save/saveMerged` 返回 Boolean；`PlaylistViewModel` 暴露 `saveError`，歌单页显示保存失败。
+- P1-10：按文件路径进程级共享 corrupt 状态；IO 失败不再误判损坏；仅 JSON 解析失败才标记 corrupt。
+- P1-11：导入/替换曲目日志脱敏（不再整段 uri/标题）。
+- P1-12：启动 benchmark seed / 波形缓存清理移到 IO，不阻塞首帧。
+- P1-13：`PlaylistViewModel` 的 ioWorker 复用 `viewModelScope` Job，随 VM 取消。
+- 验证：JVM 508/0、lintDebug 通过。
+
 ## v0.2.57：评审 3 条 P1 阻断修复
 
 - P1-1：多轨 `load/loadStream/close` 移到独立单线程 `multiIo`，MediaSession 主线程不再做文件 IO / join；载入期间命令 accepted。

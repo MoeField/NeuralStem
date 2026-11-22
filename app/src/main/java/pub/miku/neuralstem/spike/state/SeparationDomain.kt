@@ -335,12 +335,14 @@ class SeparationDomain private constructor(private val app: Application) {
             is SeparationRepository.State.Done -> {
                 sourceReady = true
                 val total = current.coverage.totalFrames.coerceAtLeast(0L)
+                // P1-6：complete 必须由实际覆盖推导；total=0 时不能假装完整。
+                val complete = total > 0L
                 val coverage = Coverage(
                     totalFrames = total,
                     startFrame = 0L,
-                    coveredRanges = if (total > 0) listOf(0L until total) else emptyList(),
+                    coveredRanges = if (complete) listOf(0L until total) else emptyList(),
                     watermarkFrame = total,
-                    complete = true,
+                    complete = complete,
                 )
                 sendDomain(
                     SeparationEvent.Domain.JobFinished(
@@ -349,7 +351,7 @@ class SeparationDomain private constructor(private val app: Application) {
                             listOf(state.vocalsFile.absolutePath, state.accompanimentFile.absolutePath),
                         ),
                         coverage = coverage,
-                        complete = true,
+                        complete = complete,
                         metrics = JobMetrics(
                             inferTimeMs = state.inferTimeMs,
                             audioDurationMs = state.audioDurationMs,
@@ -363,19 +365,20 @@ class SeparationDomain private constructor(private val app: Application) {
             is SeparationRepository.State.Done4 -> {
                 sourceReady = true
                 val total = current.coverage.totalFrames.coerceAtLeast(0L)
+                val complete = total > 0L
                 val coverage = Coverage(
                     totalFrames = total,
                     startFrame = 0L,
-                    coveredRanges = if (total > 0) listOf(0L until total) else emptyList(),
+                    coveredRanges = if (complete) listOf(0L until total) else emptyList(),
                     watermarkFrame = total,
-                    complete = true,
+                    complete = complete,
                 )
                 sendDomain(
                     SeparationEvent.Domain.JobFinished(
                         jobId = jobId,
                         files = StemFiles(state.stemFiles.map { it.absolutePath }),
                         coverage = coverage,
-                        complete = true,
+                        complete = complete,
                         metrics = JobMetrics(
                             inferTimeMs = state.inferTimeMs,
                             audioDurationMs = state.audioDurationMs,
