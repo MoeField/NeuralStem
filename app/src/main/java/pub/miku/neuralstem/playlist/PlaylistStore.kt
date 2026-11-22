@@ -294,8 +294,31 @@ class PlaylistStore internal constructor(private val dir: File) {
         //   旧实现直接 `file.writeText`，多写者（进度落盘/歌单编辑）或被杀会截断 JSON；
         //   下次启动解析失败又会被空歌单覆盖 → 整份歌单丢失。
         synchronized(IO_LOCK) {
-            runCatching {
-                val arr = JSONArray()
+            writeAtomic(list)
+        }
+    }
+
+    /**
+     * 用户显式确认“重建空默认歌单”后调用。
+     *
+     * 损坏现场已由 [backupCorrupt] 保留；这里只原子写入一份合法的默认空歌单，
+     * 然后清掉 corrupt 标志，让后续导入恢复保存能力。失败时保持 corrupt。
+     */
+    fun resetCorruptToDefault(): Boolean {
+        synchronized(IO_LOCK) {
+            backupCorrupt()
+            val default = ensureDefault(emptyList())
+            val ok = writeAtomic(default)
+            if (ok) {
+                corrupt = false
+                Log.i(TAG, "resetCorruptToDefault: rebuilt default playlist")
+            }
+            return ok
+        }
+    }
+
+    private fun writeAtomic(list: List<Playlist>): Boolean = runCatching {
+            val arr = JSONArray()
                 list.forEach { p ->
                     arr.put(JSONObject().apply {
                         put("id", p.id)
@@ -326,9 +349,8 @@ class PlaylistStore internal constructor(private val dir: File) {
                     tmp.copyTo(file, overwrite = true)
                     tmp.delete()
                 }
-            }.onFailure { Log.w(TAG, "save failed", it) }
-        }
-    }
+                true
+            }.onFailure { Log.w(TAG, "save failed", it) }.getOrDefault(false)
 
     companion object {
         private const val TAG = "PlaylistStore"

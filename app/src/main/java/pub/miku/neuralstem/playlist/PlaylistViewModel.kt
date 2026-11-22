@@ -53,12 +53,17 @@ class PlaylistViewModel(app: Application) : AndroidViewModel(app) {
     private val _lists = MutableStateFlow<List<PlaylistStore.Playlist>>(emptyList())
     val lists: StateFlow<List<PlaylistStore.Playlist>> = _lists.asStateFlow()
 
+    /** 磁盘上的 playlists.json 是否损坏；损坏期间保存会被拒绝，UI 必须明确提示。 */
+    private val _corrupt = MutableStateFlow(false)
+    val corrupt: StateFlow<Boolean> = _corrupt.asStateFlow()
+
     @Volatile private var loaded = false
 
     init {
         ioWorker.launch {
             _lists.value = store.load()
             loaded = true
+            _corrupt.value = store.isCorrupt
             ensureValidSelection()
             cleanupOrphanGrants()
         }
@@ -146,8 +151,24 @@ class PlaylistViewModel(app: Application) : AndroidViewModel(app) {
         ioWorker.launch {
             _lists.value = store.load()
             loaded = true
+            _corrupt.value = store.isCorrupt
             ensureValidSelection()
             cleanupOrphanGrants()
+        }
+    }
+
+    /**
+     * 用户显式确认后，把损坏的歌单文件重建成空默认歌单。
+     * 原损坏文件已由 Store 保留为 `.corrupt-*`，不会静默丢现场。
+     */
+    fun recoverCorruptPlaylist() {
+        ioWorker.launch {
+            val ok = store.resetCorruptToDefault()
+            _lists.value = store.load()
+            loaded = true
+            _corrupt.value = store.isCorrupt
+            ensureValidSelection()
+            Log.i(TAG, "recoverCorruptPlaylist ok=$ok corrupt=${store.isCorrupt}")
         }
     }
 

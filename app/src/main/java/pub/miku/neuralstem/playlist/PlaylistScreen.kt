@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -87,6 +88,8 @@ fun PlaylistScreen(
     val PAGE = 100
 
     val lists by vm.lists.collectAsState()
+    val corrupt by vm.corrupt.collectAsState()
+    var showCorruptReset by rememberSaveable { mutableStateOf(false) }
     // ★R1：当前选中歌单（单一真源，来自 VM；恒存在）。
     val selectedListId by vm.selectedListId.collectAsState()
     val selectedIsFolder = lists.firstOrNull { it.id == selectedListId }?.type ==
@@ -269,6 +272,52 @@ fun PlaylistScreen(
         }
 
         HorizontalDivider()
+
+        if (corrupt) {
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.errorContainer,
+                ),
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Text(
+                        stringResource(R.string.pl_corrupt_title),
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                    )
+                    Text(
+                        stringResource(R.string.pl_corrupt_message),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                    )
+                    TextButton(onClick = { showCorruptReset = true }) {
+                        Text(stringResource(R.string.pl_corrupt_reset))
+                    }
+                }
+            }
+        }
+
+        if (showCorruptReset) {
+            AlertDialog(
+                onDismissRequest = { showCorruptReset = false },
+                title = { Text(stringResource(R.string.pl_corrupt_confirm_title)) },
+                text = { Text(stringResource(R.string.pl_corrupt_confirm_message)) },
+                confirmButton = {
+                    TextButton(onClick = {
+                        showCorruptReset = false
+                        vm.recoverCorruptPlaylist()
+                    }) { Text(stringResource(R.string.pl_corrupt_confirm)) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showCorruptReset = false }) {
+                        Text(stringResource(R.string.pl_corrupt_cancel))
+                    }
+                },
+            )
+        }
 
         if (lists.isEmpty()) {
             Text(stringResource(R.string.pl_empty), style = MaterialTheme.typography.bodyMedium)

@@ -260,4 +260,11 @@
     <string name="spike_cancelled">分离已取消</string>
     <string name="settings_models_upstream_page">上游：%1$s</string>
     <string name="play_av3a_unsupported">该文件是 AVS3/AV3A 空间音频（网易云的“全景声/环绕声”），因专利/许可限制，本应用无法播放。请下载普通双声道 AAC/FLAC/MP3 版本。</string>
+    <string name="pl_corrupt_title">歌单文件损坏，已保护现场</string>
+    <string name="pl_corrupt_message">检测到 playlists.json 无法解析，已保留损坏副本；修复前新导入不会保存。重建会创建一个空默认歌单，原损坏文件仍保留在应用目录。</string>
+    <string name="pl_corrupt_reset">重建空歌单</string>
+    <string name="pl_corrupt_confirm_title">重建空歌单？</string>
+    <string name="pl_corrupt_confirm_message">当前损坏文件会保留为备份；重建后歌单为空，可重新导入。</string>
+    <string name="pl_corrupt_confirm">重建</string>
+    <string name="pl_corrupt_cancel">取消</string>
 </resources>

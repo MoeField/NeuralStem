@@ -253,4 +253,11 @@
     <string name="spike_cancelled">Separation cancelled</string>
     <string name="settings_models_upstream_page">Upstream: %1$s</string>
     <string name="play_av3a_unsupported">This file is AVS3/AV3A spatial audio (NetEase Cloud Music “Panoramic”/“Surround”). It cannot be played by this app due to patent/licensing restrictions. Please use a normal stereo AAC/FLAC/MP3 version.</string>
+    <string name="pl_corrupt_title">Playlist file is corrupt</string>
+    <string name="pl_corrupt_message">playlists.json could not be parsed. A corrupt backup has been kept; new imports will not be saved until repaired. Rebuilding creates an empty default playlist and keeps the damaged file in the app directory.</string>
+    <string name="pl_corrupt_reset">Rebuild empty playlist</string>
+    <string name="pl_corrupt_confirm_title">Rebuild empty playlist?</string>
+    <string name="pl_corrupt_confirm_message">The damaged file will be kept as a backup. The rebuilt playlist will be empty; you can import tracks again.</string>
+    <string name="pl_corrupt_confirm">Rebuild</string>
+    <string name="pl_corrupt_cancel">Cancel</string>
 </resources>
