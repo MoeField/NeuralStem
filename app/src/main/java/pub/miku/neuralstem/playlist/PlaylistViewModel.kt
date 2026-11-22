@@ -46,8 +46,9 @@ class PlaylistViewModel(app: Application) : AndroidViewModel(app) {
     val defaultListId: String get() = store.defaultListId
 
     // ★P2.1：歌单文件读写统一走单线程 IO，避免主线程 fsync/解析 1000+ 首。
+    // ★P1-13：复用 viewModelScope 的 Job（随 VM 取消），只覆盖调度器为单线程 IO。
     private val ioWorker = CoroutineScope(
-        SupervisorJob() + Dispatchers.IO.limitedParallelism(1),
+        viewModelScope.coroutineContext + Dispatchers.IO.limitedParallelism(1),
     )
 
     private val _lists = MutableStateFlow<List<PlaylistStore.Playlist>>(emptyList())
@@ -57,6 +58,10 @@ class PlaylistViewModel(app: Application) : AndroidViewModel(app) {
     private val _corrupt = MutableStateFlow(false)
     val corrupt: StateFlow<Boolean> = _corrupt.asStateFlow()
 
+    /** 最近一次歌单落盘失败；null = 正常。 */
+    private val _saveError = MutableStateFlow<String?>(null)
+    val saveError: StateFlow<String?> = _saveError.asStateFlow()
+
     @Volatile private var loaded = false
 
     init {
@@ -64,6 +69,7 @@ class PlaylistViewModel(app: Application) : AndroidViewModel(app) {
             _lists.value = store.load()
             loaded = true
             _corrupt.value = store.isCorrupt
+            _saveError.value = null
             ensureValidSelection()
             cleanupOrphanGrants()
         }
@@ -138,7 +144,10 @@ class PlaylistViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         val snapshot = _lists.value
-        ioWorker.launch { store.saveMerged(snapshot) }
+        ioWorker.launch {
+            val ok = store.saveMerged(snapshot)
+            _saveError.value = if (ok) null else "歌单保存失败：请检查存储空间/权限"
+        }
     }
 
     /**
@@ -274,7 +283,7 @@ class PlaylistViewModel(app: Application) : AndroidViewModel(app) {
         }
         persist()
         releaseFileGrantIfUnused(oldUri)
-        Log.i(TAG, "replace track uri in $listId: $oldUri → $newUri")
+        Log.i(TAG, "replace track uri in $listId: ${oldUri.take(24)}… → ${newUri.take(24)}…")
     }
 
     /**
@@ -371,7 +380,7 @@ class PlaylistViewModel(app: Application) : AndroidViewModel(app) {
         //   之前实测就被这个坑卡住：一个错误的 uri 会让整个导入流程静默中断。
         //   所以必须 runCatching 包住。
         val root = runCatching { DocumentFile.fromTreeUri(ctx, treeUri) }
-            .onFailure { Log.w(TAG, "importFolder: fromTreeUri 异常 uri=$treeUri", it) }
+            .onFailure { Log.w(TAG, "importFolder: fromTreeUri 异常（uri 已脱敏）", it) }
             .getOrNull()
         Log.i(
             TAG,
@@ -382,8 +391,8 @@ class PlaylistViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         val found = withContext(Dispatchers.IO) { scanAudio(ctx, treeUri) }
-        Log.i(TAG, "importFolder: ${found.size} audio files from $treeUri")
-        found.take(3).forEach { Log.i(TAG, "   例：${it.title} → ${it.uri.take(80)}") }
+        Log.i(TAG, "importFolder: ${found.size} audio files from selected folder")
+        found.take(3).forEach { Log.i(TAG, "   例：${it.title}") }
         val name = root.name ?: "导入的文件夹"
         _lists.value = if (intoListId != null) {
             _lists.value.map { p ->

@@ -235,6 +235,8 @@ class PlaybackService : MediaSessionService() {
                 b.putBoolean(MultiTrackSession.KEY_MIX_PLAYING, c.isPlaying())
                 b.putBoolean(MultiTrackSession.KEY_MIX_ENDED, c.isEnded())
                 session?.setSessionExtras(b)
+                // P1-5：门面（通知/媒体键的唯一播放态来源）每 tick 跟真源对齐。
+                reconcileFacadeToMixer()
             }
             handler.postDelayed(this, 200L)
         }

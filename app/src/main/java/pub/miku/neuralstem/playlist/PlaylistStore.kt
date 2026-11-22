@@ -257,19 +257,19 @@ class PlaylistStore internal constructor(private val dir: File) {
      * 整份 save，会把刚写入的续播位置覆盖回旧值。这里在 IO_LOCK 内重新 load，
      * 只把磁盘上仍存在的进度合并回来（曲目被删/清空时自然清除）。
      */
-    fun saveMerged(incoming: List<Playlist>) {
+    fun saveMerged(incoming: List<Playlist>): Boolean {
         if (corrupt) {
             Log.w(TAG, "saveMerged refused: playlists.json is corrupt; preserve corrupt file")
-            return
+            return false
         }
         // 空快照永远不是合法状态（默认歌单不可删）；防止“加载完成前误保存”清空歌单。
         if (incoming.isEmpty()) {
             Log.w(TAG, "saveMerged refused: empty snapshot")
-            return
+            return false
         }
         synchronized(IO_LOCK) {
             val disk = load()
-            save(mergeDiskProgress(incoming, disk))
+            return save(mergeDiskProgress(incoming, disk))
         }
     }
 
@@ -285,16 +285,16 @@ class PlaylistStore internal constructor(private val dir: File) {
         else p.copy(lastPlayedUri = last, lastPositionMs = pos)
     }
 
-    fun save(list: List<Playlist>) {
+    fun save(list: List<Playlist>): Boolean {
         if (corrupt) {
             Log.w(TAG, "save refused: playlists.json is corrupt; preserve corrupt file")
-            return
+            return false
         }
         // ★2026-11-09（P0-2）：tmp + fsync + rename 原子替换 + 进程内串行化。
         //   旧实现直接 `file.writeText`，多写者（进度落盘/歌单编辑）或被杀会截断 JSON；
         //   下次启动解析失败又会被空歌单覆盖 → 整份歌单丢失。
         synchronized(IO_LOCK) {
-            writeAtomic(list)
+            return writeAtomic(list)
         }
     }
 

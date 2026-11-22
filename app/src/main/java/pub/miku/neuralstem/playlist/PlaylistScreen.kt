@@ -89,6 +89,7 @@ fun PlaylistScreen(
 
     val lists by vm.lists.collectAsState()
     val corrupt by vm.corrupt.collectAsState()
+    val saveError by vm.saveError.collectAsState()
     var showCorruptReset by rememberSaveable { mutableStateOf(false) }
     // ★R1：当前选中歌单（单一真源，来自 VM；恒存在）。
     val selectedListId by vm.selectedListId.collectAsState()
@@ -272,6 +273,21 @@ fun PlaylistScreen(
         }
 
         HorizontalDivider()
+
+        if (saveError != null) {
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.errorContainer,
+                ),
+            ) {
+                Text(
+                    saveError.orEmpty(),
+                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                )
+            }
+        }
 
         if (corrupt) {
             Card(

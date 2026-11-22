@@ -8,6 +8,7 @@
 - [LICENSING.md](LICENSING.md) — MIT / NCM / AVS3 参考实现边界与禁止提交清单。
 - [AV3A_INVESTIGATION.md](AV3A_INVESTIGATION.md) — AV3A/Audio Vivid 的 FFmpeg、OpenHarmony、Media3、仓库与许可调查记录。
 - [REMEDIATION_STATUS.md](REMEDIATION_STATUS.md) — 审计整改状态、验证等级、剩余风险与版本计划。
+- [REVIEW_CONVENTIONS.md](REVIEW_CONVENTIONS.md) — 代码/架构评审约定、漏检复盘与发版门禁。
 - [STABILITY_TEST_PLAN.md](STABILITY_TEST_PLAN.md) — 状态模型、操作序列、故障注入、错误分类与发布门禁。
 - [STABILITY_REPORT_v0.2.55.md](STABILITY_REPORT_v0.2.55.md) — v0.2.55 稳定性测试实跑记录（历史版本报告）。
 
