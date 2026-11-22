@@ -114,7 +114,7 @@
     <string name="settings_models_license">许可：%1$s</string>
     <string name="settings_models_source">下载源</string>
     <string name="settings_models_proxy">GitHub 代理（UVR 模型用）</string>
-    <string name="settings_models_proxy_hint">UVR 模型只在 GitHub 上。默认直连；若网络不可达，可显式填写第三方代理（会暴露连接 IP/请求路径）。</string>
+    <string name="settings_models_proxy_hint">UVR 模型只在 GitHub 上。默认走 api.gitproxy.dev 代理（会暴露连接 IP/请求路径），代理失败会自动回退直连；清空输入框 = 主动选择直连。</string>
     <string name="settings_models_proxy_reset">撤销</string>
     <string name="settings_models_proxy_save">保存代理</string>
     <string name="settings_models_probing">正在检测网络…</string>

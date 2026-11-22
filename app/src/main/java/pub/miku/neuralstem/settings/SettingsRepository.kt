@@ -101,11 +101,24 @@ class SettingsRepository(app: Application) {
      * `github.com:443` 连不上（TCP 超时）。代理做**前缀替换**：
      * `api.gitproxy.dev/github.com/<path>` → `github.com/<path>`（Cloudflare 加速）。
      *
-     * 空字符串 = 直连 GitHub。第三方代理会看到连接 IP/请求路径，
-     * 因此不默认启用；国内用户可在设置里显式填写。
+     * 默认 `https://api.gitproxy.dev`（实测可用）；空字符串 = 直连 GitHub。
+     * 第三方代理会看到连接 IP/请求路径；国内网络优先默认代理，失败自动回退直连。
      */
     var downloadProxy: String
-        get() = prefs.getString(KEY_DOWNLOAD_PROXY, DEFAULT_GITHUB_PROXY) ?: DEFAULT_GITHUB_PROXY
+        get() {
+            // 一次性迁移：旧版本默认值是空字符串（直连），升级后应恢复默认代理。
+            // 迁移后用户再清空 = 主动选择直连，不再自动改回代理。
+            if (!prefs.getBoolean(KEY_PROXY_MIGRATED, false)) {
+                prefs.edit().putBoolean(KEY_PROXY_MIGRATED, true).apply()
+                val old = prefs.getString(KEY_DOWNLOAD_PROXY, null)
+                if (old.isNullOrBlank()) {
+                    prefs.edit().putString(KEY_DOWNLOAD_PROXY, DEFAULT_GITHUB_PROXY).apply()
+                    return DEFAULT_GITHUB_PROXY
+                }
+            }
+            return prefs.getString(KEY_DOWNLOAD_PROXY, DEFAULT_GITHUB_PROXY)
+                ?: DEFAULT_GITHUB_PROXY
+        }
         set(value) {
             prefs.edit().putString(KEY_DOWNLOAD_PROXY, value.trim()).apply()
             Log.i(TAG, "downloadProxy=${value.ifBlank { "(直连)" }}")
@@ -322,6 +335,7 @@ class SettingsRepository(app: Application) {
         private const val KEY_MODEL_SOURCE = "model_source_preference"
         private const val KEY_MODEL_RESOLVED = "model_source_resolved"
         private const val KEY_DOWNLOAD_PROXY = "model_download_proxy"
+        private const val KEY_PROXY_MIGRATED = "model_download_proxy_default_migrated"
         private const val KEY_DECODE_CACHE_GB = "decode_cache_gb"
         private const val KEY_PREDECODE_COUNT = "predecode_count"
 
@@ -343,9 +357,10 @@ class SettingsRepository(app: Application) {
         /**
          * ★默认 GitHub 代理前缀（实测可用）：`api.gitproxy.dev/github.com/<path>`
          * **前缀替换**为 `github.com/<path>`（Cloudflare 加速）。
-         * 默认空 = 直连 github.com；第三方代理需用户显式填写。
+         * 默认启用，解决大陆网络 github.com:443 超时；用户可清空 = 直连。
+         * 第三方代理会看到连接 IP/请求路径，UI 必须如实提示。
          */
-        const val DEFAULT_GITHUB_PROXY = ""
+        const val DEFAULT_GITHUB_PROXY = "https://api.gitproxy.dev"
 
         const val DECK_SEC_DEFAULT = 18
         const val DECK_SEC_MIN = 9

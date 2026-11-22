@@ -28,7 +28,7 @@
 | 3 | 导出未检查 `coverage.complete` | 已修 | 0.2.42 | V1 | 有 guard 单测；未做半截结果导出真机 |
 | 4 | release 自动化 Intent 无 DEBUG 守卫 | 已修 | 0.2.42 | V2 | release 包已验证忽略 `auto_play` |
 | 5 | 损坏歌单被下一次进度写覆盖 | 已修 | 0.2.42/48 | V1 | 损坏 JSON fixture 已测 |
-| 6 | 默认第三方模型代理 | 已修 | 0.2.44/47 | V2 | 默认直连；Spleeter 39MB 下载/SHA-256 成功 |
+| 6 | 默认第三方模型代理 | 已修 | 0.2.44/47 | V2 | UVR 默认 GH 代理（旧空值一次性迁移）；Spleeter 39MB / UVR 9482 SHA-256 成功 |
 
 ## 2. P1 状态
 

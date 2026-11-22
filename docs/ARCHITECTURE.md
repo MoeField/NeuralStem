@@ -152,7 +152,7 @@ Compose UI (AppShell / screens)
 - `MainActivity` 的 `auto_play/mt_vocals/eq_test/second_file` 自动化入口只在 `BuildConfig.DEBUG` 生效。
 - MediaSession 自定义命令只接受本应用 UID；外部 controller 不暴露 custom commands。
 - NCM shell 路径参数走 argv，不拼 `sh -c`。
-- 模型下载必须校验 SHA-256；默认直连，第三方代理需显式 opt-in。
+- 模型下载必须校验 SHA-256；UVR 模型默认走 `api.gitproxy.dev` 代理（失败自动回退直连），用户可清空代理设置改为直连。
 - 备份排除模型、stems/PCM/波形缓存、`playlists.json`。
 
 ## 6. 测试策略
