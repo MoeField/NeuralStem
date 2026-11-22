@@ -1,6 +1,8 @@
+> **历史快照（已归档，2026-11-23）**：本文是当时过程记录，不代表当前状态；“未修/待办/未跑/当前”等均指当时语境。当前状态见 [REMEDIATION_STATUS](../REMEDIATION_STATUS.md)、[STEP_HISTORY](../STEP_HISTORY.md)。
+
 # 路径清单与逻辑自查（PATH_AUDIT）
 
-> 状态：**审计稿，只记录现状与问题，暂不改代码**  
+> 状态：**历史审计稿（基线 v0.2.14）；BUG 后续已修复，修复进度见正文；当前状态见归档说明**  
 > 基线：`main` / `v0.2.14`  
 > 目的：把播放、分离、缓存、UI 的路径全部摊开，再按路径自查逻辑 bug；
 > 详细维修计划在下一步单独出。
@@ -240,8 +242,8 @@ Domain 可能把 A 的 `writtenUpToFrame`/`vocalsFile` 发送为 B 的 coverage/
 - 目录：`Music/separate/<safeSong>/`
 - 文件：`vocals.wav` / `drums.wav` / `bass.wav` / `other.wav` / `accompaniment.wav` / `original.<ext>`
 - **没有模型名维度**；Spleeter 2-stem 与 4-stem、Demucs 会写到同一目录并覆盖同名文件。
-- 2-stem 当前 README 说不支持导出，但 `SeparationScreen` 的 export 逻辑/`lastExportable`
-  可能允许 2 轨；需要以 UI 实际门控为准（待核实）。
+- 2-stem 当时 README 说不支持导出；后续已核实并实现 2/4 轨导出（v0.2.15+）。
+  此句保留为当时疑问，不再作为待办。
 - 导出 owner 只校验 `ownerUri`；模型/任务没有绑定。
 
 ---
@@ -262,7 +264,7 @@ Domain 可能把 A 的 `writtenUpToFrame`/`vocalsFile` 发送为 B 的 coverage/
 ## 10. 自查发现的逻辑 bug
 
 > 级别：P0 = 会播/显错曲结果；P1 = 状态不一致/可复现错行为；P2 = 命名/维护/恢复。  
-> 本次只审计，不修。
+> 历史语境：当时只审计；后续修复记录见各 BUG 下方，不代表当前仍有待办。
 
 ### BUG-01 [P0] A/B 快速切歌时可能把 A 的分离结果给 B
 

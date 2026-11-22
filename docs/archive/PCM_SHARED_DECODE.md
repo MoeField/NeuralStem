@@ -1,4 +1,10 @@
+> **历史快照（已归档，2026-11-23）**：本文是当时过程记录，不代表当前状态；“未修/待办/未跑/当前”等均指当时语境。当前状态见 [REMEDIATION_STATUS](../REMEDIATION_STATUS.md)、[STEP_HISTORY](../STEP_HISTORY.md)。
+
 # 共享 PCM 解码计划 / 进度
+
+> **阅读顺序说明**：以下章节按“追加时间”排列，不是逻辑顺序。
+> Phase 1 实际最早完成、所以写在最后；Phase 2/3/4 是后续追加。
+> 文中 Phase 1 的“未接入”是当时状态，最终 v0.2.21 已全部接入。
 
 目标：同一首歌在一次播放周期内，波形与分离最多解码一次；分离复用波形/后台预解码产物。
 
@@ -68,8 +74,8 @@ SourceDescriptor
 - `PcmStoreTest` 6 条：单飞、跨 store 命中、lease 阻止清理、pin 保护、失败重试、WAV 不缓存
 - JVM 全量 **458/0**
 
-未接入：
+Phase 1 当时未接入（后续 Phase 2/3/4 已接入，见上方追加记录）：
 
-- 波形仍未使用 PcmStore
-- 分离仍未使用 PcmArtifact
-- 尚未在设备上验证
+- 波形当时未使用 PcmStore
+- 分离当时未使用 PcmArtifact
+- 当时尚未在设备上验证

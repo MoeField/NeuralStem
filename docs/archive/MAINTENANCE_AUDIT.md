@@ -1,6 +1,8 @@
+> **历史快照（已归档，2026-11-23）**：本文是当时过程记录，不代表当前状态；“未修/待办/未跑/当前”等均指当时语境。当前状态见 [REMEDIATION_STATUS](../REMEDIATION_STATUS.md)、[STEP_HISTORY](../STEP_HISTORY.md)。
+
 # 维护审计（历史快照）
 
-> 本文是当时审计记录；测试数/代码行数已过期。当前状态见 [`REMEDIATION_STATUS.md`](REMEDIATION_STATUS.md)。
+> 本文是当时审计记录；测试数/代码行数已过期。当前状态见 [`REMEDIATION_STATUS.md`](../REMEDIATION_STATUS.md)。
 
 
 > 范围：仓库整洁度、文档一致性、F-Droid 自动发布、状态机/死代码、测试基线。
@@ -8,7 +10,7 @@
 
 ## 结论
 
-- 当前 `main` 干净，JVM **471/0**。
+- 当时 `main` 干净，JVM **471/0**（数字已过期）。
 - F-Droid 自动发布已实测成功：run `44134749072`，repo 为 `0.2.28 (48)`。
 - 文档中的 F-Droid 手动/自动流程已统一；本地 repo key 仍不入库。
 - 发现的高优先级风险不是发布坏了，而是**发布缺少 APK 身份校验**，以及**分离进度跳变仍未定位**。
@@ -20,7 +22,7 @@
 | F-Droid 文档 | 重写 `fdroid/README.md`，记录自动发布、已验证 run、secrets、恢复流程 |
 | 根 README | 增加 F-Droid 自建源入口 |
 | 开发文档 | `docs/DEVELOP.md` 增加自动发布说明 |
-| 版本历史 | `docs/STEP_HISTORY.md` 记录发布链路变更 |
+| 版本历史 | [`../STEP_HISTORY.md`](../STEP_HISTORY.md) 记录发布链路变更 |
 | init 脚本 | 统一 `keystore.p12`，修掉残留的 `keystore.jks` |
 | 隐私 | 移除 tracked 验收/长跑文档中的设备序列号 |
 | 死代码 | 删除空的 `markStemsAvailable()` 及其调用；删除未使用的 `pendingBackfillMsOf()` |
@@ -61,13 +63,13 @@ adb logcat -s SepUI EdgeSession SepRepo SepDomain
 
 ### P2：状态机仍有旧旁路
 
-- `SeparationDomain.autoSwitchEnabled` 为 true 后，AppShell 仍保留一套旧 effect 分支；当前基本是死路径，但会增加理解成本。
+- `SeparationDomain.autoSwitchEnabled` 为 true 后，AppShell 仍保留一套旧 effect 分支；当时基本是死路径，但会增加理解成本。
 - `SeparationDomain.clearCache()` 存在，但 UI 的清缓存仍走 `SpikeViewModel.clearCache()`；目前靠“多轨时禁用按钮”保证安全。
 - `lastStems` 与 Domain `attachment` 仍是两套引用；正常路径已统一，兼容 fallback 仍需保留。
 
 ### P2：分支/本地仓库卫生
 
-- 本地 `gh-pages` 指向 `507dbc8`，远端已经是 `1fc4b79`。发布脚本已改为基于 `origin/gh-pages`，所以无功能影响；建议有空 `git branch -f gh-pages origin/gh-pages`。
+- 当时本地 `gh-pages` 与远端不一致；发布脚本已改为基于 `origin/gh-pages`，此条为当时本地状态，分支清理已完成。
 - 本地仍有较多已合并/实验分支（`spike/*`、`test/*`、`refactor/*` 等），是否删除由维护者决定；本次未自动删。
 - `fdroid/local/` 被忽略，含 `keystore.p12`、`config.yml`、repo 与 tmp；继续只作为本机备份/恢复目录。
 
@@ -76,12 +78,12 @@ adb logcat -s SepUI EdgeSession SepRepo SepDomain
 - 本地没有 `actionlint`/`act`；workflow 已做 YAML 解析 + 本地 fdroid 流程 dry-run。
 - CI 里 F-Droid workflow 已实测跑通；下次 release 后再观察自动触发。
 
-## 下次工作顺序
+## 当时建议（已过时，不代表当前待办）
 
 1. 给 F-Droid workflow 增加 APK 版本 + 签名校验（小改动，收益高）。
 2. 用真机日志定位分离进度跳变。
 3. 再考虑移除 `autoSwitchEnabled` 旧旁路 / 统一清缓存命令。
-4. 历史分支清理（需要维护者确认）。
+4. 历史分支清理（维护者后续已执行/确认）。
 
 ## 基线
 

@@ -1,14 +1,14 @@
 # 审计整改状态与计划
 
-> 基线：v0.2.49 (249)，tag `v0.2.49`，HEAD 以 `git log` 为准。  
+> 基线：v0.2.56 (256)，tag `v0.2.56`，HEAD 以 `git log` 为准。  
 > 本文是**整改看板**；不变量见 [ARCHITECTURE.md](ARCHITECTURE.md)，发布历史见 [STEP_HISTORY.md](STEP_HISTORY.md)。
 
 ## 0. TL;DR
 
-- 6 条 P0 已全部修复并验证：**#1 V3、#2 V2、#3 V1、#4 V2、#5 V1、#6 V2**。
-- 12 条 P1 中：**12 条已修**（#12/#13 有代码修复与专项验证；#2 仍是代码+纯函数验证，未复现到完整 UI Stopping）。
+- 6 条 P0 已全部修复并验证：**#1 V3、#2 V3、#3 V1、#4 V2、#5 V1、#6 V2**。
+- 12 条 P1 中：**12 条已修**；#2 的 Service/UI 路径已用 `sepdouble` + 视觉回退验证。
 - 当前不宜再混版做 UI/架构重构；下一步按 **#9 → #17 → 验证补齐 → P2** 四阶段推进。
-- 普通 JVM **503/0**；`with_ncm` **527/0**；`lintVitalRelease`、NCM 编译、APK 无 AVS3 断言均已进 CI。
+- 普通 JVM **508/0**；`with_ncm` 基线见 CI；`lintVitalRelease`、NCM 编译、APK 无 AVS3 断言均已进 CI。
 
 ### 验证等级
 
@@ -24,7 +24,7 @@
 | # | 问题 | 状态 | 版本 | 验证 | 缺口 |
 |---|---|---|---|---|---|
 | 1 | AudioTrack 重建后没 `play()`、EQ 挂旧 session | 已修 | 0.2.42/48 | V3 | 已注入 write 失败：新 session/EQ/heartbeat 均验证 |
-| 2 | `Stopping` 永久卡死（activeJobId 提前清空、无 watchdog） | 已修 | 0.2.43/48/49/55 | V2 | watchdog 纯函数；C 启动竞态已修（2s 宽限 + 二次 Start 重置），`sepdouble` 稳定 job2 Running；完整 UI 视觉回退仍建议人工确认 |
+| 2 | `Stopping` 永久卡死（activeJobId 提前清空、无 watchdog） | 已修 | 0.2.43/48/49/55 | V3 | watchdog 纯函数；C 启动竞态已修；`sepdouble` 稳定 job2 Running，UI 缓冲提示→自动多轨已验证 |
 | 3 | 导出未检查 `coverage.complete` | 已修 | 0.2.42 | V1 | 有 guard 单测；未做半截结果导出真机 |
 | 4 | release 自动化 Intent 无 DEBUG 守卫 | 已修 | 0.2.42 | V2 | release 包已验证忽略 `auto_play` |
 | 5 | 损坏歌单被下一次进度写覆盖 | 已修 | 0.2.42/48 | V1 | 损坏 JSON fixture 已测 |
@@ -51,7 +51,7 @@
 
 已关闭：
 
-- `MAINTENANCE_AUDIT.md` 已标为历史快照（471 条不是当前值）。
+- `archive/MAINTENANCE_AUDIT.md` 已标为历史快照（471 条不是当前值）。
 - README 的“2 轨不支持导出”已改成 2/4 轨统一规则（`coverage.complete`）。
 - `BackfillCostGateTest` 已改调生产 `estimateBackfillSec/isBackfillTooExpensive`。
 - `Spleeter4Separator` 的 iSTFT 线程池已改为 daemon。
@@ -60,7 +60,7 @@
 
 - `PlayerViewModel`/`MainActivity` 仍是大文件；`AppShell` 多分支；C2 工程卫生未做。
 - `largeHeap=true`、`useLegacyPackaging=true`、sherpa so 的 16KB 对齐：受依赖限制，未做发布配置层面的最终验证。
-- `SeparationDomain`/SAF 等 Android 路径没有 CI 仪器测试；#2 的完整 UI 二次 Start、#13 的设备端 grant 计数仍是手工验证缺口。
+- `SeparationDomain`/SAF 等 Android 路径没有 CI 仪器测试；#2 的 UI 二次 Start 已手工验证（`sepdouble`），#13 的设备端 grant 计数仍建议纳入仪器测试。
 
 ## 4. 参考项目结论（只读调研）
 

@@ -13,14 +13,17 @@
 ## 版本总览
 
 | 版本 | 重点 |
-|---|---|
-| v0.2.5 | 192k/24bit OOM、旋转/显示、缓存与任务隔离 |
-| v0.2.6 | 状态机收口、Sonic 多轨变速、导出/SAF/队列边界 |
-| v0.2.7 | 分离取消/切歌后的状态机门禁 |
-| v0.2.8 | release 移除调试入口（移到 `src/debug`） |
-| v0.2.9 | 三路逻辑审查后的 P1 修复 + P2 清理 |
-| v0.2.10 | P2 收尾：A3 媒体命令、多轨失败回退、边分离状态、backfill、队列/导入 |
-| v0.2.11 | edge 完整缓存 fast path、StemMixer 线程收口 |
+|---|---|---|
+| v0.2.5–v0.2.11 | 播放/多轨/分离状态机、缓存与任务隔离、edge fast path、StemMixer 线程收口 |
+| v0.2.12–v0.2.20 | 共享 PCM 解码、状态模型 M0–M4、v0.2.15 路径审计修复 |
+| v0.2.21–v0.2.30 | PCM 缓存设置页、清缓存/状态同步、F-Droid 自建源、补前段 |
+| v0.2.31–v0.2.40 | 发布校验、补前段进度、AVS3/NCM、分离 P1 修复 |
+| v0.2.41–v0.2.49 | R8、审计整改、播放/AudioTrack/导出边界 |
+| v0.2.50–v0.2.54 | 稳定性、AV3A 调查/拒绝、UVR 许可口径 |
+| v0.2.55 | 稳定性修复：歌单损坏 UX、Service 启动竞态、多轨退出叠音 |
+| v0.2.56 | 恢复 UVR 默认 GitHub 代理（含旧空值迁移） |
+
+> 详细逐版记录见本文件下方章节；上表只做索引，避免过期。
 
 ## 早期阶段（v0.2.5 之前）
 
@@ -477,11 +480,11 @@
 - B2（返回原曲恢复）、D2（播放自然结束）已补测通过；
 - D3（真正 kill Service）受平台限制，`am stop-service` 无法停 foreground media service，
   待 root/异常进程路径；详见验收文档。
-- 详见 `docs/ACCEPTANCE_V0.2.15.md`。
+- 详见 `docs/archive/ACCEPTANCE_V0.2.15.md`。
 
 ## v0.2.15：路径审计后的 P0/P1/P2 修复
 
-- 审计文档：`docs/PATH_AUDIT.md`、`docs/REPAIR_PLAN.md`（BUG-01..BUG-10）。
+- 审计文档：`docs/archive/PATH_AUDIT.md`、`docs/archive/REPAIR_PLAN.md`（BUG-01..BUG-10）。
 - P0 错曲结果修复：
   - 临时源唯一化 `separate_input_<uriHash>.<ext>`；
   - repo 终态携带 `sourcePath`；Domain 丢弃不匹配的迟到终态；

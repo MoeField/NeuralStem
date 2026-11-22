@@ -238,10 +238,8 @@ CI 用 Repository Secrets（`KEYSTORE_BASE64` / `KEYSTORE_PASSWORD` / `KEY_ALIAS
 - [`docs/STABILITY_REPORT_v0.2.55.md`](docs/STABILITY_REPORT_v0.2.55.md)：稳定性测试实跑记录。
 - [`docs/STEP_HISTORY.md`](docs/STEP_HISTORY.md)：阶段/版本改动历史与验证方式。
 - [`docs/LICENSING.md`](docs/LICENSING.md)：MIT / NCM / AVS3 参考实现边界。
-- [`docs/STATE_MODEL.md`](docs/STATE_MODEL.md)：分离状态模型重构设计稿。
-- [`docs/PATH_AUDIT.md`](docs/PATH_AUDIT.md)：播放/分离/缓存/UI 全路径审计与待修 bug。
-- [`docs/REPAIR_PLAN.md`](docs/REPAIR_PLAN.md)：按级别排序的维修计划。
-- [`docs/ACCEPTANCE_V0.2.15.md`](docs/ACCEPTANCE_V0.2.15.md)：v0.2.15 验收记录。
+- [`docs/AV3A_INVESTIGATION.md`](docs/AV3A_INVESTIGATION.md)：AV3A 调查与许可边界。
+- [`docs/archive/`](docs/archive/README.md)：历史快照（审计/验收/长跑/设计稿），不代表当前状态。
 
 ### 性能（参考设备实测）
 
