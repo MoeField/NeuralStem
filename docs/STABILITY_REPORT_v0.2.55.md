@@ -1,101 +1,73 @@
 # 状态稳定性测试报告（v0.2.55 候选）
 
-> 状态：**测试执行完成；v0.2.55 未发布**。  
-> 计划：[STABILITY_TEST_PLAN.md](STABILITY_TEST_PLAN.md)。  
-> 设备：BF00A（Android 16，arm64），音量 0/15。
+> 状态：**RC 已验证；v0.2.55 未打 tag/未发布**。  
+> 设备：BF00A（Android 16，arm64），音量 0/15；测试末尾设备停在锁屏，需解锁继续路由测试。  
+> 计划：[STABILITY_TEST_PLAN.md](STABILITY_TEST_PLAN.md)。
 
 ## 1. 构建
 
-- 被测 debug：`0.2.55-test (255)`，`-PtestHooks=true`
 - 正式基线：`0.2.54 (254)`
-- 代码：`9e154e6` + 稳定性测试/修复
+- RC：`0.2.55 (255)`，release，arm64 / universal / x86_64
+- debug 测试包：`0.2.55-test (255)`，`-PtestHooks=true`
+- RC 已过 `assembleRelease` + `lintVitalRelease`
+- 签名 SHA-256：`85a5c9ebbfc867d01ccdac83a49411aad17c6fb7c42fef9b7d3a2e9b861e0d6e`
 
-## 2. 结果总览
+## 2. 自动化结果
 
 | 项 | 结果 |
 |---|---|
-| JVM 全量 | **507/0** |
-| `MultiTrackEngineSmokeTest` | **1/0** |
-| `Av3aGuardTest` | **1/0** |
-| 5min soak | 319 ops / 3 restarts / 0 FATAL / 0 ANR / 0 player error |
+| JVM 全量 | **508/0** |
+| `MultiTrackEngineSmokeTest` | 1/0 |
+| `Av3aGuardTest` | 1/0 |
 | 2h soak | **7128 ops / 90 restarts / 0 FATAL / 0 ANR / 0 player error / 0 waveform error** |
-| 关键序列脚本（5 组） | **5/5 PASS**：basic / multi / eq / av3a / restart |
-| write 故障注入 | **PASS**：重建 AudioTrack → session 3913→3921 → EQ 重挂 → heartbeat 5015ms |
-| Spleeter 2 轨真机 | **PASS**：39MB 模型下载 → edge complete=true → 自动 2 轨多轨 → 导出 2 文件成功 |
-| Spleeter 4 轨真机 | **PASS**：79MB 模型下载 → 4 轨分离 17 blocks → 自动 4 轨多轨 → 导出 4 文件成功 |
-| SAF grant | **PASS**：导入后 GRANTS=1；删除后 released file grant、GRANTS=0 |
-| Demucs 4 轨真机 | **PASS**：181MB 模型（首次 Socket closed，断点续传重试成功）→ 280s 分离 → 4 轨多轨 → 导出 4 文件 |
-| 损坏 playlists.json | **PASS**：启动保留 `.corrupt-<ts>` 副本，不覆盖损坏文件 |
-| 队列/repeat | **PASS**：2 首 queue + repeat one/all + next/prev，无播放错误 |
-| 分离中取消 | **PARTIAL**：fresh edge 中 `repo.cancel()` 触发 `EdgeSession.abort`，但未做完整 UI 回退断言 |
-| C：Service 启动竞态 | **PASS（修复后）**：`sepdouble` 第二次 Start → job2 `Running/Separating`；UI 显示“正在缓冲分离结果”，完成后自动多轨；无服务丢失 |
-| 队列/repeat | **PASS**：2 首 queue + one/all + next/prev，无播放错误 |
-| revoke grant | **PASS**：GRANTS 1→0，track 失效，无 FATAL |
-
-2h 产物：`stability-out/soak-2h-c/`（本地，未入库）  
-关键序列产物：`stability-out/key-20261122-015434/`
-
-## 3. 本轮发现/修复
-
-### Stopping 时迟到 StemsLoaded 清空 pendingStart
-
-- 随机 reducer 测试 seed=4 step=35 复现
-- 修复 `SeparationReducer.onStemsLoaded()`：Stopping 直接忽略迟到加载
-- 回归测试：`SeparationReducerTest.stopping_stemsLoaded_must_not_drop_pendingStart`
-- 随机模型：2000 seeds × 40 events 全绿
-
-### C：SeparationService 启动竞态
-
-- `sepdouble` 复现：第二次 Start 时 Service 读到旧终态 → `stopSelf` → job2 `Failed(分离服务丢失)`
-- 修复：`SeparationService` 增加 **2s 启动宽限期**；宽限期内终态不自停；第二次 Start 重置宽限
-- 修复后：job2 稳定 `Running / Separating(jobId=2)`，无 stopSelf/服务丢失；完成通知清零
-
-### 测试环境问题（非 App 缺陷，已排除）
-
-- 第一次 2h soak 无效：`connectedDebugAndroidTest` 结束后 App 被卸载，`monkey` 拉起失败；已停止，不计入结果。
-- 第二次重试：debug 重装 + READ_MEDIA_AUDIO 授权 + `file://` 曲目，App 进程/命令总线存活后才计入。
-
-## 4. 已验证序列
-
-| 序列 | 结果 |
-|---|---|
-| 基础播放：load/play/pause/seek/next/prev | PASS |
-| 多轨：inmt + 全轨 volume=0 + mtpos + exitsmt | PASS |
-| EQ：eqall -15 / +15 / 关闭 | PASS |
-| AV3A m4a：公开版明确拒绝 | PASS |
-| force-stop + 冷启动 | PASS |
-| write 失败注入 + AudioTrack 重建 + EQ 重挂 | PASS |
-| 2h 随机播放/重启 | PASS |
-| edge 分离→attach→多轨 | PASS（coverage complete=true，2 轨） |
-| 导出到 Music/separate | PASS（2 文件 spleeter-2stem；4 文件 spleeter-4stem） |
-| SAF 导入→删除→grant | PASS（count 1→0） |
-| Demucs 分离/导出 | PASS（280s，0.60x，peakPss≈4966MB） |
+| 关键序列脚本 | **5/5 PASS** |
+| 分离/导出 | 2 轨、4 轨、Demucs 均 PASS |
+| SAF grant | 1→0 PASS |
+| 队列/repeat | PASS |
+| write 故障注入 | PASS（AudioTrack 重建、EQ 重挂、heartbeat） |
 | 损坏 playlists.json | PASS（保留 corrupt 副本，不覆盖） |
-| 队列/repeat | PASS（2 首，one/all，next/prev） |
-| revoke grant | PASS（1→0） |
-| 分离中取消 | PARTIAL（abort 已触发；UI 回退未完全断言） |
+| Service 启动竞态 `sepdouble` | PASS（job2 Running；UI 缓冲提示；自动多轨） |
 
-## 5. 未完成/仍需补测
+## 3. 本轮发现并修复
 
-- 15 条序列中剩余的歌单删除/当前曲/revoke 人工组合
-- #2 完整 UI Stopping 仍不稳定性；C SeparationService 启动竞态仍开放
-- 损坏 playlists.json 真机（JVM 已测）
-- 15 条序列中剩余的分离/歌单/导出人工序列
-- #2：Service/Domain 竞态 + UI 视觉回退均已验证（`sepdouble` → 缓冲提示 → 自动多轨）
-- 未做 2h 以外的低内存/后台杀进程专项
+1. **Stopping 时迟到 `StemsLoaded` 清空 `pendingStart`**
+   - 随机 reducer 测试复现，已修 + 回归测试
+
+2. **C：SeparationService 启动竞态**
+   - 第二次 Start 读到旧终态 `stopSelf` → job2 “分离服务丢失”
+   - 修复：2s 启动宽限 + 新 Start 取消旧 grace timer + 宽限后核对
+   - `sepdouble` 与 UI 均验证通过
+
+3. **歌单损坏静默 0 首**
+   - 发现：`PlaylistStore` 损坏时拒绝覆盖，但 UI 只显示 0 首，导入静默失败
+   - 修复：歌单页 error banner + 确认重建入口；`resetCorruptToDefault()` 原子恢复
+   - JVM 回归：损坏 → 备份存在 → 重建 → `corrupt=false` → 保存恢复
+   - 真机：banner 显示 → 重建 → 导入 `0→1 首` 成功
+
+## 4. Release 验证
+
+- 升级：debug `0.2.55-test` → release `0.2.55`，安装成功，数据保留
+  - 歌单仍为 1 首
+  - Spleeter 2 轨模型仍显示“已安装”
+  - `TestCommandService` 在 release 中不存在（`am start-service` 返回 not found）
+- Clean install：release APK 全新安装成功
+  - 首次导入 `who_am_i_44k.wav` → 1 首
+  - 播放日志 `loadAndPlay`，无 FATAL/ANR
+- 息屏 8s 后亮屏：MediaSession 仍 `PLAYING`，位置继续
+
+## 5. 未完成/受限
+
+- **蓝牙/USB 耳机路由、拔出/插入**：设备锁屏，无法继续 UI/人工听感验证
+- **音频焦点抢占/恢复**：需要来电或第二个音频 App，当前未做
+- 30–60min 多轨 + 分离 + 后台混合 soak
+- release 包下分离功能（模型升级保留，但未在 release 再跑一次 edge/4-stem/Demucs）
+- 分离取消的完整 UI 回退断言仍是 PARTIAL
 
 ## 6. 发布决定
 
-**测试执行完成；v0.2.55 暂未打 tag。**
+**暂不打 v0.2.55 tag。** 等设备解锁后补：
+1. 蓝牙/USB 路由 + 焦点
+2. release 包分离 smoke
+3. 30–60min 多轨/后台 soak
 
-门禁状态：
-
-- [x] JVM 全绿
-- [x] 2h soak 无 FATAL/ANR/播放错误
-- [x] 核心多轨/AV3A/EQ/write 故障序列
-- [x] 核心关键序列（5 组脚本 + 队列/repeat/revoke/写失败/分离取消）
-- [x] 分离/导出/SAF/损坏歌单真机序列
-- [x] #2 / C 启动竞态与 UI 恢复
-- [x] 无未解释 P0/P1
-
-下一版若包含 B1 架构改动，按计划跳 **v0.3.0**；否则先完成上述剩余测试再发 v0.2.55。
+全绿后再 tag；下一版若包含 B1 架构改动则直接 **v0.3.0**。
