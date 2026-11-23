@@ -2,6 +2,13 @@
 
 > 记录“改了什么、为什么、怎么验证”，方便后来人理解代码演进。这里不记录内部设备流水号或个人环境信息。
 
+## v0.2.60：AGP 9.5.2
+
+- AGP 9.5.0 → **9.5.2**（Gradle wrapper 保持 9.8.2）。
+- 验证：JVM 508/0、lintDebug、assembleRelease、lintVitalRelease 全部通过。
+- 该升级不影响自建 F-Droid 源：fdroidserver 只索引预构建 APK，不参与 Gradle 构建。
+- 官方 F-Droid buildserver 仍受 API 33/Gradle 工具链限制，与此补丁无关。
+
 ## v0.2.59：评审 P1-7/P1-8
 
 - P1-8：`SeparationDomain` 增加 watchdog 定时器，实际发送 `OperationTimeout`：
