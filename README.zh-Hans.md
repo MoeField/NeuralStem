@@ -1,0 +1,332 @@
+# NeuralStem
+
+[![Android CI](https://github.com/MoeField/NeuralStem/actions/workflows/android-ci.yml/badge.svg)](https://github.com/MoeField/NeuralStem/actions/workflows/android-ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
+[English](README.md) | 简体中文
+
+**把一首歌拆成人声和伴奏，然后分开调。**
+
+一个完全**离线**的 Android 音乐播放器。导入一首歌，它会在你的手机上用 AI 把歌拆成
+**人声** / **伴奏**（或 4 轨：人声 / 鼓 / 贝斯 / 其他），然后你可以分开调它们的音量、
+静音任意一轨、或者只听某一轨。
+
+**所有计算都在本机完成** —— 不联网、不上传、不需要账号。
+
+---
+
+## 这能用来做什么
+
+| 场景 | 怎么用 |
+|---|---|
+| **学一首歌** | 只留人声跟着唱，或只留伴奏当卡拉OK |
+| **扒谱 / 扒和弦** | 去掉人声，吉他贝斯听得清楚很多 |
+| **练习乐器** | 独奏伴奏轨 + 减速到 0.7× + 降 2 个半音，慢慢跟 |
+| **听细节** | 独奏某一轨，听清编曲里的某个声部 |
+| **做 Demo** | 导出分离后的 WAV，拿去剪辑（目前 4 轨分离后可导出） |
+
+---
+
+## 主要特性
+
+### 🎛 分离与混音
+- **2 轨**：人声 + 伴奏
+- **4 轨**：人声 / 鼓 / 贝斯 / 其他
+- **20 种模型可选** —— 从「4 分钟歌 30 秒搞定」到「音质优先」，按你的手机性能挑
+- 每轨独立的 **音量 / 静音 / 独奏**
+- **边分离边播**：不等整首分完，先听已经分好的部分
+
+### 🎚 播放调节
+- **变速** —— 速度区间由设置决定，默认 `0.71× – 1.40×`（可在设置里放宽到 `0.25× – 4×`），**变速不变调**
+- **变调** ±12 半音，**变调不变速**
+- **均衡器（EQ）** —— 内置多段均衡，频段数取决于你的设备
+- 波形拖动跳转、多轨波形分色叠加
+- 后台播放 + 锁屏控制
+
+### 💾 本地优先
+- 分离**完全离线**，CPU 推理，不依赖云服务
+- 模型一次下载，之后永久可用
+- 无账号、无遥测、无广告
+
+---
+
+## 开始使用
+
+### 1. 安装
+
+从 [Releases](https://github.com/MoeField/NeuralStem/releases) 下载 APK：
+
+| 文件 | 用在哪 |
+|---|---|
+| `app-arm64-v8a-release.apk` | **绝大多数手机**（推荐，体积最小） |
+| `app-universal-release.apk` | 不确定架构时用 |
+| `app-x86_64-release.apk` | 模拟器 |
+
+> 需要 Android 6.0（API 23）或更高。
+
+#### F-Droid 自建源（可选）
+
+也可以直接把自建源加到 F-Droid 安装/更新，之后跟随 Release 自动更新：
+
+```text
+https://neuralstem.miku.pub/fdroid/repo/
+```
+
+F-Droid → 设置 → 仓库 → 添加上述地址 → 刷新。  
+仓库地址和签名固定，后续发版不需要重新添加。
+
+### 2. 下载模型（首次必做）
+
+分离需要 AI 模型文件，App 里可以直接下：
+
+1. 打开 **设置** → **模型库**
+2. 点任意模型右侧的「下载」
+3. 确认许可 → 等待下载完成（会显示进度）
+
+**第一次用建议只下这一个**：
+
+> **Spleeter 2 轨** · 39 MB · 中端机约 8× 实时（4 分钟歌 ≈ 30 秒）
+
+想试更好的音质再下 UVR 系列（28–64 MB，更慢但分离更干净）。
+不确定下哪个？看 **设置 → 模型库** 里每个模型标的「实测 xx×」——
+**数字越大越快**，1.0× 表示分离耗时 ≈ 歌曲时长。
+
+### 3. 导入并播放
+
+1. 底部选 **播放器** → 点 **导入音频** → 选一首歌
+2. 拖动波形跳转；右侧竖条调**速度 / 音高**
+
+### 4. 分离
+
+1. 底部选 **分离** → 点「开始分离」
+2. 选一个档位（只有**已安装且已启用**的档位会显示）：
+
+   **2 轨（人声 + 伴奏）** —— 按你的手机实测速度自动分簇：
+
+   | 档位 | 含义 |
+   |---|---|
+   | **⚡ 极快** | ≥2× 实时，边听边分离无压力 |
+   | **临界** | 0.9–2×，分离耗时 ≈ 播放时长 |
+   | **慢** | 0.4–0.9×，慢于播放 |
+   | **很慢** | <0.4×，需耐心等 |
+
+   **4 轨（人声/鼓/贝斯/其他）** —— 固定 2 档：**快速**（Spleeter）/ **质量**（Demucs）
+
+3. 等分离完成 → **自动切到多轨**
+4. 回 **播放器**，开关显示「多轨」就说明在播分离结果了
+
+### 5. 分开调
+
+底部选 **混音**：
+- 每轨的**音量滑块** / **静音** / **独奏**
+- 下方是 **EQ**
+
+---
+
+## 调节档位和模型
+
+打开 **设置 → 分离策略**，你可以：
+
+- **关掉不想用的档位** —— 分离页就不会显示它（比如中端机可以关掉「很慢」，省得误点）
+- **给每个档位换模型** —— 同一个速度档里如果有多个模型，点一下切换
+- **4 轨的两档也可以关**
+
+> 档位名字指的是**分离速度**，不是音质分级。
+> 同一个档位里可以换模型（在「分离策略」里）——不同模型的速度和音质都不同。
+
+---
+
+## 常见问题
+
+**Q：分离要多久？**
+看模型和你手机的 CPU。中端机（骁龙 6/7 系）用 Spleeter 约 **8 倍实时** ——
+4 分钟的歌 30 秒左右。旗舰机更快，老机器会慢些。
+App 首次启动会让你跑一次**设备性能检测**，之后按本机实测速度给模型分档。
+
+**Q：为什么下载后模型库还显示「未安装」？**
+不会 —— 下载完成会立即变成「✓ 已安装」，已装计数也会更新。
+如果遇到，重进一次模型库页面。
+
+**Q：分离完能导出吗？**
+可以。2 轨和 4 轨分离完成后，分离页的「导出到 Music/separate/」按钮会亮起，
+导出无损 WAV 到 `Music/separate/<歌名>/<模型>/`（模型目录如 `spleeter-2stem` / `spleeter-4stem` / `demucs`）。
+
+前提是 `coverage.complete`：如果只做了快速/成本门控的局部分离，按钮不会亮，避免导出半截静音。
+
+**Q：边分离边播是什么意思？**
+不整首等完。开始分离后会先攒一段，够你连续听之后自动切过去，
+剩下的部分在后台继续分离。如果分离速度跟不上播放（慢模型），App 会**暂停**等你，
+而不是放静音 —— 转盘外环上的**黄色刻度**就是分离进度。
+
+**Q：为什么有些模型标「实验」？**
+UVR 系列的音质差异没有统一评测，标「实验」是提醒你它们的定位可能重叠。
+用之前可以先在「分离策略」里试听对比。
+
+**Q：会联网吗？**
+只有**下载模型**时联网，且只连你选的下载源（HuggingFace 或镜像）。
+分离、播放全部离线。
+
+**Q：分离页上只看到一两个档位，是我下少了模型吗？**
+两个原因，都正常：
+1. 你的**手机太慢/太快**，某些速度簇里没有模型（比如中端机可能没有「极快」之外的快模型）；
+2. 你在「设置 › 分离策略」里**关掉了**某些档位。
+
+打开「设置 › 分离策略」能看到每个档位的真实状态：有模型、无模型、还是被你关了。
+
+---
+
+## 已知限制
+
+- **分离质量**：Spleeter 是 2019 年的模型，人声/伴奏能分开但有渗漏。
+  对「学歌 / 扒谱」够用，不是录音室级别。
+- **多声道输入**：超过 2 声道的音频只取前 2 声道。
+- **重装 App 会丢模型**：模型存在应用私有目录，卸载会一并删除，需重新下载。
+- **个别机型 MP3 seek 卡顿**：某些设备软解器的已知问题，App 有自动恢复兜底。
+
+---
+
+## 技术实现（给开发者）
+
+<details>
+<summary>点开看详细技术栈与构建方法</summary>
+
+### 技术栈
+
+| 层 | 选型 |
+|---|---|
+| 语言 / UI | Kotlin + Jetpack Compose（Material 3） |
+| 音频播放 | Media3 / ExoPlayer（会话门面）+ 自研 StemMixer（单 AudioTrack 混音） |
+| 变速变调 | ExoPlayer 内置 Sonic（`setPlaybackParameters`） |
+| 波形 | 自绘 Compose Canvas（50 包络点/秒，与采样率无关） |
+| 本地分离 | sherpa-onnx（ONNX Runtime）+ Spleeter / UVR-MDX 模型 |
+| 均衡器 | 平台 `android.media.audiofx.Equalizer` |
+| 后台 | `MediaSessionService` + `dataSync` 前台服务 |
+| API | minSdk 23 · targetSdk 37 |
+
+**架构要点**：播放器与多轨混音都放在 `PlaybackService`（前台服务）里，
+MediaSession 始终认 `singlePlayer`（多轨时它是主轨）→ 通知/后台/锁屏天然可用。
+
+### 构建
+
+环境要求：
+- Android Studio（含 SDK，编译需 **API 37**）
+- **NDK `30.0.16248370`** + **CMake `4.1.2`**
+
+```bash
+unset ANDROID_PREFS_ROOT          # AGP 9.x 若同时设 ANDROID_USER_HOME 会卡住
+./gradlew :app:assembleDebug
+./gradlew :app:installDebug
+```
+
+### 发布签名
+
+正式签名配置见 [`docs/DEVELOP.md`](docs/DEVELOP.md) 的「发布」一节。
+CI 用 Repository Secrets（`KEYSTORE_BASE64` / `KEYSTORE_PASSWORD` / `KEY_ALIAS` / `KEY_PASSWORD`）
+自动注入；本地无密钥时自动回退 debug 签名。
+
+```bash
+./gradlew :app:assembleRelease -x lintVitalAnalyzeRelease -x lintVitalRelease
+```
+
+> `-x lintVital*` 是因为 lint 需要额外下载 `lint-gradle`，网络受限时会失败；
+> CI 上可以不加（runner 能访问 dl.google.com）。
+
+### 开发文档
+
+- [`docs/DEVELOP.md`](docs/DEVELOP.md)：构建、架构、关键不变量、常见坑、测试与发布。
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)：播放/分离/持久化不变量与被否决方案。
+- [`docs/REMEDIATION_STATUS.md`](docs/REMEDIATION_STATUS.md)：审计整改状态、验证缺口与后续版本计划。
+- [`docs/REVIEW_CONVENTIONS.md`](docs/REVIEW_CONVENTIONS.md)：代码/架构评审约定与发版门禁。
+- [`docs/STABILITY_TEST_PLAN.md`](docs/STABILITY_TEST_PLAN.md)：状态稳定性测试、故障注入与 v0.2.55 发布门禁。
+- [`docs/STABILITY_REPORT_v0.2.55.md`](docs/STABILITY_REPORT_v0.2.55.md)：稳定性测试实跑记录。
+- [`docs/STEP_HISTORY.md`](docs/STEP_HISTORY.md)：阶段/版本改动历史与验证方式。
+- [`docs/LICENSING.md`](docs/LICENSING.md)：MIT / NCM / AVS3 参考实现边界。
+- [`docs/AV3A_INVESTIGATION.md`](docs/AV3A_INVESTIGATION.md)：AV3A 调查与许可边界。
+- [`docs/archive/`](docs/archive/README.md)：历史快照（审计/验收/长跑/设计稿），不代表当前状态。
+
+### 性能（参考设备实测）
+
+| 项 | 结果 |
+|---|---|
+| 4 分钟歌分离（Spleeter fp16，前台） | **30.2 s**（mp3）/ 30.7 s（wav），≈7.9× 实时 |
+| 峰值内存 | ~710–740 MB |
+| 缓存命中 | < 100 ms |
+
+后台运行会进低优先级 cgroup，耗时可增至约 2×（已用前台服务缓解）。
+
+</details>
+
+---
+
+## AVS3-P3（Audio Vivid）支持状态
+
+> **实验性，需自行编译，不随发布版分发。**
+>
+> AV3A 的 FFmpeg/OpenHarmony/Media3 支持边界与许可调查见
+> [`docs/AV3A_INVESTIGATION.md`](docs/AV3A_INVESTIGATION.md)。
+
+网易云音乐下载的音频大量使用 **AVS3-P3** 编码（MP4 里 codec tag 为 `av3a`），
+Android 原生不支持。实测一个典型的网易云私有目录（1001 个文件）：
+
+| 扩展名 | 数量 | 内部编码 |
+|---|---|---|
+| `.ncm` | 732 | 多数为 `av3a` |
+| `.m4a` | 220 | **219 个是 `av3a`** |
+| `.flac` | 45 | 原生支持 ✅ |
+| `.mp3` | 4 | 原生支持 ✅ |
+
+也就是说：**「没加密」不等于「能播」** —— 那些 `.m4a` 只是没套 NCM 壳，里面仍是 AVS3。
+
+### 为什么仓库里不含解码器
+
+AVS3-P3 解码器的参考实现（[Dreamello/av3a](https://github.com/Dreamello/av3a)）
+**不是** MIT/Apache/GPL，而是《世界超高清视频产业联盟代码共享政策》：
+
+| 条款 | 内容 |
+|---|---|
+| 第二条 | 本政策**仅适用于联盟会员**，由联盟向提出申请的会员进行许可 |
+| 第六条 | 除「有条件转发」外**不能以任何形式转发**；而有条件转发只允许会员把**目标代码**交给**自己的下游客户** |
+| 第七条 | 许可**不可转让、不可分许可** |
+| 第八条 | **不包含专利许可**（AVS3-P3 实施另涉专利） |
+
+本项目既不是 UWA 会员、也不是某会员的下游客户，因此**源码与目标代码都不能再分发**。
+（顺带一提：FFmpeg 至今也没有 AVS3 音频解码器，`avs3` demuxer 是**视频**（P2）的。）
+
+### 想自己开？
+
+```bash
+./tools/fetch-avs3.sh                          # 拉源码到本地（不进 git）
+./gradlew app:assembleDebug -Pwith_ncm=true     # 编译（产出 libavs3self.so）
+```
+
+拉取后 CMake 会自动发现并编译成**独立的** `libavs3self.so`，
+桥（`avs3_audio_bridge.c`）通过 `dlopen` 加载 —— 这样桥自身不含任何上游代码，可以干净地归入 MIT。
+
+```bash
+./tools/fetch-avs3.sh --clean    # 撤销
+```
+
+> ⚠️ 请自行确认你对上游代码的使用是否合规。本项目不承担相关责任。
+
+### 没有解码器时会怎样
+
+**不会影响任何其他功能**。导入、FLAC/MP3 播放、分离、变速、EQ、混音全部照常；
+只是 AVS3 曲目播不出来（`nativeInit` 返回失败码，UI 会告知）。
+
+---
+
+## 许可
+
+- 本项目代码：**MIT**（见 [LICENSE](LICENSE)）
+- **NCM 容器解析**（`app/src/ncm/`）：本项目自行实现的**格式互操作性**代码，同样 MIT。
+  它依据社区对 `.ncm` 格式的公开分析编写，仅用于解码**你自己已购买/已下载**的文件，
+  默认不参与编译（需 `-Pwith_ncm=true`）。
+  注意：绕过 DRM 在多数法域可能构成「规避技术措施」，请自行判断合规性。
+- **AVS3-P3 解码器**：**不在本仓库内**，按 UWA 代码共享政策授权，需自行获取，见上一节。
+- 第三方库与**模型权重**许可不统一 —— 商用前请逐个核对，见 [NOTICE](NOTICE)
+- UVR / MDX-Net 系列：UVR 官方 README 声明其模型按 **MIT** 使用，并要求第三方**署名 UVR 及其开发者**
+  （<https://github.com/Anjok07/ultimatevocalremovergui#license>）。
+  仅适用于 UVR 核心 UVR-MDX-NET 系列；Blane187 等聚合仓库混有 Demucs/MDX23C/Kim 等第三方权重，
+  不能把整个仓库统称 MIT。
+  下载转发页：<https://github.com/k2-fsa/sherpa-onnx/releases/tag/source-separation-models>
+  权重上游：<https://github.com/TRvlvr/model_repo/releases/tag/all_public_uvr_models>
