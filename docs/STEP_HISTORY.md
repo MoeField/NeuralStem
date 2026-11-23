@@ -2,6 +2,18 @@
 
 > 记录“改了什么、为什么、怎么验证”，方便后来人理解代码演进。这里不记录内部设备流水号或个人环境信息。
 
+## v0.2.59：评审 P1-7/P1-8
+
+- P1-8：`SeparationDomain` 增加 watchdog 定时器，实际发送 `OperationTimeout`：
+  - Decoding 30s
+  - LoadingStems 8s
+  - Separating 120s 无进度
+- P1-7：`SeparationRepository.launchSeparation` 用 `Mutex` 包住整个 worker block；
+  连续启动时任意后继 worker 都等当前 worker 真正退出，不再只 join 一层。
+- 真机 `sepdouble`：第二次 Start 后 job2 稳定 `Running/Separating`。
+- 验证：JVM 508/0、lintDebug 通过。
+- 剩余：P1-14（I1–I3 AudioSink 守护测试）留到结构性重构批次。
+
 ## v0.2.58：评审 P1 第二批
 
 - P1-4：`StemMixer.close` join 超时后不再释放可能仍被渲染线程使用的 AudioTrack/voices，改为记录并交给进程退出。

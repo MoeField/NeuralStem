@@ -11,6 +11,8 @@ import android.os.SystemClock
 import android.util.Log
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
@@ -179,6 +181,13 @@ class SeparationRepository(private val app: Application) {
     /** 任务代号：每次启动 +1。等待旧任务 join 期间又被新启动取代时用来放弃。 */
     private val generation = java.util.concurrent.atomic.AtomicLong(0L)
 
+    /**
+     * P1-7：整个 worker block 串行化。
+     * 旧实现只 join `previous` 一层：A 运行 → B 等 A → C 取消 B 后只 join B，
+     * 而 B 已取消/未启动，C 会在 A 仍写缓存时并发启动。Mutex 保证 lock 跨 block 持有。
+     */
+    private val workerMutex = Mutex()
+
     val isRunning: Boolean get() = job?.isActive == true || cancelledJob?.isActive == true
 
     /**
@@ -200,10 +209,11 @@ class SeparationRepository(private val app: Application) {
         previous?.cancel()
         val myGen = generation.incrementAndGet()
         val newJob = scope.launch {
-            previous?.join()
-            // 在等旧任务期间又被更新的启动取代 → 静默放弃
-            if (generation.get() != myGen) return@launch
-            block(myGen)
+            // Mutex 在整个 block 期间持有 → 任意后继启动都必须等当前 worker 真正结束。
+            workerMutex.withLock {
+                if (generation.get() != myGen) return@withLock
+                block(myGen)
+            }
         }
         job = newJob
         newJob.invokeOnCompletion {

@@ -17,6 +17,10 @@ import pub.miku.neuralstem.spike.SeparationRepository
 import pub.miku.neuralstem.spike.SherpaSourceSeparation
 import java.io.File
 
+private const val DECODE_TIMEOUT_MS = 30_000L
+private const val LOAD_TIMEOUT_MS = 8_000L
+private const val SEPARATION_STALL_MS = 120_000L
+
 /** 分离 UI 的派生视图；PlayerState/SeparationScreen 不再各自存这些字段。 */
 data class SeparationEdgeUi(
     val separationOn: Boolean = false,
@@ -82,6 +86,9 @@ class SeparationDomain private constructor(private val app: Application) {
     private var activeJobId: Long? = null
     private var activeSourcePath: String? = null
     private var sourceReady = false
+
+    /** P1-8：只有一个 watchdog 定时器；按当前 job/operation 复核后再发事件。 */
+    private var timeoutJob: kotlinx.coroutines.Job? = null
 
     init {
         scope.launch {
@@ -238,6 +245,31 @@ class SeparationDomain private constructor(private val app: Application) {
         }
     }
 
+    /**
+     * P1-8：生产代码必须真的发送 OperationTimeout，否则 Preparing/LoadingStems
+     * 会永久停在 busy。定时器只发事件，状态迁移仍由 reducer 决定。
+     */
+    private fun armTimeout(jobId: Long, kind: OperationKind, delayMs: Long) {
+        timeoutJob?.cancel()
+        timeoutJob = scope.launch {
+            delay(delayMs)
+            val job = controller.snapshot.value.job
+            if (job?.jobId != jobId) return@launch
+            if (operationKindOf(job.operation) != kind) return@launch
+            Log.w(TAG, "operation timeout job=$jobId kind=$kind")
+            controller.send(SeparationEvent.Timeout.OperationTimeout(jobId, kind))
+        }
+    }
+
+    private fun operationKindOf(op: Operation?): OperationKind? = when (op) {
+        is Operation.Decoding -> OperationKind.DECODING
+        is Operation.Separating -> OperationKind.SEPARATING
+        is Operation.Backfilling -> OperationKind.BACKFILLING
+        is Operation.LoadingStems -> OperationKind.LOADING_STEMS
+        is Operation.Cancelling -> OperationKind.CANCELLING
+        null -> null
+    }
+
     private fun startEngine(effect: SeparationEffect.StartDecode) {
         activeJobId = effect.jobId
         activeSourcePath = effect.request.sourcePath
@@ -265,6 +297,7 @@ class SeparationDomain private constructor(private val app: Application) {
                         chunkOverrideFrames = request.chunkOverrideFrames,
                     )
             }
+            armTimeout(effect.jobId, OperationKind.DECODING, DECODE_TIMEOUT_MS)
             Log.i(TAG, "startEngine job=${effect.jobId} backend=${request.backend}")
         } catch (t: Throwable) {
             Log.e(TAG, "startEngine failed", t)
@@ -283,6 +316,7 @@ class SeparationDomain private constructor(private val app: Application) {
             sendDomain(SeparationEvent.Domain.StemsLoadFailed(effect.jobId, "stem 文件缺失"))
             return
         }
+        armTimeout(effect.jobId, OperationKind.LOADING_STEMS, LOAD_TIMEOUT_MS)
         val ok = runCatching { bridge.loadStems(effect.jobId, files) }.getOrDefault(false)
         if (ok) {
             sendDomain(SeparationEvent.Domain.StemsLoaded(effect.jobId, effect.files))
@@ -325,6 +359,7 @@ class SeparationDomain private constructor(private val app: Application) {
                     watermarkFrame = done,
                     complete = false,
                 )
+                armTimeout(jobId, OperationKind.SEPARATING, SEPARATION_STALL_MS)
                 if (!sourceReady) {
                     sourceReady = true
                     sendDomain(SeparationEvent.Domain.SourceReady(jobId, coverage, files = null))
