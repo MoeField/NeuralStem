@@ -1,6 +1,6 @@
 # 审计整改状态与计划
 
-> 基线：v0.2.58 (258)，tag `v0.2.58`，HEAD 以 `git log` 为准。  
+> 基线：v0.2.59 (259)，tag `v0.2.59`，HEAD 以 `git log` 为准。  
 > 本文是**整改看板**；不变量见 [ARCHITECTURE.md](ARCHITECTURE.md)，发布历史见 [STEP_HISTORY.md](STEP_HISTORY.md)。
 
 ## 0. TL;DR
