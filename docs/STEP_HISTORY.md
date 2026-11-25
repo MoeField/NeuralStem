@@ -2,6 +2,17 @@
 
 > 记录“改了什么、为什么、怎么验证”，方便后来人理解代码演进。这里不记录内部设备流水号或个人环境信息。
 
+## v0.2.65：稳定性测试发现并修复 SeparationService 常驻前台
+
+- **测试发现**：`SeparationService`（`dataSync` 前台）在分离完成（Done/EdgeDone）后仍 `isForeground=true` 常驻，
+  4 分钟未停；系统侧已有其他 app 触发 `ForegroundServiceStartNotAllowedException: Time limit already exhausted for foreground service type dataSync` 的实证。
+- **根因**：终态 `_state.value = Done/EdgeDone` 在 worker job **内部**赋值，服务收到终态时
+  `repo.isRunning` 仍为 true（job 正在收尾），旧实现 `return@collectLatest` 后 job 结束但 state 不再变化 → 永不 `stopSelf`。
+- **修法**：终态 + `isRunning=true` 时安排 `scheduleTerminalStopRetry()`：每 500ms 重查，最多 5s，repo idle 立即 `stopSelfCleanly()`。
+- **真机验证**：`edge done complete=true` 后 **0.5s** 打印 `terminal stop retry → repo idle, stopSelf`，
+  `dumpsys activity services` 不再有 `SeparationService`（只余 PlaybackService）。
+- 验证：JVM 512/0、lint 通过。
+
 ## v0.2.64：补全 P2-15（backup_rules 只改了一半）
 
 - `data_extraction_rules.xml` 已补 `avs3-pcm-cache` / `external/NCM`，但 `backup_rules.xml`

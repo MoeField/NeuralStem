@@ -57,6 +57,8 @@ class SeparationService : Service() {
     /** 本次 Service 启动后是否真的见过 Preparing/Running。 */
     private var sawActive = false
     private var graceStopJob: Job? = null
+    /** ★终态时 worker 还在收尾（isRunning=true）→ 延迟重查，避免服务永不停止。 */
+    private var terminalStopRetry: Job? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -117,7 +119,16 @@ class SeparationService : Service() {
                         // ★2026-11-09（P0-3）：取消→立刻重试时，旧任务会先发 Cancelled，
                         //   但新任务已经在排队/等待旧任务 join（repo.isRunning=true）。
                         //   此时不能 stopSelf，否则新任务掉出前台被降频。
-                        if (repo.isRunning) return@collectLatest
+                        //
+                        // ★2026-11-26 修复：终态（Done/EdgeDone…）是在 worker job **内部**
+                        //   赋值的，服务收到终态时 job.isActive 仍可能为 true（正在收尾）。
+                        //   旧实现直接 return → job 随后结束但 state 不再变化 → 服务
+                        //   永远停在 dataSync 前台（累计配额被持续消耗）。
+                        //   这里改为延迟重查：job 收尾完成后立即 stopSelf。
+                        if (repo.isRunning) {
+                            scheduleTerminalStopRetry()
+                            return@collectLatest
+                        }
                         val now = SystemClock.uptimeMillis()
                         // ★宽限期优先于 sawActive：第二次 Start 可能先收到旧任务终态，
                         //   此时 job2 还没登记为 running；2s 内一律不自停。
@@ -148,6 +159,27 @@ class SeparationService : Service() {
         nm?.notify(NOTIF_ID, buildNotification(percent, text))
     }
 
+    /**
+     * 终态时 worker 仍在收尾 → 每 500ms 重查一次（最多 5s），收尾完成后停服务。
+     * 这样既不打断“取消→立刻重试”（新 job 会重新置 isRunning），也不会让服务常驻。
+     */
+    private fun scheduleTerminalStopRetry() {
+        if (terminalStopRetry?.isActive == true) return
+        terminalStopRetry = scope.launch {
+            val repo = SeparationRepository.get(application)
+            repeat(10) {
+                delay(500)
+                if (stopped) return@launch
+                if (!repo.isRunning) {
+                    Log.i(TAG, "terminal stop retry → repo idle, stopSelf")
+                    stopSelfCleanly()
+                    return@launch
+                }
+            }
+            Log.w(TAG, "terminal stop retry 5s 后 repo 仍 running，保留前台（等待新任务/收尾）")
+        }
+    }
+
     /** 只停一次的 `stopSelf`（避免多终态重复触发）。 */
     private fun stopSelfCleanly() {
         if (stopped) return
@@ -163,6 +195,7 @@ class SeparationService : Service() {
             pub.miku.neuralstem.spike.state.SeparationDomain.peek()
                 ?.onSeparationServiceLost()
         }
+        terminalStopRetry?.cancel()
         scope.cancel()
         super.onDestroy()
     }
