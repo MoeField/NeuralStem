@@ -185,5 +185,6 @@ FDROID_KEY_PASSWORD（可省略，默认同 keystore 密码）
 - AVS3/NCM 参考解码器不入库；没有它时相关格式跳过。
 - 真实来电的音频焦点丢失没有自动化模拟（代码路径已单独测过焦点请求/丢弃）。
 - 0.71× 等非 1× 速度的后台长播：门面 ExoPlayer 可能先到 ENDED，混音器还在收尾；前台播放正常，后台生命周期仍需观察。
-- Release 已开启 R8 + resource shrinking；`TestCommandService` / `TestPanelActivity` / `SpikeActivity` 在 `src/debug`，release manifest 不含。JNI/反射 keep 规则见 `app/proguard-rules.pro`。
+- Release 已开启 R8 + resource shrinking；`TestCommandService` / `TestPanelActivity` / `SpikeActivity` 的 **manifest 声明在 `src/debug`**，release manifest 不含。
+  `devtools/` Kotlin 类仍在 `src/main`（TEST_HOOKS 构建与 `MainActivity` 共用），但 release 侧由 `BuildConfig.DEBUG/TEST_HOOKS` 守卫，不会消费测试命令。JNI/反射 keep 规则见 `app/proguard-rules.pro`。
 - `PlaylistStore` 的 VM 整份快照在极端时序下仍可能写回旧进度；已有锁避免数据丢失，只剩自愈式回退。

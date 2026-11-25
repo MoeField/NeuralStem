@@ -62,6 +62,7 @@
 #include <string.h>
 #include <android/log.h>
 #include <dlfcn.h>
+#include <pthread.h>
 
 #define TAG "Avs3Bridge"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  TAG, __VA_ARGS__)
@@ -147,9 +148,7 @@ static const char *const kLibCandidates[] = {
  * 用 dlopen 而非直接链接：① 缺库时给错误码而不是进程启动崩溃；
  * ② 保证本文件自身不含对方目标代码，可归 MIT（见上方注释）。
  */
-static int ensure_loaded(void) {
-    if (g_ready) return 0;
-
+static int load_locked(void) {
     const size_t n = sizeof(kLibCandidates) / sizeof(kLibCandidates[0]);
     for (size_t i = 0; i < n; i++) {
         const char *name = kLibCandidates[i];
@@ -185,6 +184,23 @@ static int ensure_loaded(void) {
     LOGI("未找到 AVS3 解码库（跑 tools/fetch-avs3.sh 可启用）；"
          "AVS3(av3a) 曲目将不可播，其他格式不受影响");
     return -1;
+}
+
+/*
+ * ★P2-11：ensure_loaded 会被多个 JNI 入口并发调用；旧实现用裸 `g_ready`
+ * 无锁判断，可能重复 dlopen 并让 p_* 函数指针半更新。
+ * 用 pthread_once 保证加载只执行一次，且所有调用者看到完整结果。
+ */
+static pthread_once_t g_load_once = PTHREAD_ONCE_INIT;
+static int g_load_result = -1;
+
+static void load_once_cb(void) {
+    g_load_result = load_locked();
+}
+
+static int ensure_loaded(void) {
+    pthread_once(&g_load_once, load_once_cb);
+    return g_load_result;
 }
 
 /* ==================== JNI 导出 ==================== */
@@ -441,7 +457,10 @@ Java_pub_miku_neuralstem_experimental_ncm_Avs3AudioDecoder_nativeDecode(
         return -1;
     }
 
-    int lenOut = 0;
+    // ★P2-12：官方 decode 接口没有输出容量参数，但约定 *pnLenOut 的入参是
+    //   缓冲区容量（返回时写实际字节数）。先传入 outCap，给解码器一个上限；
+    //   事后 lenOut > outCap 的检查仍保留作为最后防线。
+    int lenOut = outCap;
     int lenConsumed = 0;
     int rc = p_decode((void *) (uintptr_t) handle,
                       (unsigned char *) in, (int) inLen,

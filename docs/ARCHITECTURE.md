@@ -98,7 +98,10 @@ Compose UI (AppShell / screens)
 
 - `Finished` 只表示任务结束，不表示全曲可播/可导出。
 - 成本门控跳过 backfill 时，`coverage.complete=false`。
-- `exportableFiles()`、attach、导出按钮都必须检查 `coverage.complete`。
+- `exportableFiles()`、导出按钮必须检查 `coverage.complete`。
+- **FULL/手动 attach**（用户开分离开关）必须 `coverage.complete`。
+- **EDGE 边播的自动 attach**（gateReady）允许部分覆盖：这是“边听边分”的特性，
+  不能要求 complete。两者走不同事件路径（`onAttach` vs `onCoverageUpdated`）。
 - **被否决**：只看 `Finished + files != null`。
 
 ### J4：decode 目标必须用 generation 守卫

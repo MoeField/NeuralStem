@@ -74,7 +74,7 @@ object MediaSourceReader {
             }
         }
     }.onFailure {
-        Log.w(TAG, "readBytes 失败 uri=$uri", it)
+        Log.w(TAG, "readBytes 失败 uri=${uri.redacted()}", it)
     }.getOrNull()
 
     /**
@@ -101,7 +101,7 @@ object MediaSourceReader {
                 else -> null
             }
         }.onFailure {
-            Log.w(TAG, "readHead 失败 uri=$uri", it)
+            Log.w(TAG, "readHead 失败 uri=${uri.redacted()}", it)
         }.getOrNull()
 
     /**
@@ -128,7 +128,7 @@ object MediaSourceReader {
             else -> null
         }
     }.onFailure {
-        Log.w(TAG, "stat 失败 uri=$uri", it)
+        Log.w(TAG, "stat 失败 uri=${uri.redacted()}", it)
     }.getOrNull()
 
     /** `content://` 的 size + mtime，走 `OpenableColumns` / `DocumentsContract`。 */

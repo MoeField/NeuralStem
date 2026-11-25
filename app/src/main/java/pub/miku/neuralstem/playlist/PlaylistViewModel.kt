@@ -384,7 +384,7 @@ class PlaylistViewModel(app: Application) : AndroidViewModel(app) {
             .getOrNull()
         Log.i(
             TAG,
-            "importFolder: treeUri=$treeUri root=${root?.name} canRead=${root?.canRead()}",
+            "importFolder: treeUri=${treeUri.redacted()} root=${root?.name} canRead=${root?.canRead()}",
         )
         if (root == null) {
             Log.w(TAG, "importFolder: fromTreeUri 返回 null（未授权？）")

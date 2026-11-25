@@ -2,6 +2,22 @@
 
 > 记录“改了什么、为什么、怎么验证”，方便后来人理解代码演进。这里不记录内部设备流水号或个人环境信息。
 
+## v0.2.63：REVIEW P2 批次（attach 校验 / native / 导出 / 日志 / 权限）
+
+- **P2-9**：`onAttach` 要求 `coverage.complete`（FULL/手动 attach）；EDGE 边播 gate attach 保持允许部分覆盖，并在 `ARCHITECTURE.md` 写清两者区别。
+- **P2-10**：`sherpa_spike.c MakeResult` 逐声道判空，避免 `samples[c]==NULL` 时解引用崩溃。
+- **P2-11**：`avs3_audio_bridge.c ensure_loaded` 改用 `pthread_once`，消除并发 dlopen/半更新函数指针。
+- **P2-12**：AVS3 decode 前把 `lenOut` 初始化为 `outCap`（容量入参），事后越界检查保留为最后防线。
+- **P2-14**：修正 `DEVELOP.md` 措辞：devtools 类在 `src/main`，release 由 `BuildConfig` 守卫 + manifest 排除。
+- **P2-15**：备份规则补 `avs3-pcm-cache` 与 `external/NCM` 排除。
+- **P2-17**：删除 `StemExporter.export(original)` 死参数（从不传，`original.wav` 永不导出）。
+- **P2-18**：`deleteExisting` 的 MediaStore 查询加 `OWNER_PACKAGE_NAME`，避免删其它应用同名文件。
+- **P2-19**：URI 日志统一脱敏（`Uri.redacted()`）：只保留 scheme+authority，覆盖文件夹导入/读取失败 4 处。
+- **P2-20**：文件夹导入持久授权从 READ|WRITE 收窄为 READ。
+- **P2-16 保留**：`READ_MEDIA_AUDIO` / `READ_EXTERNAL_STORAGE` 不是纯冗余——NCM 构建读 `/sdcard/Music/NCM` 需要（manifest 注释有真机 EACCES 记录）；公开版不 request 不会触发授权弹窗。严格最小权限需 flavor 拆分，收益低于成本。
+- 验证：JVM **511/0**、`lintDebug` 通过；`with_ncm=true` 下 AVS3 桥编译通过。
+- 真机导出/文件夹导入验证待设备重连后补。
+
 ## v0.2.62：REVIEW P2 批次（播放边界 + 超时链路）
 
 - **P2-2**：`StemMixer` 全静音时只读 canonical 源推进时钟；若该源先 EOF 会永久 sleep 空转。改为 `framesRead > 0` 才跳过后续源，EOF 后换下一条。

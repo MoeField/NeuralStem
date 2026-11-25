@@ -10,9 +10,11 @@
         <exclude domain="file" path="uvr" />
         <exclude domain="file" path="stems-cache" />
         <exclude domain="file" path="pcm-cache" />
+        <exclude domain="file" path="avs3-pcm-cache" />
         <exclude domain="file" path="waveform-cache" />
         <exclude domain="file" path="playlists.json" />
         <exclude domain="external" path="uvr" />
+        <exclude domain="external" path="NCM" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="file" path="sherpa" />
@@ -21,8 +23,10 @@
         <exclude domain="file" path="uvr" />
         <exclude domain="file" path="stems-cache" />
         <exclude domain="file" path="pcm-cache" />
+        <exclude domain="file" path="avs3-pcm-cache" />
         <exclude domain="file" path="waveform-cache" />
         <exclude domain="file" path="playlists.json" />
         <exclude domain="external" path="uvr" />
+        <exclude domain="external" path="NCM" />
     </device-transfer>
 </data-extraction-rules>

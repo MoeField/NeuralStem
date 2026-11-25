@@ -46,14 +46,12 @@ object StemExporter {
     /**
      * @param songName 歌曲名（用作子目录名）
      * @param stemFiles 分离产物（WAV）；按文件名/STEM_KINDS 推断 stem 名
-     * @param original 原曲（可选，作为 `original.wav`/原扩展名导出）
      * @return 人类可读的结果消息
      */
     fun export(
         context: Context,
         songName: String,
         stemFiles: List<File>,
-        original: File? = null,
         modelName: String? = null,
     ): String {
         val safeSong = safeDirName(songName)
@@ -69,13 +67,6 @@ object StemExporter {
             val err = copyTo(context, f, dirRel, outName)
             if (err == null) ok++ else errors += "$outName: $err"
         }
-        original?.let { o ->
-            // 原曲：文件名用原名（英文清洗）+ 原扩展名
-            val ext = o.extension.ifBlank { "wav" }
-            val err = copyTo(context, o, dirRel, "original.$ext")
-            if (err == null) ok++ else errors += "original.$ext: $err"
-        }
-
         val msg = buildString {
             append("导出 $ok 个文件 → Music/separate/$safeSong/")
             if (safeModel != null) append("$safeModel/")
@@ -160,7 +151,7 @@ object StemExporter {
 
         // 新内容已完整落盘，才允许删旧同名。
         val keepId = runCatching { android.content.ContentUris.parseId(uri) }.getOrNull()
-        deleteExisting(resolver, dirRel, outName, keepId)
+        deleteExisting(resolver, dirRel, outName, keepId, context.packageName)
         // 若旧行存在导致新行被自动改名，尝试恢复最终名；失败不影响新内容。
         if (keepId != null) {
             runCatching {
@@ -181,12 +172,19 @@ object StemExporter {
         dirRel: String,
         outName: String,
         keepId: Long? = null,
+        packageName: String? = null,
     ) {
         runCatching {
+            // P2-18：限定本 app 拥有的行，避免删掉其它应用同名导出。
             val sel = "${MediaStore.Audio.Media.RELATIVE_PATH}=? AND " +
-                "${MediaStore.Audio.Media.DISPLAY_NAME}=?"
+                "${MediaStore.Audio.Media.DISPLAY_NAME}=?" +
+                (packageName?.let { " AND ${MediaStore.Audio.Media.OWNER_PACKAGE_NAME}=?" } ?: "")
             // MediaStore 的 RELATIVE_PATH 通常带结尾 '/'；两者都试一次。
-            val args = arrayOf("$dirRel/", outName)
+            val args = if (packageName != null) {
+                arrayOf("$dirRel/", outName, packageName)
+            } else {
+                arrayOf("$dirRel/", outName)
+            }
             val ids = ArrayList<Long>()
             resolver.query(
                 MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,

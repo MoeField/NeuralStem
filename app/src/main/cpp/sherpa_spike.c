@@ -123,6 +123,13 @@ static jobject MakeResult(JNIEnv *env, const SherpaOnnxSourceSeparationOutput *o
       LOGE("invalid stem[%d]: channels=%d frames=%d samples=%p", s, channels, frames, (void*)stem->samples);
       goto fail;
     }
+    // ★P2-10：samples 非空不代表每个声道指针非空；直接解引用 samples[c][f] 会 SIGSEGV。
+    for (int c = 0; c < channels; ++c) {
+      if (!stem->samples[c]) {
+        LOGE("invalid stem[%d] channel[%d]: samples=NULL", s, c);
+        goto fail;
+      }
+    }
 
     jfloatArray j_inter = (*env)->NewFloatArray(env, frames * channels);
     if (!j_inter) {

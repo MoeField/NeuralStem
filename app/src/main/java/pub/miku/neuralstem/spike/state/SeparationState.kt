@@ -284,4 +284,5 @@ object SeparationMessages {
     const val CANCEL_SLOW = "正在停止分离，请稍候"
     const val CLEAR_BUSY = "请先取消分离并关闭分离开关"
     const val EXPORT_MISSING = "没有可导出的完整分离结果"
+    const val INCOMPLETE = "分离尚未完整，暂不能打开"
 }

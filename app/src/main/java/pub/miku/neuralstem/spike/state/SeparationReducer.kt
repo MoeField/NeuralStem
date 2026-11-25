@@ -111,6 +111,9 @@ object SeparationReducer {
         if (!job.isTerminal) return notify(s, SeparationMessages.BUSY)
         if (job.lifecycle is Lifecycle.Failed) return notify(s, SeparationMessages.NO_RESULT)
         if (job.operation is Operation.LoadingStems) return ReduceResult(s)
+        // P2-9：FULL/手动 attach 必须完整。EDGE 边播的自动 attach 走
+        // onCoverageUpdated(gateReady)，不受此限制（部分覆盖是边播特性）。
+        if (!job.coverage.complete) return notify(s, SeparationMessages.INCOMPLETE)
         if (s.currentTrackKey == null || s.currentTrackKey != job.trackKey) {
             return notify(s, SeparationMessages.RESULT_OTHER_TRACK)
         }

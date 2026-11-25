@@ -144,16 +144,17 @@ fun PlaylistScreen(
     val pickFolder = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocumentTree()
     ) { uri ->
-        android.util.Log.i("PlaylistVm", "pickFolder callback uri=$uri")
+        android.util.Log.i("PlaylistVm", "pickFolder callback uri=${uri?.redacted()}")
         if (uri == null) {
             android.util.Log.i("PlaylistVm", "pickFolder: 用户取消")
         } else {
             // ★ 持久化 tree 权限：否则 app 重启/后续访问该文件夹下的子文档时
             //   会 SecurityException → 播放报 ERROR_CODE_IO_UNSPECIFIED。
             val ok = runCatching {
+                // P2-20：导入/播放文件夹只需读；固定 READ|WRITE 是过度授权。
                 context.contentResolver.takePersistableUriPermission(
                     uri,
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION,
                 )
                 true
             }.getOrElse {
