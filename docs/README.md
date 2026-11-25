@@ -4,6 +4,7 @@
 
 - [DEVELOP.md](DEVELOP.md) — 构建、架构、关键不变量、常见坑、测试与发布。
 - [ARCHITECTURE.md](ARCHITECTURE.md) — 播放/分离/持久化不变量与被否决方案。
+- [UI_STATE_MAP.md](UI_STATE_MAP.md) — 全部可操作控件与状态之间的依赖/影响对照表。
 - [STEP_HISTORY.md](STEP_HISTORY.md) — 各阶段/版本改了什么、为什么改、怎么验证。
 - [LICENSING.md](LICENSING.md) — MIT / NCM / AVS3 参考实现边界与禁止提交清单。
 - [AV3A_INVESTIGATION.md](AV3A_INVESTIGATION.md) — AV3A/Audio Vivid 的 FFmpeg、OpenHarmony、Media3、仓库与许可调查记录。
