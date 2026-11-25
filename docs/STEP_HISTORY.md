@@ -2,6 +2,15 @@
 
 > 记录“改了什么、为什么、怎么验证”，方便后来人理解代码演进。这里不记录内部设备流水号或个人环境信息。
 
+## v0.2.64：补全 P2-15（backup_rules 只改了一半）
+
+- `data_extraction_rules.xml` 已补 `avs3-pcm-cache` / `external/NCM`，但 `backup_rules.xml`
+  （API ≤30 的 `fullBackupContent`）漏了同样两项 → NCM 构建在 API 23–30 仍会把这些带上云备份。
+- 补上两条 exclude，使两套规则排除集一致。
+- 新增 `BackupRulesConsistencyTest`：断言 `backup_rules` 与 `data_extraction_rules` 的
+  `cloud-backup` / `device-transfer` 排除集完全相同，防止再出现“只改一套”。
+- 验证：JVM **512/0**。
+
 ## v0.2.63：REVIEW P2 批次（attach 校验 / native / 导出 / 日志 / 权限）
 
 - **P2-9**：`onAttach` 要求 `coverage.complete`（FULL/手动 attach）；EDGE 边播 gate attach 保持允许部分覆盖，并在 `ARCHITECTURE.md` 写清两者区别。

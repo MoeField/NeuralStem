@@ -11,7 +11,9 @@
     <exclude domain="file" path="uvr" />
     <exclude domain="file" path="stems-cache" />
     <exclude domain="file" path="pcm-cache" />
+    <exclude domain="file" path="avs3-pcm-cache" />
     <exclude domain="file" path="waveform-cache" />
     <exclude domain="file" path="playlists.json" />
     <exclude domain="external" path="uvr" />
+    <exclude domain="external" path="NCM" />
 </full-backup-content>
