@@ -176,25 +176,31 @@ object StemExporter {
     ) {
         runCatching {
             // P2-18：限定本 app 拥有的行，避免删掉其它应用同名导出。
+            // P2-18：owner 条件**不能放 selection**——部分 MediaProvider 上会把
+            // owner 为 NULL 的旧行一起过滤掉，导致旧导出删不掉、退化成 (2)(3) 重复。
+            // 改成 projection 读 owner、在代码里过滤：owner 为空（旧系统/旧版本）仍可删，
+            // owner 明确是别的 app 才跳过。
             val sel = "${MediaStore.Audio.Media.RELATIVE_PATH}=? AND " +
-                "${MediaStore.Audio.Media.DISPLAY_NAME}=?" +
-                (packageName?.let { " AND ${MediaStore.Audio.Media.OWNER_PACKAGE_NAME}=?" } ?: "")
-            // MediaStore 的 RELATIVE_PATH 通常带结尾 '/'；两者都试一次。
-            val args = if (packageName != null) {
-                arrayOf("$dirRel/", outName, packageName)
-            } else {
-                arrayOf("$dirRel/", outName)
-            }
+                "${MediaStore.Audio.Media.DISPLAY_NAME}=?"
+            val args = arrayOf("$dirRel/", outName)
             val ids = ArrayList<Long>()
             resolver.query(
                 MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
-                arrayOf(MediaStore.Audio.Media._ID),
+                arrayOf(
+                    MediaStore.Audio.Media._ID,
+                    MediaStore.Audio.Media.OWNER_PACKAGE_NAME,
+                ),
                 sel,
                 args,
                 null,
             )?.use { c ->
                 val idCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
-                while (c.moveToNext()) ids += c.getLong(idCol)
+                val ownerCol = c.getColumnIndex(MediaStore.Audio.Media.OWNER_PACKAGE_NAME)
+                while (c.moveToNext()) {
+                    val owner = if (ownerCol >= 0) c.getString(ownerCol) else null
+                    if (packageName != null && owner != null && owner != packageName) continue
+                    ids += c.getLong(idCol)
+                }
             }
             ids.filter { it != keepId }.forEach { id ->
                 runCatching {
