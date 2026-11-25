@@ -71,14 +71,19 @@ class MultiTrackController(
         val uri: Uri,
     )
 
-    private val tracks = LinkedHashMap<String, Track>()
+    /**
+     * ★P1-B：不可变 tracks 快照。load/loadStream 在 multiIo 线程**整体替换**，
+     * 主线程的 setVolume/toggleMute/toggleSolo 只读一次本地引用，
+     * 避免与 load 的 clear()+put() 并发触发 ConcurrentModificationException。
+     */
+    @Volatile private var tracks: List<Track> = emptyList()
 
     /** 独奏轨 id（null = 无独奏）。 */
     @Volatile
     var soloTrackId: String? = null
         private set
 
-    private var mixer: StemMixer? = null
+    @Volatile private var mixer: StemMixer? = null
 
     /**
      * ★P1-2：渲染线程唯一读取的增益快照。
@@ -86,7 +91,7 @@ class MultiTrackController(
      */
     @Volatile private var gainSnapshot: Map<String, Float> = emptyMap()
 
-    val trackList: List<Track> get() = tracks.values.toList()
+    val trackList: List<Track> get() = tracks
     val isEmpty: Boolean get() = tracks.isEmpty()
 
     // ==================== 载入 ====================
@@ -103,19 +108,21 @@ class MultiTrackController(
     ) {
         releaseAll()
         val sources = ArrayList<Pair<String, StemSource>>(items.size)
+        val newTracks = ArrayList<Track>(items.size)
         items.forEach { (id, label, uri) ->
             val f = File(requireNotNull(uri.path) { "$id: uri 无 path" })
             if (!f.exists()) {
                 Log.w(TAG, "load: $id 文件不存在 ${f.absolutePath}，跳过")
                 return@forEach
             }
-            tracks[id] = Track(id, label, uri)
+            newTracks += Track(id, label, uri)
             sources += id to FileStemSource(f)
         }
         if (sources.isEmpty()) {
             Log.w(TAG, "load: 没有任何有效 stem")
             return
         }
+        tracks = newTracks
         startMixer(sources, title)
     }
 
@@ -139,6 +146,7 @@ class MultiTrackController(
             session.totalFrames.toLong() * 1000L / session.sampleRate
         } else null
         val sources = ArrayList<Pair<String, StemSource>>(items.size)
+        val newTracks = ArrayList<Track>(items.size)
         for (item in items) {
             val host = item.uri.host ?: item.id
             val buf = if (host == "accompaniment") session.accompBuffer else session.vocalsBuffer
@@ -146,7 +154,7 @@ class MultiTrackController(
                 Log.w(TAG, "loadStream: host=$host 没有 ring buffer，跳过 ${item.id}")
                 continue
             }
-            tracks[item.id] = Track(item.id, item.label, item.uri)
+            newTracks += Track(item.id, item.label, item.uri)
             sources += item.id to RingBufferStemSource(
                 buffer = buf,
                 sampleRate = session.sampleRate,
@@ -157,6 +165,7 @@ class MultiTrackController(
             Log.w(TAG, "loadStream: 没有任何有效 stem")
             return
         }
+        tracks = newTracks
         startMixer(sources, title)
     }
 
@@ -177,7 +186,7 @@ class MultiTrackController(
         mixer = m
         Log.i(
             TAG,
-            "loaded ${tracks.size} track(s) [${tracks.keys.joinToString()}] " +
+            "loaded ${tracks.size} track(s) [${tracks.joinToString { it.id }}] " +
                 "title=${title ?: "-"} ${sr}Hz/${ch}ch (单 AudioTrack 混音)",
         )
     }
@@ -248,12 +257,12 @@ class MultiTrackController(
     // ==================== 音量 / 静音 / 独奏 ====================
 
     fun setVolume(trackId: String, volume: Float) {
-        tracks[trackId]?.volume = volume
+        tracks.firstOrNull { it.id == trackId }?.volume = volume
         applySoloMute()
     }
 
     fun toggleMute(trackId: String) {
-        tracks[trackId]?.let { it.muted = !it.muted }
+        tracks.firstOrNull { it.id == trackId }?.let { it.muted = !it.muted }
         applySoloMute()
     }
 
@@ -274,7 +283,7 @@ class MultiTrackController(
     private fun applySoloMute() {
         val solo = soloTrackId
         val next = HashMap<String, Float>(tracks.size)
-        tracks.values.forEach { t ->
+        tracks.forEach { t ->
             val gain = when {
                 solo != null && t.id != solo -> 0f     // 有独奏且不是本轨
                 t.muted -> 0f
@@ -306,7 +315,7 @@ class MultiTrackController(
     private fun releaseAll() {
         runCatching { mixer?.close() }
         mixer = null
-        tracks.clear()
+        tracks = emptyList()
         soloTrackId = null
         declaredDurationMs = null
     }

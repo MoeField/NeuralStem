@@ -780,9 +780,14 @@ class PlaybackService : MediaSessionService() {
                 when (customCommand.customAction) {
                 MultiTrackSession.CMD_LOAD -> handleLoadMultiTrack(args)
                 MultiTrackSession.CMD_LOAD_STREAM -> handleLoadStream(args)
-                MultiTrackSession.CMD_SET_VOLUME -> handleSetVolume(args)
-                MultiTrackSession.CMD_TOGGLE_MUTE -> handleToggleMute(args)
-                MultiTrackSession.CMD_TOGGLE_SOLO -> handleToggleSolo(args)
+                // P1-B：load 在 multiIo 进行中，这三条命令会读/写半初始化 tracks；
+                // 与 PLAY/PAUSE 对齐，完成前只接受不作用。
+                MultiTrackSession.CMD_SET_VOLUME ->
+                    if (multiLoadPending) ok("loading") else handleSetVolume(args)
+                MultiTrackSession.CMD_TOGGLE_MUTE ->
+                    if (multiLoadPending) ok("loading") else handleToggleMute(args)
+                MultiTrackSession.CMD_TOGGLE_SOLO ->
+                    if (multiLoadPending) ok("loading") else handleToggleSolo(args)
                 MultiTrackSession.CMD_EXIT -> handleExit()
                 MultiTrackSession.CMD_PLAY -> {
                     // 多轨 load 在 IO 中，完成前命令只接受、不触碰半初始化 mixer。

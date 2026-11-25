@@ -240,6 +240,9 @@ class MainActivity : ComponentActivity() {
                 // ★T0：测试命令总线消费循环（adb broadcast → 动作级驱动；见 devtools/）。
                 //   执行点调用**与 UI 点击相同**的 VM 方法（测试路径 = 用户路径）。
                 LaunchedEffect(Unit) {
+                    // P2-13：release 变体里不消费测试命令（双保险；TestCommandService
+                    // 本身也不在 release manifest，但 dispatch 曾无条件编译进去）。
+                    if (!BuildConfig.DEBUG && !BuildConfig.TEST_HOOKS) return@LaunchedEffect
                     TestCommandBus.pending.collect { cmd ->
                         if (cmd == null) return@collect
                         TestCommandBus.consume()

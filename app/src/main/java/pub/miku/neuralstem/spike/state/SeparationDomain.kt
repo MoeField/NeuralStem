@@ -369,8 +369,9 @@ class SeparationDomain private constructor(private val app: Application) {
             }
             is SeparationRepository.State.Done -> {
                 sourceReady = true
-                val total = current.coverage.totalFrames.coerceAtLeast(0L)
-                // P1-6：complete 必须由实际覆盖推导；total=0 时不能假装完整。
+                // P1-A：用 Done 携带的真实 totalFrames（缓存命中路径无 Running，
+                // 不能再读 reducer 内存里恒 0 的 current.coverage.totalFrames）。
+                val total = state.totalFrames.toLong().coerceAtLeast(0L)
                 val complete = total > 0L
                 val coverage = Coverage(
                     totalFrames = total,
@@ -399,7 +400,7 @@ class SeparationDomain private constructor(private val app: Application) {
             }
             is SeparationRepository.State.Done4 -> {
                 sourceReady = true
-                val total = current.coverage.totalFrames.coerceAtLeast(0L)
+                val total = state.totalFrames.toLong().coerceAtLeast(0L)
                 val complete = total > 0L
                 val coverage = Coverage(
                     totalFrames = total,

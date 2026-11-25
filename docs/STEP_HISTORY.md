@@ -2,6 +2,16 @@
 
 > 记录“改了什么、为什么、怎么验证”，方便后来人理解代码演进。这里不记录内部设备流水号或个人环境信息。
 
+## v0.2.61：REVIEW v0.2.60 两条 P1 回归修复
+
+- **P1-A**：`State.Done/Done4` 携带真实 `totalFrames`；正常路径用 `frameSource.totalFrames`，缓存命中从已校验完整的 WAV 头读回（`readWavTotalFrames`）。`SeparationDomain` 的 Done/Done4 改为用 `state.totalFrames` 推导 `complete`，修掉“缓存命中 → complete=false → 导出被阻断”。
+- **P1-B**：`MultiTrackController.tracks` 改 `@Volatile List<Track>` 整体替换；`load/loadStream` 构建新 List 快照；`setVolume/toggleMute` 用 `firstOrNull`；`CMD_SET_VOLUME/TOGGLE_MUTE/TOGGLE_SOLO` 与 PLAY/PAUSE 对齐加 `multiLoadPending` 门控。
+- **P2-1**：`mixer` 加 `@Volatile`。
+- **P2-13**：release 变体不消费测试命令（`dispatchTestCommand` 消费循环加 DEBUG/TEST_HOOKS 守卫）。
+- 新增 `SeparationRepositoryCacheTest`（完整 WAV 读回帧数 / 损坏文件回退 0）。
+- 验证：JVM **510/0**、`lintDebug` 通过；真机缓存命中后 `loadMultiTrack` 自动触发、30 轮高频 `mtvol` 无 `ConcurrentModificationException`。
+- 回应文档：`.review/REVIEW_v0.2.60_RESPONSE.md`。
+
 ## v0.2.60：AGP 9.5.2
 
 - AGP 9.5.0 → **9.5.2**（Gradle wrapper 保持 9.8.2）。

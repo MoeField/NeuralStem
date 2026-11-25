@@ -100,6 +100,8 @@ class SeparationRepository(private val app: Application) {
             val inferTimeMs: Long,
             val peakPssMb: Float,
             val audioDurationMs: Long,
+            /** 分离输出的总帧数；缓存命中时从 WAV 头读回，用于还原 coverage.complete。 */
+            val totalFrames: Int = 0,
             /** true = 命中缓存,未真正推理 */
             val fromCache: Boolean = false,
             /** ★P0：产生该结果的源文件；Domain 用它丢弃旧 job 的迟到终态。 */
@@ -119,6 +121,7 @@ class SeparationRepository(private val app: Application) {
             val inferTimeMs: Long,
             val peakPssMb: Float,
             val audioDurationMs: Long,
+            val totalFrames: Int = 0,
             val fromCache: Boolean = false,
             /** ★P0：产生该结果的源文件。 */
             val sourcePath: String? = null,
@@ -922,6 +925,7 @@ class SeparationRepository(private val app: Application) {
                 inferTimeMs = inferMs,
                 peakPssMb = peak,
                 audioDurationMs = audioMs,
+                totalFrames = frameSource.totalFrames,
             )
         } finally {
             runCatching { estimator?.close() }
@@ -941,6 +945,7 @@ class SeparationRepository(private val app: Application) {
                 inferTimeMs = parts.getOrNull(0)?.toLongOrNull() ?: 0L,
                 peakPssMb = 0f,
                 audioDurationMs = parts.getOrNull(1)?.toLongOrNull() ?: 0L,
+                totalFrames = readWavTotalFrames(files.first()),
                 fromCache = true,
             )
         } catch (t: Throwable) {
@@ -1049,7 +1054,7 @@ class SeparationRepository(private val app: Application) {
                     "realtime=${String.format("%.2f", rtf)}x " +
                     "peakPss=${String.format("%.1f", peak)}MB",
             )
-            State.Done4(outFiles, inferMs, peak, audioMs)
+            State.Done4(outFiles, inferMs, peak, audioMs, frameSource.totalFrames)
         } finally {
             runCatching { estimator?.close() }
             frameSource.close()
@@ -1068,6 +1073,7 @@ class SeparationRepository(private val app: Application) {
                 inferTimeMs = parts.getOrNull(0)?.toLongOrNull() ?: 0L,
                 peakPssMb = 0f,
                 audioDurationMs = parts.getOrNull(1)?.toLongOrNull() ?: 0L,
+                totalFrames = readWavTotalFrames(files.first()),
                 fromCache = true,
             )
         } catch (t: Throwable) {
@@ -1212,6 +1218,7 @@ class SeparationRepository(private val app: Application) {
                 inferTimeMs = inferMs,
                 peakPssMb = peak,
                 audioDurationMs = audioMs,
+                totalFrames = frameSource.totalFrames,
             )
         } finally {
             frameSource.close()
@@ -1341,6 +1348,7 @@ class SeparationRepository(private val app: Application) {
                 inferTimeMs = parts.getOrNull(0)?.toLongOrNull() ?: 0L,
                 peakPssMb = 0f,
                 audioDurationMs = parts.getOrNull(1)?.toLongOrNull() ?: 0L,
+                totalFrames = readWavTotalFrames(vocals),
                 fromCache = true,
             )
         } catch (t: Throwable) {
@@ -1404,5 +1412,9 @@ class SeparationRepository(private val app: Application) {
             instance ?: synchronized(this) {
                 instance ?: SeparationRepository(app).also { instance = it }
             }
+
+        /** 从完整 WAV 头读回总帧数（缓存命中时还原 coverage.complete 用；失败回退 0）。 */
+        internal fun readWavTotalFrames(f: File): Int =
+            runCatching { WavReader(f).use { it.totalFrames } }.getOrDefault(0)
     }
 }
