@@ -606,6 +606,22 @@ class SeparationReducerTest {
         )
         assertTrue(r.snapshot.job!!.lifecycle is Lifecycle.Failed)
         assertTrue(r.effects.any { it is SeparationEffect.StopForeground })
+        // P2-7：解码超时必须先 cancel repo/native，否则底层继续空跑。
+        assertTrue(r.effects.any { it is SeparationEffect.CancelJob })
+    }
+
+    @Test
+    fun separating_timeout_fails_job_and_cancels() {
+        // P2-8：分离 120s 无进度 → Failed + CancelJob，而不是只发一条告警后永远挂 Running。
+        val s = runningEdge()
+        val r = reduce(
+            s,
+            SeparationEvent.Timeout.OperationTimeout(1L, OperationKind.SEPARATING),
+        )
+        assertTrue(r.snapshot.job!!.lifecycle is Lifecycle.Failed)
+        assertTrue(r.effects.any { it is SeparationEffect.CancelJob })
+        assertTrue(r.effects.any { it is SeparationEffect.StopForeground })
+        assertTrue(r.effects.any { it is SeparationEffect.Notify })
     }
 
     @Test

@@ -349,7 +349,11 @@ class SeparationDomain private constructor(private val app: Application) {
                 // EDGE 的 coverage 由 tickEdge() 单一写入：它的百分比是
                 // (end-start)/total。Repo 的 Running(done/total) 是 end/total，
                 // 两套公式交替会导致实时进度来回跳。
-                if (current.kind == SeparationKind.EDGE) return
+                if (current.kind == SeparationKind.EDGE) {
+                    // P2-6：EDGE 跳过下面的 Running/CoverageUpdated，但停滞超时仍要臂装。
+                    armTimeout(jobId, OperationKind.SEPARATING, SEPARATION_STALL_MS)
+                    return
+                }
                 val total = state.totalFrames.toLong().coerceAtLeast(0L)
                 val done = state.doneFrames.toLong().coerceAtLeast(0L)
                 val coverage = Coverage(

@@ -2,6 +2,17 @@
 
 > 记录“改了什么、为什么、怎么验证”，方便后来人理解代码演进。这里不记录内部设备流水号或个人环境信息。
 
+## v0.2.62：REVIEW P2 批次（播放边界 + 超时链路）
+
+- **P2-2**：`StemMixer` 全静音时只读 canonical 源推进时钟；若该源先 EOF 会永久 sleep 空转。改为 `framesRead > 0` 才跳过后续源，EOF 后换下一条。
+- **P2-3**：`reconcileFacadeToMixer` 增加门面 `STATE_ENDED` 对齐：mixer 仍在播但门面提前 EOF 时，`seekTo(0)+play()` 拉回时钟。
+- **P2-5**：`pushTracksSnapshot` 改为基于现有 `sessionExtras` 复制，不再整体替换抹掉 `KEY_MIX_*`（≤200ms 窗口）。
+- **P2-6**：EDGE 分离的 `Running` 被跳过 → 停滞超时从不臂装；EDGE 分支也 `armTimeout(SEPARATING)`。
+- **P2-7**：Decoding 超时只置 Failed 不取消 repo；effects 增加 `CancelJob`。
+- **P2-8**：Separating 120s 无进度只发一次告警且不 re-arm；改为 `Failed + CancelJob + StopForeground + Notify`。
+- 测试：`decoding_timeout_fails_job` 补 CancelJob 断言；新增 `separating_timeout_fails_job_and_cancels`。
+- 验证：JVM **511/0**、`lintDebug` 通过。
+
 ## v0.2.61：REVIEW v0.2.60 两条 P1 回归修复
 
 - **P1-A**：`State.Done/Done4` 携带真实 `totalFrames`；正常路径用 `frameSource.totalFrames`，缓存命中从已校验完整的 WAV 头读回（`readWavTotalFrames`）。`SeparationDomain` 的 Done/Done4 改为用 `state.totalFrames` 推导 `complete`，修掉“缓存命中 → complete=false → 导出被阻断”。

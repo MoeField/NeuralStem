@@ -643,6 +643,8 @@ object SeparationReducer {
                 ReduceResult(
                     s.copy(job = failed, lastError = SeparationMessages.DECODE_TIMEOUT),
                     listOf(
+                        // P2-7：先 cancel repo/native，否则解码超时后底层仍后台跑满。
+                        SeparationEffect.CancelJob(job.jobId),
                         SeparationEffect.StopForeground(job.jobId),
                         SeparationEffect.Notify(SeparationMessages.DECODE_TIMEOUT),
                     ),
@@ -651,12 +653,19 @@ object SeparationReducer {
 
             OperationKind.SEPARATING -> {
                 if (job.operation !is Operation.Separating) return ReduceResult(s)
+                // P2-8：分离块会持续发 Running 进度；120s 无进度视为卡死，
+                //   不能只 Notify（旧行为单发告警后永不 re-arm，job 永远挂 Running）。
+                val failed = job.copy(
+                    lifecycle = Lifecycle.Failed(SeparationMessages.STALLED),
+                    operation = null,
+                )
                 ReduceResult(
-                    s.copy(
-                        job = job.copy(operation = Operation.Separating(job.jobId)),
-                        lastError = SeparationMessages.STALLED,
+                    s.copy(job = failed, lastError = SeparationMessages.STALLED),
+                    listOf(
+                        SeparationEffect.CancelJob(job.jobId),
+                        SeparationEffect.StopForeground(job.jobId),
+                        SeparationEffect.Notify(SeparationMessages.STALLED),
                     ),
-                    listOf(SeparationEffect.Notify(SeparationMessages.STALLED)),
                 )
             }
 

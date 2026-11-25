@@ -244,7 +244,8 @@ class PlaybackService : MediaSessionService() {
 
     private fun pushTracksSnapshot() {
         val session = mediaSession ?: return
-        val extras = Bundle()
+        // ★P2-5：基于现有 extras 复制，避免整体替换抹掉 progressRunnable 写的 KEY_MIX_*。
+        val extras = Bundle(session.sessionExtras ?: Bundle())
         if (inMultiTrack) {
             val c = multiTrack
             val arr = JSONArray()
@@ -477,12 +478,23 @@ class PlaybackService : MediaSessionService() {
         if (!inMultiTrack) return
         val c = multiTrack ?: return
         val sp = singlePlayer ?: return
-        if (c.isPlaying() && !sp.isPlaying) {
+        if (!c.isPlaying()) {
+            if (sp.isPlaying) {
+                sp.pause()
+                Log.i(TAG, "reconcile: facade → pause (mixer paused)")
+            }
+            return
+        }
+        // ★P2-3：mixer 在播时，门面必须处于可推进的播放态。
+        //   门面播的是主轨 stem，可能比 mixer 先 EOF（STATE_ENDED），
+        //   此时只 play() 不会推进时钟 → 拉回起点重新当门面。
+        if (sp.playbackState == Player.STATE_ENDED) {
+            runCatching { sp.seekTo(0) }
+            sp.play()
+            Log.i(TAG, "reconcile: facade ENDED → restart as clock (mixer playing)")
+        } else if (!sp.isPlaying) {
             sp.play()
             Log.i(TAG, "reconcile: facade → play (mixer playing)")
-        } else if (!c.isPlaying() && sp.isPlaying) {
-            sp.pause()
-            Log.i(TAG, "reconcile: facade → pause (mixer paused)")
         }
     }
 

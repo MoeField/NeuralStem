@@ -416,7 +416,9 @@ class StemMixer(
                 for ((index, v) in chunkVoices.withIndex()) {
                     val g = gainProvider(v.id)
                     if (anyAudible && g <= 0f) continue   // 有可听轨时，静音轨省 IO
-                    if (!anyAudible && index > 0) continue // 全静音：只读一条 canonical 源推进时钟
+                    // ★P2-2：全静音时只需一条源推进时钟；但若已读的 canonical 源
+                    //   EOF（n<=0），必须继续尝试下一条，否则 framesRead 恒 0 → 永久 sleep 空转。
+                    if (!anyAudible && framesRead > 0) continue
                     val n = runCatching { v.source.read(framePos, tmp, CHUNK_FRAMES) }.getOrDefault(0)
                     if (n <= 0) {
                         if (loopWarn < 3) Log.w(TAG, "read[${v.id}] @${framePos} → $n（无数据）")
