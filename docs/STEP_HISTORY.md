@@ -2,7 +2,7 @@
 
 > 记录“改了什么、为什么、怎么验证”，方便后来人理解代码演进。这里不记录内部设备流水号或个人环境信息。
 
-## v0.3.1（进行中）：拆 PlaybackService 命令/会话层
+## v0.3.1：拆 PlaybackService 命令/会话层（已完成）
 
 - **Step 1 · `EqHost`（已完成）**：EQ 的挂载/重试/快照/命令从 Service 抽到 `EqHost`；
   Service 保留同名 thin delegate，调用点零改动。
@@ -33,6 +33,10 @@
   UID 闸保留在 Service 最外层。
   - `PlaybackService` 706 → **489 行**（累计 896 → 489，-407）；JVM 519/0、lint 通过。
   - 真机全命令 smoke 通过；`StemMixerAudioSinkTest` I3 时序抖动改为重试容忍。
+- **Step 5 · 收尾（已完成）**：ARCHITECTURE 分层图更新；`PlaybackService` 累计
+  **896 → 489 行（-407）**；v0.3.1 发布 + 2h 多轨固定 soak（`eq=-15`/`vol=1`）。
+- 结论：Service 剩余职责为 Android 生命周期 / ExoPlayer 构建 / `SessionCallback`（含 UID 闸）/
+  焦点 / 门面对齐，强耦合 Android，进一步拆分排入 v0.3.2。
 - 后续 Step 2–4（SnapshotPublisher / MultiTrackCoordinator / PlayerCommandHandler）见
   [`docs/V0.3.1_PLAN.md`](V0.3.1_PLAN.md)。
 

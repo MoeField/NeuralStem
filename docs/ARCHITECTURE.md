@@ -16,9 +16,13 @@ Compose UI (AppShell / screens)
         │     ├─ SeparationRepository 解码/分离/缓存（IO）
         │     └─ EdgeSeparationSession 边分离 ring buffer/门控
         │
-        ├─ PlaybackService        MediaSession + ExoPlayer 门面 + EQ
+        ├─ PlaybackService        MediaSession + ExoPlayer 门面（v0.3.1 拆薄至 ~489 行）
+        │     ├─ PlayerCommandHandler  自定义命令分派 + 全部 handle*（UID 闸仍在 Service）
+        │     ├─ MultiTrackCoordinator 多轨状态 + load/exit/音量/seek + 单线程 IO
+        │     ├─ EqHost                EQ 挂载/重试/快照
+        │     ├─ SnapshotPublisher     快照去抖 + extras 合并 + 200ms 进度
         │     └─ MultiTrackController
-        │           └─ StemMixer  单 AudioTrack + 单渲染线程
+        │           └─ StemMixer  单 AudioTrack + 单渲染线程（AudioSink 可注入，测试用 Fake）
         │
         └─ 持久化
               ├─ PlaylistStore      playlists.json
