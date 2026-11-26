@@ -38,6 +38,8 @@ internal class MultiTrackCoordinator(
     private val onLoaded: (MultiTrackController, Long, String) -> Unit,
     /** 加载失败/取消后的清场（主线程）；由 Service 注入。 */
     private val onAborted: () -> Unit,
+    /** 退出多轨后的收尾（焦点/进度/EQ/门面/快照，主线程）；由 Service 注入。 */
+    private val onExitCleanup: () -> Unit,
     onFocusChange: (Int) -> Unit,
 ) {
     /** 当前多轨控制器；主线程读写。 */
@@ -133,6 +135,51 @@ internal class MultiTrackCoordinator(
             }
         }
         return null
+    }
+
+    /** 门面 seek → 混音器 seek（多轨只有一个 framePos，所有 stem 自然同步）。 */
+    fun seekTo(positionMs: Long) {
+        current?.seekTo(positionMs)
+    }
+
+    /** @return false = 非多轨。 */
+    fun setVolume(trackId: String, volume: Float): Boolean {
+        val c = current ?: return false
+        c.trackList.firstOrNull { it.id == trackId }?.volume = volume
+        c.refreshVolumes()
+        return true
+    }
+
+    /** @return false = 非多轨。 */
+    fun toggleMute(trackId: String): Boolean {
+        val c = current ?: return false
+        c.trackList.firstOrNull { it.id == trackId }?.let { it.muted = !it.muted }
+        c.refreshVolumes()
+        return true
+    }
+
+    /** @return false = 非多轨。 */
+    fun toggleSolo(trackId: String): Boolean {
+        val c = current ?: return false
+        c.toggleSolo(trackId)
+        return true
+    }
+
+    /**
+     * 退出多轨：清状态 + 异步 close，然后由 Service 收尾（焦点/进度/EQ/门面/快照）。
+     * 注意顺序：先 pause 再置空，避免关闭期间还在出声。
+     */
+    fun exit() {
+        active = false
+        loadGen++                 // 使在途 load 的发布失效
+        loadPending = false
+        originalUri = null
+        originalTitle = null
+        val closing = current
+        runCatching { closing?.pause() }
+        current = null
+        if (closing != null) io.launch { runCatching { closing.close() } }
+        onExitCleanup()
     }
 
     /** 加载失败/取消：清状态 + 异步 close（join 可能在 IO 上耗时）。 */

@@ -23,6 +23,11 @@
   避免与 `SnapshotPublisher`/`EqHost` 循环依赖；Service 只留解析 + 委托。
   - `PlaybackService` 821 → **769 行**；JVM 519/0、lint 通过。
   - 真机磁盘多轨 `inmt→exitsmt` 通过；流式 `loadStream` 在 Domain 接管后属 fallback 死路径。
+- **Step 3c · 删 alias + exit/音量/seek 迁出（已完成）**：`exit` 状态编排、`setVolume/toggleMute/toggleSolo`、
+  门面 `seekTo` 移入 Coordinator；删除全部 3a alias，引用改 `coordinator.*`，编译器兜住漏网。
+  - `PlaybackService` 751 → **706 行**（累计 896 → 706，-190）；JVM 519/0、lint 通过。
+  - 真机：4 轮 `inmt→mtvol→seek→exitsmt` 快速往复 + EQ 全正常；修复全局替换引入的
+    字符串模板插值 bug（`$coordinator.active` 变成对象字符串）。
 - 后续 Step 2–4（SnapshotPublisher / MultiTrackCoordinator / PlayerCommandHandler）见
   [`docs/V0.3.1_PLAN.md`](V0.3.1_PLAN.md)。
 

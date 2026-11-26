@@ -81,9 +81,9 @@ class PlaybackService : MediaSessionService() {
         onAudioSessionChanged = { sessionId ->
             // AudioTrack 重建后 sessionId 变了；在主线程重挂多轨 EQ。
             handler.post {
-                if (inMultiTrack) {
+                if (coordinator.active) {
                     Log.i(TAG, "mixer audio session changed → $sessionId, reattach EQ")
-                    multiTrack?.let { attachMultiTrackEq(it) }
+                    coordinator.current?.let { attachMultiTrackEq(it) }
                 }
             }
         },
@@ -94,7 +94,7 @@ class PlaybackService : MediaSessionService() {
         getSpeedPitch = { lastSpeed to lastPitchRate },
         onLoaded = { c, startMs, logMsg ->
             singlePlayer?.volume = 0f
-            inMultiTrack = true
+            coordinator.active = true
             c.playWhenAllReady(startMs)
             singlePlayer?.play()
             enterMultiTrackFocus()
@@ -104,62 +104,30 @@ class PlaybackService : MediaSessionService() {
             Log.i(TAG, logMsg)
         },
         onAborted = {
-            if (inMultiTrack) {
-                inMultiTrack = false
+            if (coordinator.active) {
+                coordinator.active = false
                 exitMultiTrackFocus()
                 snapshotPublisher.stopProgress()
             }
             singlePlayer?.volume = 1f
             pushTracksSnapshot()
         },
+        onExitCleanup = {
+            exitMultiTrackFocus()
+            snapshotPublisher.stopProgress()
+            cancelEqRetry()
+            // ★先暂停门面再恢复音量：exit 后才 doLoad 原曲；若先 volume=1，
+            //   门面还在播旧主轨 stem，会与关闭中的 mixer 短暂叠音。
+            runCatching { singlePlayer?.pause() }
+            singlePlayer?.volume = 1f
+            // M3-P3/T2：退出后回单轨重新挂 EQ（attachSingleEq 自身会判 sessionId != 0）。
+            eqHost.detachAll()
+            singlePlayer?.let { attachSingleEq(it) }
+            pushTracksSnapshot()
+        },
         onFocusChange = { onMultiTrackFocusChange(it) },
     )
 
-    // ---- 3a 过渡 alias（字段实际住在 coordinator；3c 删除）----
-    private var multiTrack: MultiTrackController?
-        get() = coordinator.current
-        set(value) { coordinator.current = value }
-
-    private var inMultiTrack: Boolean
-        get() = coordinator.active
-        set(value) { coordinator.active = value }
-
-    private val multiIo: CoroutineScope get() = coordinator.io
-
-    private var multiLoadJob: Job?
-        get() = coordinator.loadJob
-        set(value) { coordinator.loadJob = value }
-
-    private var multiLoadPending: Boolean
-        get() = coordinator.loadPending
-        set(value) { coordinator.loadPending = value }
-
-    private var multiLoadGen: Long
-        get() = coordinator.loadGen
-        set(value) { coordinator.loadGen = value }
-
-    private var mtAudioAttributes: AudioAttributes?
-        get() = coordinator.audioAttributes
-        set(value) { coordinator.audioAttributes = value }
-
-    private var mtFocusHeld: Boolean
-        get() = coordinator.focusHeld
-        set(value) { coordinator.focusHeld = value }
-
-    private var mtFocusWasPlaying: Boolean
-        get() = coordinator.focusWasPlaying
-        set(value) { coordinator.focusWasPlaying = value }
-
-    private val mtFocusListener: AudioManager.OnAudioFocusChangeListener
-        get() = coordinator.focusListener
-
-    private var mtOriginalUri: String?
-        get() = coordinator.originalUri
-        set(value) { coordinator.originalUri = value }
-
-    private var mtOriginalTitle: String?
-        get() = coordinator.originalTitle
-        set(value) { coordinator.originalTitle = value }
 
     /**
      * M3-P3：EQ 控制器（**从 VM 搬进 Service**）。
@@ -168,8 +136,8 @@ class PlaybackService : MediaSessionService() {
     private val eqHost: EqHost = EqHost(
         handler = handler,
         requestSnapshot = ::requestSnapshotPush,
-        isInMultiTrack = { inMultiTrack },
-        currentMultiTrack = { multiTrack },
+        isInMultiTrack = { coordinator.active },
+        currentMultiTrack = { coordinator.current },
     )
 
     private val snapshotPublisher: SnapshotPublisher = SnapshotPublisher(
@@ -178,14 +146,14 @@ class PlaybackService : MediaSessionService() {
         eqJson = { eqHost.snapshotJson() },
         onTick = { reconcileFacadeToMixer() },
         snapshot = {
-            val c = multiTrack
-            if (!inMultiTrack || c == null) {
+            val c = coordinator.current
+            if (!coordinator.active || c == null) {
                 null
             } else {
                 SnapshotPublisher.SnapshotData(
                     tracksJson = SnapshotPublisher.buildTracksJson(c.trackList, c.soloTrackId),
-                    originalUri = mtOriginalUri,
-                    originalTitle = mtOriginalTitle,
+                    originalUri = coordinator.originalUri,
+                    originalTitle = coordinator.originalTitle,
                     speed = lastSpeed,
                     pitchRate = lastPitchRate,
                     mixPosMs = c.currentPositionMs(),
@@ -216,7 +184,7 @@ class PlaybackService : MediaSessionService() {
                 if (playbackState == Player.STATE_READY) {
                     Log.i(TAG, "player READY, audioSessionId=${player.audioSessionId}")
                     // M3-P3：单轨(非多轨)时，把 EQ 挂到主播放器会话
-                    if (!inMultiTrack) attachSingleEq(player)
+                    if (!coordinator.active) attachSingleEq(player)
                 }
             }
 
@@ -226,7 +194,7 @@ class PlaybackService : MediaSessionService() {
                 //   AudioTrack 暂停/缓冲而反复 isPlaying=false，
                 //   直接映射会让 mixer 刚启动就被 pause（真机实测 `pause @2048frame`）。
                 //   **方向反过来：mixer 才是真实的播放状态源。**
-                if (inMultiTrack) {
+                if (coordinator.active) {
                     Log.d(TAG, "onIsPlayingChanged($isPlaying)：多轨下忽略（真源是 StemMixer）")
                 }
             }
@@ -235,7 +203,7 @@ class PlaybackService : MediaSessionService() {
                 // 单轨的真源仍是 ExoPlayer；缓存下来供进入多轨时初始化 StemMixer。
                 lastSpeed = playbackParameters.speed
                 lastPitchRate = playbackParameters.pitch
-                if (inMultiTrack) {
+                if (coordinator.active) {
                     // ★多轨不再写门面参数（VM 走 CMD_SET_SPEED_PITCH）。
                     //   若仍然收到变更，只记录：混音器的真源是它自己的 targetSpeed/targetPitchRate。
                     Log.i(TAG, "多轨下收到门面 playbackParameters 变更（忽略）：$playbackParameters")
@@ -247,11 +215,11 @@ class PlaybackService : MediaSessionService() {
                 newPosition: Player.PositionInfo,
                 reason: Int,
             ) {
-                Log.i(TAG, "onPositionDiscontinuity: reason=$reason → ${newPosition.positionMs}ms (inMt=$inMultiTrack)")
+                Log.i(TAG, "onPositionDiscontinuity: reason=$reason → ${newPosition.positionMs}ms (inMt=${coordinator.active})")
                 // ★2026-11-01：多轨下 seek 只需告知混音器（它只有一个 framePos，
                 //   所有 stem 自然同步）；不再需要逐个 seek 跟随轨。
-                if (inMultiTrack && reason == Player.DISCONTINUITY_REASON_SEEK) {
-                    multiTrack?.seekTo(newPosition.positionMs)
+                if (coordinator.active && reason == Player.DISCONTINUITY_REASON_SEEK) {
+                    coordinator.seekTo(newPosition.positionMs)
                 }
             }
         })
@@ -324,14 +292,14 @@ class PlaybackService : MediaSessionService() {
             "POS_MAIN pos=${main?.currentPosition} state=${main?.playbackState} " +
                 "playing=${main?.isPlaying} pp=${main?.playbackParameters}",
         )
-        multiTrack?.trackList?.forEachIndexed { i, t ->
+        coordinator.current?.trackList?.forEachIndexed { i, t ->
             Log.i(
                 TAG,
                 "POS_TRACK[$i] id=${t.id} label=${t.label} uri=${t.uri}",
             )
         }
         // ★2026-11-01：只有一个 framePos，所有 stem 必然同帧 —— 报混音器位置即可
-        multiTrack?.let {
+        coordinator.current?.let {
             Log.i(
                 TAG,
                 "POS_MIX pos=${it.currentPositionMs()} dur=${it.durationMs()} " +
@@ -361,51 +329,51 @@ class PlaybackService : MediaSessionService() {
      */
     private fun enterMultiTrackFocus() {
         val sp = singlePlayer ?: return
-        if (mtAudioAttributes == null) mtAudioAttributes = sp.audioAttributes
-        // false = 不再让 ExoPlayer 管理焦点；由 mtFocusListener 统一处理。
-        mtAudioAttributes?.let { sp.setAudioAttributes(it, false) }
-        if (mtFocusHeld) return
+        if (coordinator.audioAttributes == null) coordinator.audioAttributes = sp.audioAttributes
+        // false = 不再让 ExoPlayer 管理焦点；由 coordinator.focusListener 统一处理。
+        coordinator.audioAttributes?.let { sp.setAudioAttributes(it, false) }
+        if (coordinator.focusHeld) return
         val am = getSystemService(AudioManager::class.java) ?: return
         @Suppress("DEPRECATION")
         val granted = am.requestAudioFocus(
-            mtFocusListener,
+            coordinator.focusListener,
             AudioManager.STREAM_MUSIC,
             AudioManager.AUDIOFOCUS_GAIN,
         ) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
-        mtFocusHeld = granted
+        coordinator.focusHeld = granted
         Log.i(TAG, "multi-track audio focus held=$granted")
     }
 
     /** 退出多轨：放弃 Service 的焦点，恢复门面自己的焦点处理。 */
     private fun exitMultiTrackFocus() {
         val am = getSystemService(AudioManager::class.java)
-        if (mtFocusHeld) {
+        if (coordinator.focusHeld) {
             @Suppress("DEPRECATION")
-            am?.abandonAudioFocus(mtFocusListener)
+            am?.abandonAudioFocus(coordinator.focusListener)
         }
-        mtFocusHeld = false
-        mtFocusWasPlaying = false
-        mtAudioAttributes?.let { singlePlayer?.setAudioAttributes(it, true) }
+        coordinator.focusHeld = false
+        coordinator.focusWasPlaying = false
+        coordinator.audioAttributes?.let { singlePlayer?.setAudioAttributes(it, true) }
     }
 
     private fun onMultiTrackFocusChange(change: Int) {
-        if (!inMultiTrack) return
+        if (!coordinator.active) return
         when (change) {
             AudioManager.AUDIOFOCUS_LOSS,
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT,
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
-                mtFocusWasPlaying = multiTrack?.isPlaying() == true
-                multiTrack?.pause()
+                coordinator.focusWasPlaying = coordinator.current?.isPlaying() == true
+                coordinator.current?.pause()
                 singlePlayer?.pause()
-                mtFocusHeld = false
-                Log.i(TAG, "multi-track focus lost($change) → paused (wasPlaying=$mtFocusWasPlaying)")
+                coordinator.focusHeld = false
+                Log.i(TAG, "multi-track focus lost($change) → paused (wasPlaying=${coordinator.focusWasPlaying})")
             }
             AudioManager.AUDIOFOCUS_GAIN -> {
-                val resume = mtFocusWasPlaying
-                mtFocusWasPlaying = false
-                mtFocusHeld = true
+                val resume = coordinator.focusWasPlaying
+                coordinator.focusWasPlaying = false
+                coordinator.focusHeld = true
                 if (resume) {
-                    multiTrack?.play()
+                    coordinator.current?.play()
                     singlePlayer?.play()
                 }
                 Log.i(TAG, "multi-track focus gain → resume=$resume")
@@ -420,8 +388,8 @@ class PlaybackService : MediaSessionService() {
      * 我们先按 mixer 状态切换，再让默认命令执行，150ms 后按 mixer 纠正门面。
      */
     private fun reconcileFacadeToMixer() {
-        if (!inMultiTrack) return
-        val c = multiTrack ?: return
+        if (!coordinator.active) return
+        val c = coordinator.current ?: return
         val sp = singlePlayer ?: return
         if (!c.isPlaying()) {
             if (sp.isPlaying) {
@@ -493,29 +461,24 @@ class PlaybackService : MediaSessionService() {
     }
 
     private fun handleSetVolume(args: Bundle): SessionResult {
-        val c = multiTrack ?: return err("非多轨")
         val id = args.getString(MultiTrackSession.KEY_TRACK_ID) ?: return err("trackId 缺失")
-        c.trackList.firstOrNull { it.id == id }?.volume =
-            args.getFloat(MultiTrackSession.KEY_VOLUME, 1f)
-        c.refreshVolumes()
+        if (!coordinator.setVolume(id, args.getFloat(MultiTrackSession.KEY_VOLUME, 1f))) {
+            return err("非多轨")
+        }
         pushTracksSnapshot()
         return ok()
     }
 
     private fun handleToggleMute(args: Bundle): SessionResult {
-        val c = multiTrack ?: return err("非多轨")
         val id = args.getString(MultiTrackSession.KEY_TRACK_ID) ?: return err("trackId 缺失")
-        c.trackList.firstOrNull { it.id == id }?.let { it.muted = !it.muted }
-        c.refreshVolumes()
+        if (!coordinator.toggleMute(id)) return err("非多轨")
         pushTracksSnapshot()
         return ok()
     }
 
     private fun handleToggleSolo(args: Bundle): SessionResult {
-        val c = multiTrack ?: return err("非多轨")
         val id = args.getString(MultiTrackSession.KEY_TRACK_ID) ?: return err("trackId 缺失")
-        // ★走控制器的 toggleSolo：它会重算 effectiveVolume（混音增益实时生效）
-        c.toggleSolo(id)
+        if (!coordinator.toggleSolo(id)) return err("非多轨")
         pushTracksSnapshot()
         return ok()
     }
@@ -523,39 +486,13 @@ class PlaybackService : MediaSessionService() {
     private fun handleExit(): SessionResult {
         Log.i(
             TAG,
-            "EXIT_MT before: inMultiTrack=$inMultiTrack mainItem=${singlePlayer?.currentMediaItem?.localConfiguration?.uri} " +
-                "followers=${multiTrack?.trackList.orEmpty().joinToString { "${it.id}:${it.uri}" }}",
+            "EXIT_MT before: active=${coordinator.active} mainItem=${singlePlayer?.currentMediaItem?.localConfiguration?.uri} " +
+                "followers=${coordinator.current?.trackList.orEmpty().joinToString { "${it.id}:${it.uri}" }}",
         )
-        inMultiTrack = false
-        multiLoadGen++                 // 使在途 load 的发布失效
-        multiLoadPending = false
-        mtOriginalUri = null
-        mtOriginalTitle = null
-        exitMultiTrackFocus()
-        snapshotPublisher.stopProgress()   // ★停止 mix 进度推送
-        cancelEqRetry()
-        // 先暂停旧 mixer（立即静音），真正的 close join 放到 multiIo。
-        val closing = multiTrack
-        runCatching { closing?.pause() }
-        multiTrack = null
-        if (closing != null) multiIo.launch { runCatching { closing.close() } }
-        // ★先暂停门面再恢复音量：exitMultiTrack 后面才 doLoad 原曲；
-        //   若先 volume=1，门面还在播旧主轨 stem，会与关闭中的 mixer 短暂叠音。
-        //   这里 pause 后由 exitMultiTrack/doLoad 重新拉起原曲。
-        runCatching { singlePlayer?.pause() }
-        // ★恢复主轨音量：多轨期间它是 0（静音当门面），退出后必须还原，
-        //   否则回原曲会“没有声音”（重构后新增的隐藏坑）。
-        singlePlayer?.volume = 1f
-        // M3-P3/T2：退出多轨后旧的跟随轨会话作废，回到单轨重新挂 EQ。
-        // 注意：**不能**用 `playbackState == STATE_READY` 做门槛 ——
-        // 主轨刚从多轨下停下，可能不是 READY，会导致 EQ **漏挂**（T2 实测踩到）。
-        // `attachSingleEq` 自身会判 `audioSessionId != 0`，这里无条件调即可。
-        eqHost.detachAll()
-        singlePlayer?.let { attachSingleEq(it) }
-        pushTracksSnapshot()
+        coordinator.exit()
         Log.i(
             TAG,
-            "EXIT_MT after: inMultiTrack=$inMultiTrack mainItem=${singlePlayer?.currentMediaItem?.localConfiguration?.uri}",
+            "EXIT_MT after: active=${coordinator.active} mainItem=${singlePlayer?.currentMediaItem?.localConfiguration?.uri}",
         )
         return ok()
     }
@@ -610,22 +547,22 @@ class PlaybackService : MediaSessionService() {
             controller: MediaSession.ControllerInfo,
             playerCommand: Int,
         ): Int {
-            if (inMultiTrack) {
+            if (coordinator.active) {
                 when (playerCommand) {
                     Player.COMMAND_PLAY_PAUSE -> {
                         // 回调发生在默认命令执行之前，且这里拿不到“play 还是 pause”。
                         // 先让默认命令更新门面的 playWhenReady，下一帧再按**目标意图**
                         // 同步 mixer；不能按 mixer 当前状态 toggle（分叉时会反向）。
                         handler.post {
-                            if (!inMultiTrack) return@post
-                            val c = multiTrack ?: return@post
+                            if (!coordinator.active) return@post
+                            val c = coordinator.current ?: return@post
                             val wantPlay = singlePlayer?.playWhenReady == true
                             if (wantPlay) {
                                 c.play()
                                 Log.i(TAG, "media PLAY_PAUSE → play (mirror facade intent)")
                             } else {
                                 c.pause()
-                                mtFocusWasPlaying = false
+                                coordinator.focusWasPlaying = false
                                 Log.i(TAG, "media PLAY_PAUSE → pause (mirror facade intent)")
                             }
                         }
@@ -633,11 +570,11 @@ class PlaybackService : MediaSessionService() {
                     Player.COMMAND_SET_SPEED_AND_PITCH -> {
                         // 回调时门面参数还是旧值；等默认命令应用后再读，同步给 mixer。
                         handler.post {
-                            if (!inMultiTrack) return@post
+                            if (!coordinator.active) return@post
                             val p = singlePlayer?.playbackParameters ?: return@post
                             lastSpeed = p.speed
                             lastPitchRate = p.pitch
-                            multiTrack?.setSpeedPitch(p.speed, p.pitch)
+                            coordinator.current?.setSpeedPitch(p.speed, p.pitch)
                             Log.i(TAG, "media SET_SPEED_AND_PITCH → ${p.speed}x/${p.pitch}")
                         }
                     }
@@ -662,48 +599,48 @@ class PlaybackService : MediaSessionService() {
                 when (customCommand.customAction) {
                 MultiTrackSession.CMD_LOAD -> handleLoadMultiTrack(args)
                 MultiTrackSession.CMD_LOAD_STREAM -> handleLoadStream(args)
-                // P1-B：load 在 multiIo 进行中，这三条命令会读/写半初始化 tracks；
+                // P1-B：load 在 coordinator.io 进行中，这三条命令会读/写半初始化 tracks；
                 // 与 PLAY/PAUSE 对齐，完成前只接受不作用。
                 MultiTrackSession.CMD_SET_VOLUME ->
-                    if (multiLoadPending) ok("loading") else handleSetVolume(args)
+                    if (coordinator.loadPending) ok("loading") else handleSetVolume(args)
                 MultiTrackSession.CMD_TOGGLE_MUTE ->
-                    if (multiLoadPending) ok("loading") else handleToggleMute(args)
+                    if (coordinator.loadPending) ok("loading") else handleToggleMute(args)
                 MultiTrackSession.CMD_TOGGLE_SOLO ->
-                    if (multiLoadPending) ok("loading") else handleToggleSolo(args)
+                    if (coordinator.loadPending) ok("loading") else handleToggleSolo(args)
                 MultiTrackSession.CMD_EXIT -> handleExit()
                 MultiTrackSession.CMD_PLAY -> {
                     // 多轨 load 在 IO 中，完成前命令只接受、不触碰半初始化 mixer。
-                    if (multiLoadPending) ok("loading") else {
-                        multiTrack?.play()
+                    if (coordinator.loadPending) ok("loading") else {
+                        coordinator.current?.play()
                         singlePlayer?.play()
                         ok()
                     }
                 }
                 MultiTrackSession.CMD_PAUSE -> {
-                    if (multiLoadPending) ok("loading") else {
-                        multiTrack?.pause()
+                    if (coordinator.loadPending) ok("loading") else {
+                        coordinator.current?.pause()
                         singlePlayer?.pause()
-                        mtFocusWasPlaying = false
+                        coordinator.focusWasPlaying = false
                         ok()
                     }
                 }
                 MultiTrackSession.CMD_TOGGLE -> {
                     // ★状态真源在 Service（mixer），不让 VM 自己判 isPlaying（有滞后）
-                    val c = multiTrack
+                    val c = coordinator.current
                     if (c == null) err("非多轨") else {
                         val nowPlaying = !c.isPlaying()
                         if (nowPlaying) {
                             c.play(); singlePlayer?.play()
                         } else {
                             c.pause(); singlePlayer?.pause()
-                            mtFocusWasPlaying = false
+                            coordinator.focusWasPlaying = false
                         }
                         Log.i(TAG, "CMD_TOGGLE → ${if (nowPlaying) "play" else "pause"}")
                         ok()
                     }
                 }
                 MultiTrackSession.CMD_SET_SPEED_PITCH -> {
-                    val c = multiTrack ?: return Futures.immediateFuture(err("非多轨"))
+                    val c = coordinator.current ?: return Futures.immediateFuture(err("非多轨"))
                     val speed = args.getFloat(MultiTrackSession.KEY_SPEED, 1f)
                     val pitchRate = args.getFloat(MultiTrackSession.KEY_PITCH_RATE, 1f)
                     lastSpeed = speed
@@ -723,7 +660,7 @@ class PlaybackService : MediaSessionService() {
             } catch (t: Throwable) {
                 // 自定义命令跑在 MediaSession 主线程；任何 require/IO 异常都不能冒出去。
                 Log.e(TAG, "onCustomCommand failed: ${customCommand.customAction}", t)
-                runCatching { multiTrack?.let { abortMultiLoad(it) } }
+                runCatching { coordinator.current?.let { abortMultiLoad(it) } }
                     .onFailure { Log.w(TAG, "abortMultiLoad after command failure failed", it) }
                 err("多轨命令失败: ${t.message ?: t.javaClass.simpleName}")
             }
@@ -749,11 +686,11 @@ class PlaybackService : MediaSessionService() {
         eqHost.cancelRetry()
         eqHost.detachAll()   // M3-P3：EQ 随 Service 释放
         exitMultiTrackFocus()
-        val closing = multiTrack
-        multiTrack = null
-        multiLoadGen++
-        multiLoadPending = false
-        multiIo.launch { runCatching { closing?.close() } }
+        val closing = coordinator.current
+        coordinator.current = null
+        coordinator.loadGen++
+        coordinator.loadPending = false
+        coordinator.io.launch { runCatching { closing?.close() } }
         mediaSession?.run {
             player.release()
             release()
