@@ -371,7 +371,7 @@ class PlaylistViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { rescanFolder(listId) }
     }
 
-    suspend fun importFolder(treeUri: Uri, intoListId: String? = null) {
+    suspend fun importFolder(treeUri: Uri, intoListId: String? = null, replace: Boolean = false) {
         val ctx = getApplication<Application>()
         // ★诊断：确认能从 tree uri 拿到目录（拿不到通常是没授权）
         //
@@ -401,7 +401,8 @@ class PlaylistViewModel(app: Application) : AndroidViewModel(app) {
                     p.copy(
                         type = PlaylistStore.ListType.FOLDER,
                         folderUri = treeUri.toString(),
-                        tracks = mergeDistinct(p.tracks, found),
+                        // rescan 用 replace（跟随文件夹的最新内容）；普通导入用合并。
+                        tracks = if (replace) found else mergeDistinct(p.tracks, found),
                     )
                 } else p
             }
@@ -421,7 +422,8 @@ class PlaylistViewModel(app: Application) : AndroidViewModel(app) {
     suspend fun rescanFolder(listId: String) {
         val p = _lists.value.firstOrNull { it.id == listId } ?: return
         val f = p.folderUri ?: return
-        importFolder(Uri.parse(f), intoListId = listId)
+        // ★刷新文件夹必须是**替换**：合并会把已删除/不再支持的条目（如公开版过滤掉的 .ncm）永久留在歌单里。
+        importFolder(Uri.parse(f), intoListId = listId, replace = true)
     }
 
     // ---------------- 单曲导入（2026-10-26）----------------

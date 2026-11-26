@@ -1,5 +1,7 @@
 package pub.miku.neuralstem.playlist
 
+import pub.miku.neuralstem.BuildConfig
+
 /**
  * ★「什么算音频文件」的**单一真源**。
  *
@@ -17,25 +19,31 @@ package pub.miku.neuralstem.playlist
 object AudioFileTypes {
 
     /**
-     * 收录的扩展名。
+     * 通用音频扩展名。
      *
-     * ## ★为什么必须有 `.ncm`（2026-10-26）
-     * 之前白名单里**没有 .ncm** —— 导致文件夹导入完全扫不到网易云的歌。
-     * 实测用户有 732 个 .ncm 文件，一个都进不了歌单。
-     *
-     * ## 为什么 `.m4a` 也要收
-     * 用户的 .m4a 里 99%（219/220）是 AVS3 编码，能播（需自编译解码器）。
-     * 剩下 1% 是真 AAC，原生就能播。两种都应该进歌单。
+     * `.m4a` 也收：用户的 .m4a 里约 99% 是 AVS3 编码（能播需自编译解码器），
+     * 剩下是真 AAC（原生可播）。两种都应该进歌单。
      */
     private val EXTS = listOf(
         ".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg",
-        ".ncm",   // ★网易云容器
-        ".opus", ".wma", ".ape",  // 少见但存在
+        ".opus", ".wma", ".ape",
     )
 
-    /** 是不是音频文件（按扩展名）。 */
-    fun isAudio(name: String): Boolean {
+    private const val NCM_EXT = ".ncm"
+
+    /**
+     * 是不是**可播放**的音频文件（按扩展名）。
+     *
+     * ## `.ncm` 为什么按构建开关分流
+     * NCM 是网易云加密容器，解密代码只在 `-Pwith_ncm=true` 构建里。
+     * 公开版如果把它列进歌单，用户点开只会得到「无法播放」——既误导，
+     * 也与公开版「不含 NCM 支持」的合规口径不一致。
+     *
+     * @param withNcm 是否 NCM 构建；默认取 `BuildConfig.WITH_NCM`，测试可显式传值覆盖两个分支
+     */
+    fun isAudio(name: String, withNcm: Boolean = BuildConfig.WITH_NCM): Boolean {
         val n = name.lowercase()
+        if (n.endsWith(NCM_EXT)) return withNcm
         return EXTS.any { n.endsWith(it) }
     }
 }

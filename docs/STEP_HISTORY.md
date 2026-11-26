@@ -2,6 +2,16 @@
 
 > 记录“改了什么、为什么、怎么验证”，方便后来人理解代码演进。这里不记录内部设备流水号或个人环境信息。
 
+## v0.3.2：公开版不再把 `.ncm` 当音频格式
+
+- `AudioFileTypes.isAudio` 按 `BuildConfig.WITH_NCM` 分流：公开版（无 NCM 解密代码）跳过 `.ncm`，
+  避免文件夹歌单列出「点开无法播放」的文件；NCM 构建（`-Pwith_ncm=true`）行为不变。
+- `rescanFolder` 改为**替换**语义：原实现复用 `importFolder` 的 `mergeDistinct`，导致已删除/
+  已不再支持的条目（含公开版过滤掉的 `.ncm`）永远留在歌单里。
+- 测试：`AudioFileTypesTest` 覆盖 `withNcm=true/false` 两分支。
+- 真机：公开版刷新 Music 文件夹，`scanAudio` 跳过 15 个 `.ncm`，歌单 **66 → 51 首、ncm=0**；
+  JVM 519/0、lint 通过。
+
 ## v0.3.1：拆 PlaybackService 命令/会话层（已完成）
 
 - **Step 1 · `EqHost`（已完成）**：EQ 的挂载/重试/快照/命令从 Service 抽到 `EqHost`；
