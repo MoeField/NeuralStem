@@ -109,11 +109,36 @@ class PlaybackService : MediaSessionService() {
      * M3-P3：EQ 控制器（**从 VM 搬进 Service**）。
      * 单轨挂 singlePlayer 会话；多轨每轨各挂一份（参数由 EqController 同步）。
      */
-    private val eqHost = EqHost(
+    private val eqHost: EqHost = EqHost(
         handler = handler,
         requestSnapshot = ::requestSnapshotPush,
         isInMultiTrack = { inMultiTrack },
         currentMultiTrack = { multiTrack },
+    )
+
+    private val snapshotPublisher: SnapshotPublisher = SnapshotPublisher(
+        handler = handler,
+        session = { mediaSession },
+        eqJson = { eqHost.snapshotJson() },
+        onTick = { reconcileFacadeToMixer() },
+        snapshot = {
+            val c = multiTrack
+            if (!inMultiTrack || c == null) {
+                null
+            } else {
+                SnapshotPublisher.SnapshotData(
+                    tracksJson = SnapshotPublisher.buildTracksJson(c.trackList, c.soloTrackId),
+                    originalUri = mtOriginalUri,
+                    originalTitle = mtOriginalTitle,
+                    speed = lastSpeed,
+                    pitchRate = lastPitchRate,
+                    mixPosMs = c.currentPositionMs(),
+                    mixDurMs = c.durationMs(),
+                    mixPlaying = c.isPlaying(),
+                    mixEnded = c.isEnded(),
+                )
+            }
+        },
     )
 
     override fun onCreate() {
@@ -209,70 +234,9 @@ class PlaybackService : MediaSessionService() {
      * ★ 去抖：多轨时每轨的 `onPlaybackStateChanged` 都会触发，一次 load 会
      *   连推十几次（实测）。用主线程 handler 合并成**一帧内一次**。
      */
-    private fun requestSnapshotPush() {
-        handler.removeCallbacks(snapshotRunnable)
-        handler.post(snapshotRunnable)
-    }
+    private fun requestSnapshotPush() = snapshotPublisher.request()
 
-    private val snapshotRunnable = Runnable { pushTracksSnapshot() }
-
-    /**
-     * ★多轨进度推送（2026-11-01）。
-     *
-     * ## 为何需要单独一条
-     * 重构后真实播放的是 [StemMixer]（自己的 AudioTrack），
-     * 而 MediaSession 看的 `singlePlayer` 只是一个静音门面 —— 它的 `currentPosition`
-     * 与混音器无关。若 UI 继续读主轨位置，进度条会停在 0 或乱跳。
-     * 所以周期性把混音器位置写进 session extras，由 VM 覆盖显示。
-     */
-    private val progressRunnable = object : Runnable {
-        override fun run() {
-            val c = multiTrack
-            if (inMultiTrack && c != null) {
-                val session = mediaSession
-                val b = Bundle(session?.sessionExtras ?: Bundle())
-                b.putLong(MultiTrackSession.KEY_MIX_POS_MS, c.currentPositionMs())
-                b.putLong(MultiTrackSession.KEY_MIX_DUR_MS, c.durationMs())
-                b.putBoolean(MultiTrackSession.KEY_MIX_PLAYING, c.isPlaying())
-                b.putBoolean(MultiTrackSession.KEY_MIX_ENDED, c.isEnded())
-                session?.setSessionExtras(b)
-                // P1-5：门面（通知/媒体键的唯一播放态来源）每 tick 跟真源对齐。
-                reconcileFacadeToMixer()
-            }
-            handler.postDelayed(this, 200L)
-        }
-    }
-
-    private fun pushTracksSnapshot() {
-        val session = mediaSession ?: return
-        // ★P2-5：基于现有 extras 复制，避免整体替换抹掉 progressRunnable 写的 KEY_MIX_*。
-        val extras = Bundle(session.sessionExtras ?: Bundle())
-        if (inMultiTrack) {
-            val c = multiTrack
-            val arr = JSONArray()
-            c?.trackList?.forEach { t ->
-                arr.put(
-                    JSONObject().apply {
-                        put("id", t.id)
-                        put("label", t.label)
-                        put("volume", t.volume.toDouble())
-                        put("muted", t.muted)
-                        put("solo", c.soloTrackId == t.id)
-                        put("uri", t.uri.toString())
-                    },
-                )
-            }
-            extras.putString(MultiTrackSession.KEY_TRACKS_JSON, arr.toString())
-            // ★B1：VM 重建恢复所需
-            extras.putString(MultiTrackSession.KEY_ORIGINAL_URI, mtOriginalUri ?: "")
-            extras.putString(MultiTrackSession.KEY_ORIGINAL_TITLE, mtOriginalTitle ?: "")
-            extras.putFloat(MultiTrackSession.KEY_SPEED, lastSpeed)
-            extras.putFloat(MultiTrackSession.KEY_PITCH_RATE, lastPitchRate)
-        }
-        // M3-P3：EQ 状态快照（available/enabled/bands/levels）一起回传
-        extras.putString(MultiTrackSession.KEY_EQ_JSON, eqSnapshotJson())
-        session.setSessionExtras(extras)
-    }
+    private fun pushTracksSnapshot() = snapshotPublisher.pushNow()
 
     // ---------------- M3-P3：EQ（委托 EqHost） ----------------
 
@@ -448,7 +412,7 @@ class PlaybackService : MediaSessionService() {
         if (inMultiTrack) {
             inMultiTrack = false
             exitMultiTrackFocus()
-            handler.removeCallbacks(progressRunnable)
+            snapshotPublisher.stopProgress()
         }
         singlePlayer?.volume = 1f
         pushTracksSnapshot()
@@ -488,8 +452,7 @@ class PlaybackService : MediaSessionService() {
                 singlePlayer?.play()
                 enterMultiTrackFocus()
                 attachMultiTrackEq(c)
-                handler.removeCallbacks(progressRunnable)
-                handler.post(progressRunnable)
+                snapshotPublisher.startProgress()
                 pushTracksSnapshot()
                 Log.i(
                     TAG,
@@ -552,8 +515,7 @@ class PlaybackService : MediaSessionService() {
                 singlePlayer?.play()
                 enterMultiTrackFocus()
                 attachMultiTrackEq(c)
-                handler.removeCallbacks(progressRunnable)
-                handler.post(progressRunnable)
+                snapshotPublisher.startProgress()
                 pushTracksSnapshot()
                 Log.i(TAG, "loadStream: ${items.size} streaming track(s) → StemMixer")
             }
@@ -601,7 +563,7 @@ class PlaybackService : MediaSessionService() {
         mtOriginalUri = null
         mtOriginalTitle = null
         exitMultiTrackFocus()
-        handler.removeCallbacks(progressRunnable)   // ★停止 mix 进度推送
+        snapshotPublisher.stopProgress()   // ★停止 mix 进度推送
         cancelEqRetry()
         // 先暂停旧 mixer（立即静音），真正的 close join 放到 multiIo。
         val closing = multiTrack

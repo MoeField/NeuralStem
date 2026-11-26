@@ -9,6 +9,10 @@
   - `PlaybackService` 896 → **838 行**；JVM 514/0、lint 通过。
   - 真机验证：`attachSingle` → `enabled=true` → `setBandLevel` → 多轨 `attach(mix, session=761)` →
     `exitsmt` 后恢复 `attach(single, session=753)`，无 FATAL/ANR。
+- **Step 2 · `SnapshotPublisher`（已完成）**：快照去抖 + `sessionExtras` 合并（P2-5）+ 200ms 多轨进度
+  抽到独立类；`trackJson` 组装抽为纯函数 `buildTracksJson`。
+  - `PlaybackService` 838 → **800 行**；JVM 519/0、lint 通过。
+  - 真机：多轨进度 `0:05→0:11` 前进、EQ 快照命令、`exitsmt` 均正常。
 - 后续 Step 2–4（SnapshotPublisher / MultiTrackCoordinator / PlayerCommandHandler）见
   [`docs/V0.3.1_PLAN.md`](V0.3.1_PLAN.md)。
 
