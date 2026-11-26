@@ -28,6 +28,11 @@
   - `PlaybackService` 751 → **706 行**（累计 896 → 706，-190）；JVM 519/0、lint 通过。
   - 真机：4 轮 `inmt→mtvol→seek→exitsmt` 快速往复 + EQ 全正常；修复全局替换引入的
     字符串模板插值 bug（`$coordinator.active` 变成对象字符串）。
+- **Step 4 · `PlayerCommandHandler`（已完成）**：`onCustomCommand` 分派 + 全部 `handle*`
+  （load/stream/音量/exit/EQ/debugpos）迁入独立类；`ok/err` 抽到 `SessionResults.kt`；
+  UID 闸保留在 Service 最外层。
+  - `PlaybackService` 706 → **489 行**（累计 896 → 489，-407）；JVM 519/0、lint 通过。
+  - 真机全命令 smoke 通过；`StemMixerAudioSinkTest` I3 时序抖动改为重试容忍。
 - 后续 Step 2–4（SnapshotPublisher / MultiTrackCoordinator / PlayerCommandHandler）见
   [`docs/V0.3.1_PLAN.md`](V0.3.1_PLAN.md)。
 

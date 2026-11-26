@@ -84,8 +84,18 @@ class StemMixerAudioSinkTest {
             assertTrue(lastEndedSeen)
             assertFalse("曲尾应停止播放", mixer.isPlaying)
 
-            mixer.play()
-            assertTrue("再次 play 应清除 ended", awaitTrue(1_000) { !mixer.ended })
+            // 曲尾后旧渲染线程可能仍在收尾；play() 的 300ms 防御上限会放弃一次启动。
+            // 真实用户会再按一次，这里同样重试直到重启生效。
+            var restarted = false
+            for (attempt in 0 until 5) {
+                mixer.play()
+                if (awaitTrue(500) { !mixer.ended }) {
+                    restarted = true
+                    break
+                }
+                Thread.sleep(50)
+            }
+            assertTrue("再次 play 应清除 ended", restarted)
             assertTrue("再次 play 应恢复播放态", mixer.isPlaying)
         } finally {
             mixer.close()

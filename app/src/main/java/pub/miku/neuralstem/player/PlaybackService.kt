@@ -128,7 +128,6 @@ class PlaybackService : MediaSessionService() {
         onFocusChange = { onMultiTrackFocusChange(it) },
     )
 
-
     /**
      * M3-P3：EQ 控制器（**从 VM 搬进 Service**）。
      * 单轨挂 singlePlayer 会话；多轨每轨各挂一份（参数由 EqController 同步）。
@@ -164,6 +163,18 @@ class PlaybackService : MediaSessionService() {
             }
         },
     )
+
+    private val commandHandler: PlayerCommandHandler = PlayerCommandHandler(
+        coordinator = coordinator,
+        getSinglePlayer = { singlePlayer },
+        eqHost = eqHost,
+        onSpeedPitchChanged = { speed, pitch ->
+            lastSpeed = speed
+            lastPitchRate = pitch
+        },
+        onCommandFailure = { c -> coordinator.abort(c) },
+    )
+
 
     override fun onCreate() {
         super.onCreate()
@@ -261,66 +272,6 @@ class PlaybackService : MediaSessionService() {
     /** EQ 状态 JSON（供 UI 渲染面板）。 */
     private fun eqSnapshotJson(): String = eqHost.snapshotJson()
 
-    private fun handleSetEqEnabled(args: Bundle): SessionResult {
-        eqHost.setEnabled(args.getBoolean(MultiTrackSession.KEY_EQ_ENABLED, false))
-        return ok()
-    }
-
-    private fun handleSetEqBand(args: Bundle): SessionResult {
-        val band = args.getInt(MultiTrackSession.KEY_EQ_BAND, -1)
-        val level = args.getShort(MultiTrackSession.KEY_EQ_LEVEL_MB, 0)
-        if (!eqHost.setBand(band, level)) return err("band 越界或 EQ 不可用")
-        return ok()
-    }
-
-    private fun handleResetEq(): SessionResult {
-        eqHost.reset()
-        return ok()
-    }
-
-    /**
-     * M4/S1 诊断：打印每条轨的 `currentPosition`。
-     *
-     * `ExoPlayer.currentPosition` 基于 **AudioTrack 播放头**，是**每轨真实的渲染位置**
-     * （与 `dumpsys` 的 output-thread 帧计数不同，后者对同 thread 的所有轨是同一个值，
-     * 无法区分单轨）。因此用它验证“seek 后多轨是否对齐”。
-     */
-    private fun handleDebugPos(): SessionResult {
-        val main = singlePlayer
-        Log.i(
-            TAG,
-            "POS_MAIN pos=${main?.currentPosition} state=${main?.playbackState} " +
-                "playing=${main?.isPlaying} pp=${main?.playbackParameters}",
-        )
-        coordinator.current?.trackList?.forEachIndexed { i, t ->
-            Log.i(
-                TAG,
-                "POS_TRACK[$i] id=${t.id} label=${t.label} uri=${t.uri}",
-            )
-        }
-        // ★2026-11-01：只有一个 framePos，所有 stem 必然同帧 —— 报混音器位置即可
-        coordinator.current?.let {
-            Log.i(
-                TAG,
-                "POS_MIX pos=${it.currentPositionMs()} dur=${it.durationMs()} " +
-                    "playing=${it.isPlaying()} tracks=${it.trackList.size}",
-            )
-        }
-        return ok()
-    }
-
-    /** 诊断/自动化：低+6 / 中-6 / 高+6 dB 测试曲线，并开启。 */
-    private fun handleApplyEqTestCurve(): SessionResult {
-        if (!eqHost.applyTestCurve()) return err("EQ unavailable (bandCount=0)")
-        return ok()
-    }
-
-    /** ★Step7：应用默认微笑曲线（低+3/高+3）。 */
-    private fun handleApplyEqDefaultCurve(): SessionResult {
-        if (!eqHost.applyDefaultCurve()) return err("EQ unavailable (bandCount=0)")
-        return ok()
-    }
-
     // ---------------- ★A3：多轨音频焦点 / 门面同步 ----------------
 
     /**
@@ -411,106 +362,6 @@ class PlaybackService : MediaSessionService() {
         }
     }
 
-    // ---------------- 多轨：命令处理 ----------------
-
-    /** 多轨 load 失败：确保不会留下“门面静音 + 无 mixer”的无声状态。 */
-    private fun abortMultiLoad(c: MultiTrackController): SessionResult {
-        Log.w(TAG, "multi load failed → restore single-track facade")
-        coordinator.abort(c)
-        return err("多轨加载失败")
-    }
-
-    private fun handleLoadMultiTrack(args: Bundle): SessionResult {
-        val json = args.getString(MultiTrackSession.KEY_ITEMS) ?: return err("items 缺失")
-        val items = parseItems(json) ?: return err("items 解析失败")
-        if (items.isEmpty()) return err("items 为空")
-        val startMs = args.getLong(MultiTrackSession.KEY_START_MS, 0L)
-        val title = args.getString(MultiTrackSession.KEY_TITLE)
-        coordinator.loadDisk(items, startMs, title)?.let { return err(it) }
-        return ok("loading")
-    }
-
-    /**
-     * ★G-3：载入流式多轨（边分离边播）。
-     * items JSON 每项 `{id,label,host}`；uri 拼为 `stem://<host>`，
-     * 主轨（singlePlayer）已装 [StemStreamFactory] → 自动从 ring buffer 读。
-     */
-    private fun handleLoadStream(args: Bundle): SessionResult {
-        val json = args.getString(MultiTrackSession.KEY_ITEMS) ?: return err("items 缺失")
-        val arr = try {
-            JSONArray(json)
-        } catch (t: Throwable) { return err("items 解析失败") }
-        if (arr.length() == 0) return err("items 为空")
-        val items = ArrayList<MultiTrackController.StreamItem>(arr.length())
-        for (i in 0 until arr.length()) {
-            val o = arr.optJSONObject(i) ?: continue
-            val id = o.optString("id").ifBlank { "track$i" }
-            val label = o.optString("label").ifBlank { id }
-            val host = o.optString("host").ifBlank { if (id.contains("accomp")) "accompaniment" else "vocals" }
-            items += MultiTrackController.StreamItem(
-                id = id,
-                label = label,
-                uri = Uri.parse("${StemPcmDataSource.SCHEME}://$host"),
-            )
-        }
-        if (items.isEmpty()) return err("items 为空")
-        val startMs = args.getLong(MultiTrackSession.KEY_START_MS, 0L)
-        val title = args.getString(MultiTrackSession.KEY_TITLE)
-        coordinator.loadStream(items, startMs, title)?.let { return err(it) }
-        return ok("loading-stream")
-    }
-
-    private fun handleSetVolume(args: Bundle): SessionResult {
-        val id = args.getString(MultiTrackSession.KEY_TRACK_ID) ?: return err("trackId 缺失")
-        if (!coordinator.setVolume(id, args.getFloat(MultiTrackSession.KEY_VOLUME, 1f))) {
-            return err("非多轨")
-        }
-        pushTracksSnapshot()
-        return ok()
-    }
-
-    private fun handleToggleMute(args: Bundle): SessionResult {
-        val id = args.getString(MultiTrackSession.KEY_TRACK_ID) ?: return err("trackId 缺失")
-        if (!coordinator.toggleMute(id)) return err("非多轨")
-        pushTracksSnapshot()
-        return ok()
-    }
-
-    private fun handleToggleSolo(args: Bundle): SessionResult {
-        val id = args.getString(MultiTrackSession.KEY_TRACK_ID) ?: return err("trackId 缺失")
-        if (!coordinator.toggleSolo(id)) return err("非多轨")
-        pushTracksSnapshot()
-        return ok()
-    }
-
-    private fun handleExit(): SessionResult {
-        Log.i(
-            TAG,
-            "EXIT_MT before: active=${coordinator.active} mainItem=${singlePlayer?.currentMediaItem?.localConfiguration?.uri} " +
-                "followers=${coordinator.current?.trackList.orEmpty().joinToString { "${it.id}:${it.uri}" }}",
-        )
-        coordinator.exit()
-        Log.i(
-            TAG,
-            "EXIT_MT after: active=${coordinator.active} mainItem=${singlePlayer?.currentMediaItem?.localConfiguration?.uri}",
-        )
-        return ok()
-    }
-
-    private fun parseItems(json: String): List<Triple<String, String, Uri>>? = runCatching {
-        val arr = JSONArray(json)
-        (0 until arr.length()).map { i ->
-            val o = arr.getJSONObject(i)
-            Triple(o.getString("id"), o.getString("label"), Uri.parse(o.getString("uri")))
-        }
-    }.getOrNull()
-
-    private fun ok(msg: String = "ok") =
-        SessionResult(SessionResult.RESULT_SUCCESS, Bundle().apply { putString("msg", msg) })
-
-    private fun err(msg: String) =
-        SessionResult(SessionError.ERROR_BAD_VALUE, Bundle().apply { putString("error", msg) })
-
     private inner class SessionCallback : MediaSession.Callback {
         override fun onConnect(
             session: MediaSession,
@@ -590,81 +441,13 @@ class PlaybackService : MediaSessionService() {
             args: Bundle,
         ): ListenableFuture<SessionResult> {
             // ★B：第二道门。即使外部 controller 猜到了 action，也拒绝执行。
+            //   安全闸必须留在 Service 入口，不能下沉到 PlayerCommandHandler。
             if (controller.uid != Process.myUid()) {
                 Log.w(TAG, "reject custom command from ${controller.packageName}/${controller.uid}")
                 return Futures.immediateFuture(SessionResult(SessionError.ERROR_NOT_SUPPORTED))
             }
             Log.i(TAG, "onCustomCommand: ${customCommand.customAction}")
-            val result = try {
-                when (customCommand.customAction) {
-                MultiTrackSession.CMD_LOAD -> handleLoadMultiTrack(args)
-                MultiTrackSession.CMD_LOAD_STREAM -> handleLoadStream(args)
-                // P1-B：load 在 coordinator.io 进行中，这三条命令会读/写半初始化 tracks；
-                // 与 PLAY/PAUSE 对齐，完成前只接受不作用。
-                MultiTrackSession.CMD_SET_VOLUME ->
-                    if (coordinator.loadPending) ok("loading") else handleSetVolume(args)
-                MultiTrackSession.CMD_TOGGLE_MUTE ->
-                    if (coordinator.loadPending) ok("loading") else handleToggleMute(args)
-                MultiTrackSession.CMD_TOGGLE_SOLO ->
-                    if (coordinator.loadPending) ok("loading") else handleToggleSolo(args)
-                MultiTrackSession.CMD_EXIT -> handleExit()
-                MultiTrackSession.CMD_PLAY -> {
-                    // 多轨 load 在 IO 中，完成前命令只接受、不触碰半初始化 mixer。
-                    if (coordinator.loadPending) ok("loading") else {
-                        coordinator.current?.play()
-                        singlePlayer?.play()
-                        ok()
-                    }
-                }
-                MultiTrackSession.CMD_PAUSE -> {
-                    if (coordinator.loadPending) ok("loading") else {
-                        coordinator.current?.pause()
-                        singlePlayer?.pause()
-                        coordinator.focusWasPlaying = false
-                        ok()
-                    }
-                }
-                MultiTrackSession.CMD_TOGGLE -> {
-                    // ★状态真源在 Service（mixer），不让 VM 自己判 isPlaying（有滞后）
-                    val c = coordinator.current
-                    if (c == null) err("非多轨") else {
-                        val nowPlaying = !c.isPlaying()
-                        if (nowPlaying) {
-                            c.play(); singlePlayer?.play()
-                        } else {
-                            c.pause(); singlePlayer?.pause()
-                            coordinator.focusWasPlaying = false
-                        }
-                        Log.i(TAG, "CMD_TOGGLE → ${if (nowPlaying) "play" else "pause"}")
-                        ok()
-                    }
-                }
-                MultiTrackSession.CMD_SET_SPEED_PITCH -> {
-                    val c = coordinator.current ?: return Futures.immediateFuture(err("非多轨"))
-                    val speed = args.getFloat(MultiTrackSession.KEY_SPEED, 1f)
-                    val pitchRate = args.getFloat(MultiTrackSession.KEY_PITCH_RATE, 1f)
-                    lastSpeed = speed
-                    lastPitchRate = pitchRate
-                    c.setSpeedPitch(speed, pitchRate)
-                    Log.i(TAG, "CMD_SET_SPEED_PITCH speed=$speed pitchRate=$pitchRate")
-                    ok()
-                }
-                MultiTrackSession.CMD_SET_EQ_ENABLED -> handleSetEqEnabled(args)
-                MultiTrackSession.CMD_SET_EQ_BAND -> handleSetEqBand(args)
-                MultiTrackSession.CMD_RESET_EQ -> handleResetEq()
-                MultiTrackSession.CMD_APPLY_EQ_TEST_CURVE -> handleApplyEqTestCurve()
-                MultiTrackSession.CMD_APPLY_EQ_DEFAULT_CURVE -> handleApplyEqDefaultCurve()
-                    MultiTrackSession.CMD_DEBUG_POS -> handleDebugPos()
-                    else -> SessionResult(SessionError.ERROR_NOT_SUPPORTED)
-                }
-            } catch (t: Throwable) {
-                // 自定义命令跑在 MediaSession 主线程；任何 require/IO 异常都不能冒出去。
-                Log.e(TAG, "onCustomCommand failed: ${customCommand.customAction}", t)
-                runCatching { coordinator.current?.let { abortMultiLoad(it) } }
-                    .onFailure { Log.w(TAG, "abortMultiLoad after command failure failed", it) }
-                err("多轨命令失败: ${t.message ?: t.javaClass.simpleName}")
-            }
-            return Futures.immediateFuture(result)
+            return Futures.immediateFuture(commandHandler.dispatch(customCommand.customAction, args))
         }
     }
 
