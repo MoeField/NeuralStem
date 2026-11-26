@@ -18,6 +18,11 @@
   「current/active 主线程专属，io 唯一跨线程执行者」。
   - `PlaybackService` 800 → **821 行**（alias 过渡期暂增，3c 回落）；JVM 519/0、lint 通过。
   - 真机：两次 `inmt→exitsmt` 快速往复 + `mtvol` + `eqall` 全正常，无 FATAL/ANR/CME。
+- **Step 3b · 加载方法迁移（已完成）**：`ensure/loadDisk/loadStream/abort` 移入 Coordinator，
+  用函数回调（`getOriginalMeta`/`getSpeedPitch`/`onLoaded`/`onAborted`/`onAudioSessionChanged`）
+  避免与 `SnapshotPublisher`/`EqHost` 循环依赖；Service 只留解析 + 委托。
+  - `PlaybackService` 821 → **769 行**；JVM 519/0、lint 通过。
+  - 真机磁盘多轨 `inmt→exitsmt` 通过；流式 `loadStream` 在 Domain 接管后属 fallback 死路径。
 - 后续 Step 2–4（SnapshotPublisher / MultiTrackCoordinator / PlayerCommandHandler）见
   [`docs/V0.3.1_PLAN.md`](V0.3.1_PLAN.md)。
 

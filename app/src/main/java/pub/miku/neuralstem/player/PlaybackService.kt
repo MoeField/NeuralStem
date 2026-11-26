@@ -77,6 +77,41 @@ class PlaybackService : MediaSessionService() {
      * 调用点零改动。3c 删 alias 后 Service 只通过 coordinator 访问。
      */
     private val coordinator: MultiTrackCoordinator = MultiTrackCoordinator(
+        context = this,
+        onAudioSessionChanged = { sessionId ->
+            // AudioTrack 重建后 sessionId 变了；在主线程重挂多轨 EQ。
+            handler.post {
+                if (inMultiTrack) {
+                    Log.i(TAG, "mixer audio session changed → $sessionId, reattach EQ")
+                    multiTrack?.let { attachMultiTrackEq(it) }
+                }
+            }
+        },
+        getOriginalMeta = {
+            val item = singlePlayer?.currentMediaItem
+            item?.localConfiguration?.uri?.toString() to item?.mediaMetadata?.title?.toString()
+        },
+        getSpeedPitch = { lastSpeed to lastPitchRate },
+        onLoaded = { c, startMs, logMsg ->
+            singlePlayer?.volume = 0f
+            inMultiTrack = true
+            c.playWhenAllReady(startMs)
+            singlePlayer?.play()
+            enterMultiTrackFocus()
+            attachMultiTrackEq(c)
+            snapshotPublisher.startProgress()
+            pushTracksSnapshot()
+            Log.i(TAG, logMsg)
+        },
+        onAborted = {
+            if (inMultiTrack) {
+                inMultiTrack = false
+                exitMultiTrackFocus()
+                snapshotPublisher.stopProgress()
+            }
+            singlePlayer?.volume = 1f
+            pushTracksSnapshot()
+        },
         onFocusChange = { onMultiTrackFocusChange(it) },
     )
 
@@ -233,21 +268,7 @@ class PlaybackService : MediaSessionService() {
 
     // ---------------- 多轨：状态快照回传 ----------------
 
-    private fun ensureMultiTrack(): MultiTrackController {
-        multiTrack?.let { return it }
-        val c = MultiTrackController(this) { sessionId ->
-            // AudioTrack 重建后 sessionId 变了；在主线程重挂多轨 EQ。
-            handler.post {
-                if (inMultiTrack) {
-                    Log.i(TAG, "mixer audio session changed → $sessionId, reattach EQ")
-                    multiTrack?.let { attachMultiTrackEq(it) }
-                }
-            }
-        }
-        // P2-4：不再向 controller 注册永不派发的 listener（控制器不是 ExoPlayer）。
-        multiTrack = c
-        return c
-    }
+    private fun ensureMultiTrack(): MultiTrackController = coordinator.ensure()
 
     /**
      * 请求推送快照。
@@ -427,16 +448,7 @@ class PlaybackService : MediaSessionService() {
     /** 多轨 load 失败：确保不会留下“门面静音 + 无 mixer”的无声状态。 */
     private fun abortMultiLoad(c: MultiTrackController): SessionResult {
         Log.w(TAG, "multi load failed → restore single-track facade")
-        // P1-1：close 可能 join 渲染线程，放到 multiIo，主线程只清状态。
-        multiIo.launch { runCatching { c.close() } }
-        multiTrack = null
-        if (inMultiTrack) {
-            inMultiTrack = false
-            exitMultiTrackFocus()
-            snapshotPublisher.stopProgress()
-        }
-        singlePlayer?.volume = 1f
-        pushTracksSnapshot()
+        coordinator.abort(c)
         return err("多轨加载失败")
     }
 
@@ -444,44 +456,9 @@ class PlaybackService : MediaSessionService() {
         val json = args.getString(MultiTrackSession.KEY_ITEMS) ?: return err("items 缺失")
         val items = parseItems(json) ?: return err("items 解析失败")
         if (items.isEmpty()) return err("items 为空")
-
-        val c = ensureMultiTrack()
-        // 旧 mixer 先暂停，避免 IO 等待 join 期间还在出声。
-        runCatching { multiTrack?.pause() }
-        val gen = ++multiLoadGen
-        multiLoadPending = true
-        mtOriginalUri = singlePlayer?.currentMediaItem?.localConfiguration?.uri?.toString()
-        mtOriginalTitle = singlePlayer?.currentMediaItem?.mediaMetadata?.title?.toString()
         val startMs = args.getLong(MultiTrackSession.KEY_START_MS, 0L)
         val title = args.getString(MultiTrackSession.KEY_TITLE)
-        multiLoadJob = multiIo.launch {
-            runCatching { c.load(items, title) }
-                .onFailure { Log.e(TAG, "multi load failed on io", it) }
-            val loaded = c.isReady()
-            withContext(Dispatchers.Main.immediate) {
-                if (gen != multiLoadGen) return@withContext
-                multiLoadPending = false
-                if (!loaded || !c.isReady()) {
-                    abortMultiLoad(c)
-                    return@withContext
-                }
-                // ★把单轨期间/上次多轨的变速变调带给新混音器。
-                c.setSpeedPitch(lastSpeed, lastPitchRate)
-                singlePlayer?.volume = 0f
-                inMultiTrack = true
-                c.playWhenAllReady(startMs)
-                singlePlayer?.play()
-                enterMultiTrackFocus()
-                attachMultiTrackEq(c)
-                snapshotPublisher.startProgress()
-                pushTracksSnapshot()
-                Log.i(
-                    TAG,
-                    "loadMultiTrack(mix): ${items.size} track(s) ids=${items.map { it.first }} " +
-                        "（singlePlayer 静音当门面，实际声音来自 StemMixer）",
-                )
-            }
-        }
+        coordinator.loadDisk(items, startMs, title)?.let { return err(it) }
         return ok("loading")
     }
 
@@ -509,38 +486,9 @@ class PlaybackService : MediaSessionService() {
             )
         }
         if (items.isEmpty()) return err("items 为空")
-
-        val c = ensureMultiTrack()
-        runCatching { multiTrack?.pause() }
-        val gen = ++multiLoadGen
-        multiLoadPending = true
-        mtOriginalUri = singlePlayer?.currentMediaItem?.localConfiguration?.uri?.toString()
-        mtOriginalTitle = singlePlayer?.currentMediaItem?.mediaMetadata?.title?.toString()
         val startMs = args.getLong(MultiTrackSession.KEY_START_MS, 0L)
         val title = args.getString(MultiTrackSession.KEY_TITLE)
-        multiLoadJob = multiIo.launch {
-            runCatching { c.loadStream(items, title) }
-                .onFailure { Log.e(TAG, "multi stream load failed on io", it) }
-            val loaded = c.isReady()
-            withContext(Dispatchers.Main.immediate) {
-                if (gen != multiLoadGen) return@withContext
-                multiLoadPending = false
-                if (!loaded || !c.isReady()) {
-                    abortMultiLoad(c)
-                    return@withContext
-                }
-                c.setSpeedPitch(lastSpeed, lastPitchRate)
-                singlePlayer?.volume = 0f
-                inMultiTrack = true
-                c.playWhenAllReady(startMs)
-                singlePlayer?.play()
-                enterMultiTrackFocus()
-                attachMultiTrackEq(c)
-                snapshotPublisher.startProgress()
-                pushTracksSnapshot()
-                Log.i(TAG, "loadStream: ${items.size} streaming track(s) → StemMixer")
-            }
-        }
+        coordinator.loadStream(items, startMs, title)?.let { return err(it) }
         return ok("loading-stream")
     }
 

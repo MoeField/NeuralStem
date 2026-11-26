@@ -1,14 +1,19 @@
 package pub.miku.neuralstem.player
 
+import android.content.Context
 import android.media.AudioManager
+import android.net.Uri
+import android.util.Log
 import androidx.media3.common.AudioAttributes
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
- * v0.3.1 Step 3a：多轨会话状态宿主。
+ * v0.3.1 Step 3：多轨会话状态 + 加载编排。
  *
  * ## 线程归属（必须遵守）
  * - [current] / [active]：**主线程专属**。命令 handler、media listener、快照 lambda 读写。
@@ -17,10 +22,22 @@ import kotlinx.coroutines.SupervisorJob
  * - **不要**在 [io] 线程直接读写 [current]/[active]，否则重新引入跨线程可见性问题
  *   （P1-1/P1-B 回归）。
  *
- * 3a 只做字段搬家：load/exit/音量/焦点方法仍在 `PlaybackService`，通过 alias 访问；
- * 3b/3c 再迁方法并删除 alias。
+ * ## 依赖方向（避免环）
+ * 本类**不持有** `SnapshotPublisher`/`EqHost`；需要时通过注入回调
+ * （[requestSnapshot] 由 Service 指向 `snapshotPublisher.request()`）。
+ * Service 的装配顺序是单向的：Coordinator 只回调 Service，不反向持有装配对象。
+ *
+ * 3a 只搬字段；3b 迁 `ensure/loadDisk/loadStream/abort`；3c 迁 exit/音量/焦点并删 alias。
  */
 internal class MultiTrackCoordinator(
+    private val context: Context,
+    private val onAudioSessionChanged: (Int) -> Unit,
+    private val getOriginalMeta: () -> Pair<String?, String?>,
+    private val getSpeedPitch: () -> Pair<Float, Float>,
+    /** 加载成功后的收尾编排（主线程）；由 Service 注入（音量/播放/焦点/EQ/进度/快照）。 */
+    private val onLoaded: (MultiTrackController, Long, String) -> Unit,
+    /** 加载失败/取消后的清场（主线程）；由 Service 注入。 */
+    private val onAborted: () -> Unit,
     onFocusChange: (Int) -> Unit,
 ) {
     /** 当前多轨控制器；主线程读写。 */
@@ -47,4 +64,86 @@ internal class MultiTrackCoordinator(
 
     val focusListener: AudioManager.OnAudioFocusChangeListener =
         AudioManager.OnAudioFocusChangeListener { change -> onFocusChange(change) }
+
+    /** 确保 controller 存在（主线程）。 */
+    fun ensure(): MultiTrackController {
+        current?.let { return it }
+        val c = MultiTrackController(context) { sessionId ->
+            onAudioSessionChanged(sessionId)
+        }
+        // P2-4：不再向 controller 注册永不派发的 listener（控制器不是 ExoPlayer）。
+        current = c
+        return c
+    }
+
+    /** 加载磁盘 WAV 多轨。@return null=已受理；非 null=错误消息。 */
+    fun loadDisk(
+        items: List<Triple<String, String, Uri>>,
+        startMs: Long,
+        title: String?,
+    ): String? = startLoad(
+        itemCount = items.size,
+        startMs = startMs,
+        logMsg = "loadMultiTrack(mix): ${items.size} track(s) ids=${items.map { it.first }} " +
+            "（singlePlayer 静音当门面，实际声音来自 StemMixer）",
+        loadOnIo = { c -> c.load(items, title) },
+    )
+
+    /** 加载流式多轨（边分离边播）。@return null=已受理；非 null=错误消息。 */
+    fun loadStream(
+        items: List<MultiTrackController.StreamItem>,
+        startMs: Long,
+        title: String?,
+    ): String? = startLoad(
+        itemCount = items.size,
+        startMs = startMs,
+        logMsg = "loadStream: ${items.size} streaming track(s) → StemMixer",
+        loadOnIo = { c -> c.loadStream(items, title) },
+    )
+
+    private fun startLoad(
+        itemCount: Int,
+        startMs: Long,
+        logMsg: String,
+        loadOnIo: (MultiTrackController) -> Unit,
+    ): String? {
+        val c = ensure()
+        // 旧 mixer 先暂停，避免 IO 等待 join 期间还在出声。
+        runCatching { current?.pause() }
+        val gen = ++loadGen
+        loadPending = true
+        val (uri, t) = getOriginalMeta()
+        originalUri = uri
+        originalTitle = t
+        val (speed, pitchRate) = getSpeedPitch()
+        loadJob = io.launch {
+            val loaded = runCatching { loadOnIo(c) }
+                .onFailure { Log.e(TAG, "multi load failed on io", it) }
+                .isSuccess
+            withContext(Dispatchers.Main.immediate) {
+                if (gen != loadGen) return@withContext
+                loadPending = false
+                if (!loaded || !c.isReady()) {
+                    abort(c)
+                    return@withContext
+                }
+                // ★把单轨期间/上次多轨的变速变调带给新混音器。
+                c.setSpeedPitch(speed, pitchRate)
+                onLoaded(c, startMs, logMsg)
+            }
+        }
+        return null
+    }
+
+    /** 加载失败/取消：清状态 + 异步 close（join 可能在 IO 上耗时）。 */
+    fun abort(c: MultiTrackController) {
+        io.launch { runCatching { c.close() } }
+        if (current === c) current = null
+        if (active) active = false
+        onAborted()
+    }
+
+    companion object {
+        private const val TAG = "MultiTrackCoordinator"
+    }
 }
