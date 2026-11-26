@@ -100,7 +100,7 @@
 
 ## 3. 仍开放（非阻塞，排入 v0.3.x）
 
-- **God class**：`PlaybackService` 882 行、`PlayerViewModel` 2529 行、`SeparationScreen` 881 行。
+- **God class**：`PlaybackService` 838 行（Step 1 已抽 `EqHost`，原 896）、`PlayerViewModel` 2529 行、`MainActivity` 1944 行、`SeparationRepository` 1420 行、`SeparationScreen` 881 行。
   计划见 [V0.3.0_PLAN.md](V0.3.0_PLAN.md)：v0.3.0 已完成 AudioSink；v0.3.1+ 拆命令处理层 → PlayerViewModel。
 - **P2-12**：AVS3 输出越界校验仍是“事后”的（第三方 decode 接口无容量参数）。
 - **仪器测试缺口**：`SeparationDomain`/SAF 的 Android 路径没有 CI 仪器测试。
