@@ -34,4 +34,22 @@ class TracksJsonTest {
         val arr = JSONArray().put(JSONObject().put("id", "x").put("label", "x"))
         assertNull(parseTracksJson(arr.toString()).single().uri)
     }
+
+    @Test
+    fun `多轨顺序保留且 solo 字段完整`() {
+        val arr = JSONArray()
+        arr.put(JSONObject().apply {
+            put("id", "vocals"); put("label", "人声"); put("uri", "file:///v.wav")
+            put("volume", 0.9); put("muted", false); put("solo", true)
+        })
+        arr.put(JSONObject().apply {
+            put("id", "accompaniment"); put("label", "伴奏"); put("uri", "file:///a.wav")
+            put("volume", 1.0)
+        })
+        val r = parseTracksJson(arr.toString())
+        assertEquals(2, r.size)
+        assertEquals(listOf("vocals", "accompaniment"), r.map { it.id })
+        assertEquals(true, r[0].solo)
+        assertEquals(false, r[1].solo)
+    }
 }
