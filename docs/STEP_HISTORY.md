@@ -13,6 +13,11 @@
   抽到独立类；`trackJson` 组装抽为纯函数 `buildTracksJson`。
   - `PlaybackService` 838 → **800 行**；JVM 519/0、lint 通过。
   - 真机：多轨进度 `0:05→0:11` 前进、EQ 快照命令、`exitsmt` 均正常。
+- **Step 3a · `MultiTrackCoordinator` 字段搬家（已完成）**：`current/active/io/load*/original*/focus*`
+  移入 Coordinator，Service 保留 get/set alias，调用点零改动；KDoc 写明
+  「current/active 主线程专属，io 唯一跨线程执行者」。
+  - `PlaybackService` 800 → **821 行**（alias 过渡期暂增，3c 回落）；JVM 519/0、lint 通过。
+  - 真机：两次 `inmt→exitsmt` 快速往复 + `mtvol` + `eqall` 全正常，无 FATAL/ANR/CME。
 - 后续 Step 2–4（SnapshotPublisher / MultiTrackCoordinator / PlayerCommandHandler）见
   [`docs/V0.3.1_PLAN.md`](V0.3.1_PLAN.md)。
 

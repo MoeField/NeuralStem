@@ -58,24 +58,8 @@ class PlaybackService : MediaSessionService() {
     /** 单轨/多轨主轨播放器 —— **也是 session 的 player**（真实 ExoPlayer）。 */
     private var singlePlayer: ExoPlayer? = null
 
-    /** 多轨控制器：主轨复用 [singlePlayer]，其余为跟随轨。 */
-    private var multiTrack: MultiTrackController? = null
-
-    /** 当前是否多轨模式。 */
-    private var inMultiTrack = false
-
     /** 主线程 handler（用于快照推送去抖）。 */
     private val handler = Handler(Looper.getMainLooper())
-
-    /**
-     * ★P1-1：多轨 load/close 的专用单线程 IO。
-     * MediaSession 主线程只做状态切换；文件打开/WAV 头解析/800ms join 全在这里。
-     */
-    private val multiIo = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
-    private var multiLoadJob: Job? = null
-    private var multiLoadPending = false
-    private var multiLoadGen = 0L
-    /** multi-track EQ 会话未就绪的延迟重试（退出/销毁时必须取消）。 */
 
     /**
      * ★2026-11-06：多轨变速变调参数缓存。
@@ -87,23 +71,60 @@ class PlaybackService : MediaSessionService() {
     @Volatile private var lastPitchRate: Float = 1f
 
     /**
-     * ★2026-11-10（A3）：多轨音频焦点由 Service 统一持有。
+     * v0.3.1 Step 3a：多轨会话状态宿主。
      *
-     * 门面 singlePlayer 原先 `handleAudioFocus=true`：来电/他 App 抢焦点时
-     * ExoPlayer 只暂停静音门面，真正出声的 StemMixer 继续播。
-     * 进入多轨时关掉门面的焦点处理，由这里 requestAudioFocus；
-     * 焦点丢失 → 同时暂停 mixer + 门面；恢复 → 按丢失前状态恢复。
+     * 3a 只做字段搬家；load/exit/音量/焦点方法仍在 Service，通过下方 alias 访问，
+     * 调用点零改动。3c 删 alias 后 Service 只通过 coordinator 访问。
      */
-    private var mtAudioAttributes: AudioAttributes? = null
-    private var mtFocusHeld = false
-    private var mtFocusWasPlaying = false
-    private val mtFocusListener = AudioManager.OnAudioFocusChangeListener { change ->
-        onMultiTrackFocusChange(change)
-    }
+    private val coordinator: MultiTrackCoordinator = MultiTrackCoordinator(
+        onFocusChange = { onMultiTrackFocusChange(it) },
+    )
 
-    /** ★B1：多轨当前曲的原始 uri/title（VM 重建恢复用）。 */
-    private var mtOriginalUri: String? = null
-    private var mtOriginalTitle: String? = null
+    // ---- 3a 过渡 alias（字段实际住在 coordinator；3c 删除）----
+    private var multiTrack: MultiTrackController?
+        get() = coordinator.current
+        set(value) { coordinator.current = value }
+
+    private var inMultiTrack: Boolean
+        get() = coordinator.active
+        set(value) { coordinator.active = value }
+
+    private val multiIo: CoroutineScope get() = coordinator.io
+
+    private var multiLoadJob: Job?
+        get() = coordinator.loadJob
+        set(value) { coordinator.loadJob = value }
+
+    private var multiLoadPending: Boolean
+        get() = coordinator.loadPending
+        set(value) { coordinator.loadPending = value }
+
+    private var multiLoadGen: Long
+        get() = coordinator.loadGen
+        set(value) { coordinator.loadGen = value }
+
+    private var mtAudioAttributes: AudioAttributes?
+        get() = coordinator.audioAttributes
+        set(value) { coordinator.audioAttributes = value }
+
+    private var mtFocusHeld: Boolean
+        get() = coordinator.focusHeld
+        set(value) { coordinator.focusHeld = value }
+
+    private var mtFocusWasPlaying: Boolean
+        get() = coordinator.focusWasPlaying
+        set(value) { coordinator.focusWasPlaying = value }
+
+    private val mtFocusListener: AudioManager.OnAudioFocusChangeListener
+        get() = coordinator.focusListener
+
+    private var mtOriginalUri: String?
+        get() = coordinator.originalUri
+        set(value) { coordinator.originalUri = value }
+
+    private var mtOriginalTitle: String?
+        get() = coordinator.originalTitle
+        set(value) { coordinator.originalTitle = value }
 
     /**
      * M3-P3：EQ 控制器（**从 VM 搬进 Service**）。
