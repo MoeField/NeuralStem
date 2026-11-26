@@ -259,7 +259,7 @@ class PlaybackService : MediaSessionService() {
     private fun handleSetEqBand(args: Bundle): SessionResult {
         val band = args.getInt(MultiTrackSession.KEY_EQ_BAND, -1)
         val level = args.getShort(MultiTrackSession.KEY_EQ_LEVEL_MB, 0)
-        if (!eqHost.setBand(band, level)) return err("band 缺失")
+        if (!eqHost.setBand(band, level)) return err("band 越界或 EQ 不可用")
         return ok()
     }
 

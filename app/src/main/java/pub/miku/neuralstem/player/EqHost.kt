@@ -81,9 +81,9 @@ internal class EqHost(
         requestSnapshot()
     }
 
-    /** @return false = band 非法（调用方回 `band 缺失`）。 */
+    /** @return false = band 越界或 EQ 不可用。 */
     fun setBand(band: Int, levelMb: Short): Boolean {
-        if (band < 0) return false
+        if (band < 0 || band >= controller.bandCount) return false
         controller.setBandLevel(band, levelMb)
         requestSnapshot()
         return true
