@@ -1,8 +1,8 @@
 # 状态稳定性测试方案
 
-> 状态：**v0.2.55 门禁已执行**，实跑报告见 [STABILITY_REPORT_v0.2.55.md](STABILITY_REPORT_v0.2.55.md)；本文保留为可复用模板。  
-> 下一版本若包含 B1 状态架构拆分，直接升 **v0.3.0**（不是奖励，是变更级别信号）。  
-> 基线：v0.2.54；执行时 JVM 508/0，androidTest 2/0。
+> 状态：**历史模板**（v0.2.55 门禁已执行，报告见 [STABILITY_REPORT_v0.2.55.md](STABILITY_REPORT_v0.2.55.md)）。  
+> **最新实跑**：见 [STABILITY_REPORT_v0.2.65.md](STABILITY_REPORT_v0.2.65.md)（2h 多轨固定 soak + 长分离 + PCM 租约）。  
+> 本文保留为可复用的操作字母表/故障注入模板，不代表当前版本门禁。
 
 ## 1. 测试目标
 
