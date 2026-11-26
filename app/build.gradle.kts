@@ -192,6 +192,8 @@ android {
     // 合规声明：绕过 DRM 在多数法域可能构成规避技术措施；仅供学习/调研，
     // 且仅用于用户自己已购/已下载的音乐文件在本地播放。
     val withNcm = (project.findProperty("with_ncm") as String?)?.toBoolean() ?: false
+    // v0.4.0：Rubber Band（GPL-3.0-or-later）为可选组件，默认不打包以保持 MIT 构建。
+    val withRubberBand = (project.findProperty("with_rubberband") as String?)?.toBoolean() ?: false
     if (withNcm) {
         sourceSets.getByName("main").java.srcDirs("src/ncm/java")
         sourceSets.getByName("main").kotlin.srcDirs("src/ncm/java")
@@ -213,6 +215,8 @@ android {
     }
     defaultConfig {
         buildConfigField("boolean", "WITH_NCM", withNcm.toString())
+        // v0.4.0：RB 可选组件（GPL）。
+        buildConfigField("boolean", "WITH_RUBBERBAND", withRubberBand.toString())
 
         // ★Shizuku Provider 的开关（2026-10-26 发布事故）。
         //   公开版置 false → 系统不会实例化该 provider → 不会 ClassNotFoundException。
@@ -233,6 +237,7 @@ android {
         externalNativeBuild {
             cmake {
                 arguments.add("-DWITH_NCM=" + if (withNcm) "ON" else "OFF")
+                arguments.add("-DWITH_RUBBERBAND=" + if (withRubberBand) "ON" else "OFF")
             }
         }
     }

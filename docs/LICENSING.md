@@ -56,3 +56,16 @@ AVS3-P3（`av3a`）的 UWA 参考实现受 **UWA Code Sharing Policy** 限制，
 - 任何没有明确 MIT/兼容许可的第三方实现
 
 仓库已提供 `scripts/check-license-boundary.sh`，CI 会在构建前检查 tracked 文件是否包含上述禁止路径。
+
+---
+
+## Rubber Band（可选组件，v0.4.0 spike）
+
+- 代码：`app/src/main/cpp/third_party/rubberband/`（vendored，含 `COPYING`）。
+- 许可：**GPL-2.0-or-later 或商业双许可**（[官方说明](https://breakfastquay.com/rubberband/license.html)）。
+- 本项目选择 **GPL-3.0-or-later** 口径（“or later” 允许；GPL-3.0 与现有 Apache-2.0 依赖兼容，GPL-2.0-only 不兼容）。
+- **默认不打包**：只有显式 `-Pwith_rubberband=true` 构建才编入 `librubberband_jni.so`；
+  默认构建（MIT）不含该组件。
+- **含 RB 的构建产物整体为 GPL-3.0-or-later**，分发时须提供完整源码；
+  若需闭源/商业分发，须另购 RB 商业授权。
+- 官方明确：未购商业授权时**不能通过 Apple App Store 分发**（Android 不受此限）。

@@ -2,6 +2,15 @@
 
 > 记录“改了什么、为什么、怎么验证”，方便后来人理解代码演进。这里不记录内部设备流水号或个人环境信息。
 
+## v0.4.0（进行中）：Rubber Band 变调/变速 spike
+
+- 背景：Sonic（PSOLA + 线性插值）在变调时有音符破碎感/音调抖动，RB 听感更好。
+- 现状：RB 源码 vendored（`-Pwith_rubberband=true` 才编）；JNI 封装 + CMake target 已通；
+  真机 instrumentation 测试通过（2s 立体声 +7 半音，0.35s 内完成）。
+- 许可：RB 为 GPL-2.0-or-later/商业双许可；本项目按 GPL-3.0-or-later 口径（与 Apache-2.0 依赖兼容）。
+  默认构建不含 RB，MIT 构建保持不变。
+- 待办：`RubberBandStage`（与 `SonicStage` 同接口）、真机 CPU/延迟基准、AB 试听、切默认/回退。
+
 ## v0.3.2：公开版不再把 `.ncm` 当音频格式
 
 - `AudioFileTypes.isAudio` 按 `BuildConfig.WITH_NCM` 分流：公开版（无 NCM 解密代码）跳过 `.ncm`，

@@ -77,3 +77,11 @@ NeuralStem — 第三方组件与模型许可声明
 - `avs3_audio_bridge.c` / `Avs3Bridge.kt` 是原创 JNI/反射桥接代码，不包含 UWA 实现。
 - AV3A parser/demux/mux（例如 OpenHarmony FFmpeg）不等于 AV3A decoder；
   上游 FFmpeg 仍无 AV3A 解码器。详见 `docs/AV3A_INVESTIGATION.md`。
+
+--------------------------------------------------------------------------------
+Rubber Band Library (optional component, v0.4.0+)
+  Source: app/src/main/cpp/third_party/rubberband/ (vendored)
+  Upstream: https://breakfastquay.com/rubberband/
+  License: GNU GPL version 2 or later, or commercial (dual-licensed).
+  This project uses it under GPL-3.0-or-later. Builds including it are GPL;
+  the default build does not include it (requires -Pwith_rubberband=true).

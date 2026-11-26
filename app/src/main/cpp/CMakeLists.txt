@@ -143,4 +143,64 @@ endif()
 
 # ============================================================================
 
+# ============================================================================
+# v0.4.0 spike：Rubber Band（GPL-3.0-or-later）
+#   只编 library_sources；FFT/重采样用内置实现，无外部依赖。
+#   许可注意：librubberband_jni.so 整体受 GPL 约束，见 third_party/rubberband/COPYING。
+# ============================================================================
+if(NOT WITH_RUBBERBAND)
+    message(STATUS "WITH_RUBBERBAND=OFF → 不编 Rubber Band（保持 MIT 构建）")
+    return()
+endif()
 
+set(RB_DIR ${CMAKE_SOURCE_DIR}/third_party/rubberband)
+set(RB_SOURCES
+    ${RB_DIR}/src/rubberband-c.cpp
+    ${RB_DIR}/src/RubberBandStretcher.cpp
+    ${RB_DIR}/src/RubberBandLiveShifter.cpp
+    ${RB_DIR}/src/faster/AudioCurveCalculator.cpp
+    ${RB_DIR}/src/faster/CompoundAudioCurve.cpp
+    ${RB_DIR}/src/faster/HighFrequencyAudioCurve.cpp
+    ${RB_DIR}/src/faster/SilentAudioCurve.cpp
+    ${RB_DIR}/src/faster/PercussiveAudioCurve.cpp
+    ${RB_DIR}/src/faster/R2Stretcher.cpp
+    ${RB_DIR}/src/faster/StretcherChannelData.cpp
+    ${RB_DIR}/src/faster/StretcherProcess.cpp
+    ${RB_DIR}/src/common/Allocators.cpp
+    ${RB_DIR}/src/common/BQResampler.cpp
+    ${RB_DIR}/src/common/FFT.cpp
+    ${RB_DIR}/src/common/Log.cpp
+    ${RB_DIR}/src/common/Profiler.cpp
+    ${RB_DIR}/src/common/Resampler.cpp
+    ${RB_DIR}/src/common/StretchCalculator.cpp
+    ${RB_DIR}/src/common/sysutils.cpp
+    ${RB_DIR}/src/common/mathmisc.cpp
+    ${RB_DIR}/src/common/Thread.cpp
+    ${RB_DIR}/src/finer/R3Stretcher.cpp
+    ${RB_DIR}/src/finer/R3LiveShifter.cpp
+)
+
+add_library(rubberband_jni SHARED
+    rubberband_jni.cpp
+    ${RB_SOURCES}
+)
+
+target_include_directories(rubberband_jni PRIVATE
+    ${RB_DIR}
+    ${RB_DIR}/rubberband
+    ${RB_DIR}/src
+)
+
+target_compile_definitions(rubberband_jni PRIVATE
+    USE_BUILTIN_FFT
+    USE_PTHREADS
+    HAVE_POSIX_MEMALIGN
+    MALLOC_IS_ALIGNED
+    NDEBUG
+    NO_THREAD_CHECKS
+    USE_BQRESAMPLER
+)
+
+target_compile_options(rubberband_jni PRIVATE -O3 -std=c++17 -fvisibility=hidden -Wno-everything)
+
+target_link_libraries(rubberband_jni log m)
