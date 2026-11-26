@@ -2,6 +2,19 @@
 
 > 记录“改了什么、为什么、怎么验证”，方便后来人理解代码演进。这里不记录内部设备流水号或个人环境信息。
 
+## v0.3.0：AudioSink 抽象（结构重构第一刀 / P1-14 起步）
+
+- 新增 `AudioSink` 接口 + `AudioTrackSink`：把 `AudioTrack` 的创建/play/pause/flush/release/
+  write 从 `StemMixer` 搬出，生产逻辑等价（buffer 大小、session 回调、WRITE_BLOCKING 均不变）。
+- `StemMixer` 构造注入 `sinkFactory`（默认 `AudioTrackSink`）；内部 `track` 全部替换为 `sink`。
+- 新增 `FakeAudioSink` + `StemMixerAudioSinkTest`：
+  - **I2**：write 返回负值 → release 旧 sink → 重建 → play → 继续写入；
+  - **I3**：曲尾 `ended=true / isPlaying=false`；再次 `play()` 清除 ended 并从 0 重启。
+- 测试：512 → **514/0**；`lintDebug` 通过。
+- 真机 smoke：单曲 load/seek/speed/pitch、多轨 load/音量/EQ/退出多轨，无 FATAL/ANR/播放错误；
+  日志确认 `AudioSink created: session=... cap=...`。
+- 方案与后续（服务/VM 拆分）见 [`docs/V0.3.0_PLAN.md`](V0.3.0_PLAN.md)。
+
 ## v0.2.66：清理 P2-4（MultiTrackController listener 死代码）
 
 - 删除 `MultiTrackController.listeners` / `addListener` / `removeListener`：只增不派发，

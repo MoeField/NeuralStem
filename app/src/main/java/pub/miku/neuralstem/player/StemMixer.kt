@@ -1,8 +1,5 @@
 package pub.miku.neuralstem.player
 
-import android.media.AudioAttributes
-import android.media.AudioFormat
-import android.media.AudioTrack
 import android.util.Log
 import pub.miku.neuralstem.devtools.EdgeProbe
 import java.io.Closeable
@@ -40,6 +37,10 @@ class StemMixer(
     private val gainProvider: (id: String) -> Float,
     /** AudioTrack 重建后 sessionId 会变，通知 Service 重挂 EQ。 */
     private val onAudioSessionChanged: ((Int) -> Unit)? = null,
+    /** v0.3.0：输出层工厂；默认 AudioTrack，测试注入 FakeAudioSink。 */
+    private val sinkFactory: (sampleRate: Int, channels: Int) -> AudioSink = { sr, ch ->
+        AudioTrackSink(sr, ch, CHUNK_FRAMES)
+    },
 ) : Closeable {
 
     private class Voice(val id: String, val source: StemSource)
@@ -50,7 +51,8 @@ class StemMixer(
      */
     @Volatile private var voices: List<Voice> = emptyList()
 
-    private var track: AudioTrack? = null
+    internal var sink: AudioSink? = null
+        private set
     private var thread: Thread? = null
 
     @Volatile private var running = false
@@ -114,7 +116,7 @@ class StemMixer(
      *
      * @return 0 = 尚未创建
      */
-    val audioSessionId: Int get() = track?.audioSessionId ?: 0
+    val audioSessionId: Int get() = sink?.audioSessionId ?: 0
 
     /**
      * 载入一组 stem。
@@ -148,7 +150,7 @@ class StemMixer(
         stage.flushAt(0L)
         appliedSpeed = 1f
         appliedPitchRate = 1f
-        ensureTrack()
+        ensureSink()
         Log.i(TAG, "load: ${voices.size} voice(s) ${voices.map { it.id }} @${sampleRate}Hz/${channels}ch")
         return true
     }
@@ -172,8 +174,7 @@ class StemMixer(
     /** 启动渲染线程（幂等）。 */
     fun play() {
         if (voices.isEmpty()) return
-        ensureTrack()
-        val t = track ?: return
+        val s = ensureSink() ?: return
         // ★2026-11-06：曲尾后线程已退出，但 `running` 可能还是 true（旧实现的遗留）→
         //   只按 running 判断会“按播放没反应”。改为看线程是否还活着。
         var aliveThread = thread
@@ -206,12 +207,8 @@ class StemMixer(
             stage.flushAt(0L)
             EdgeProbe.log("Mixer", "play at end → restart from 0")
         }
-        // ★★ 必须真的让 AudioTrack 进入 PLAYSTATE_PLAYING，否则 write() 会
-        //   永远阻塞（以为消费者没在消费）—— 真机实测：渲染线程启动后无任何日志，
-        //   位置冻结在 46ms。
-        if (t.playState != AudioTrack.PLAYSTATE_PLAYING) {
-            runCatching { t.play() }.onFailure { Log.w(TAG, "AudioTrack.play() 失败", it) }
-        }
+        // ★★ 必须真的让输出进入 PLAYING，否则 write() 会永远阻塞（真机实测）。
+        s.play()
         running = true
         renderGeneration++
         val gen = renderGeneration
@@ -223,7 +220,7 @@ class StemMixer(
             }
             renderLoop(gen)
         }, "StemMixer").apply { start() }
-        Log.i(TAG, "play: 渲染线程启动 @${framePos}frame (trackState=${t.playState})")
+        Log.i(TAG, "play: 渲染线程启动 @${framePos}frame (session=${s.audioSessionId})")
         EdgeProbe.log("Mixer", "play @${framePos}f (thread=${thread?.isAlive})")
     }
 
@@ -254,8 +251,8 @@ class StemMixer(
         val t = thread
         thread = null
         // 先 pause/flush 解开可能的阻塞写；暂停后即使旧线程还没退也不会继续出声。
-        runCatching { track?.pause() }
-        runCatching { track?.flush() }
+        sink?.pause()
+        sink?.flush()
         t?.interrupt()
         if (t != null && t.isAlive) {
             // 主线程最多等 50ms；剩余 join/release 交给后台，避免 ANR。
@@ -283,8 +280,8 @@ class StemMixer(
         val closing = voices
         voices = emptyList()
         closing.forEach { runCatching { it.source.close() } }
-        runCatching { track?.release() }
-        track = null
+        sink?.release()
+        sink = null
         Log.i(TAG, "closed")
     }
 
@@ -299,8 +296,8 @@ class StemMixer(
 
         // ★P1.3：先 pause/flush 解开 renderLoop 里可能阻塞的 AudioTrack.write，
         // 再 join；否则 interrupt 对阻塞写无效，主线程会白等满 800ms。
-        runCatching { track?.pause() }
-        runCatching { track?.flush() }
+        sink?.pause()
+        sink?.flush()
         t?.interrupt()
         t?.let { runCatching { it.join(timeoutMs) } }
         if (t?.isAlive == true) {
@@ -313,35 +310,13 @@ class StemMixer(
         return true
     }
 
-    private fun ensureTrack() {
-        if (track != null) return
-        val minBuf = AudioTrack.getMinBufferSize(
-            sampleRate,
-            if (channels == 1) AudioFormat.CHANNEL_OUT_MONO else AudioFormat.CHANNEL_OUT_STEREO,
-            AudioFormat.ENCODING_PCM_FLOAT,
-        ).coerceAtLeast(CHUNK_FRAMES * channels * 4 * 2)
-        track = AudioTrack.Builder()
-            .setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_MEDIA)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                    .build(),
-            )
-            .setAudioFormat(
-                AudioFormat.Builder()
-                    .setEncoding(AudioFormat.ENCODING_PCM_FLOAT)
-                    .setSampleRate(sampleRate)
-                    .setChannelMask(
-                        if (channels == 1) AudioFormat.CHANNEL_OUT_MONO
-                        else AudioFormat.CHANNEL_OUT_STEREO,
-                    )
-                    .build(),
-            )
-            .setBufferSizeInBytes(minBuf)
-            .setTransferMode(AudioTrack.MODE_STREAM)
-            .build()
-        Log.i(TAG, "AudioTrack created: buf=$minBuf bytes (${minBuf / (channels * 4)} frames)")
-        onAudioSessionChanged?.invoke(track?.audioSessionId ?: 0)
+    private fun ensureSink(): AudioSink? {
+        sink?.let { return it }
+        val s = sinkFactory(sampleRate, channels)
+        sink = s
+        Log.i(TAG, "AudioSink created: session=${s.audioSessionId} cap=${s.frameCapacity}f")
+        onAudioSessionChanged?.invoke(s.audioSessionId)
+        return s
     }
 
     /**
@@ -362,7 +337,7 @@ class StemMixer(
         while (running && gen == renderGeneration) {
             try {
                 // ★每轮重新取 track：write 失败重建后，旧的局部引用会指向已 release 的对象。
-                val t = track ?: break
+                val s = sink ?: break
 
                 // ★seek 要放在“暂停检查”**之前**：
                 //   否则暂停状态下的 seek 永远不生效（下一轮又 continue 了）。
@@ -373,12 +348,12 @@ class StemMixer(
                     playFrame = req
                     lastBeatFrame = req
                     stage.flushAt(req)          // 丢弃 Sonic 内部残留，时钟锚到新位置
-                    // 重定位 AudioTrack（flush 必须先 pause）
-                    runCatching { t.pause() }
-                    runCatching { t.flush() }
-                    runCatching { t.play() }
+                    // 重定位输出（flush 必须先 pause）
+                    s.pause()
+                    s.flush()
+                    s.play()
                     reloadSources(framePos)
-                    Log.i(TAG, "renderLoop: seek 生效 @${framePos}frame (playState=${t.playState})")
+                    Log.i(TAG, "renderLoop: seek 生效 @${framePos}frame (session=${s.audioSessionId})")
                 }
 
                 // ★参数变更（UI → Service → 这里）：Sonic 只在渲染线程上调用。
@@ -458,7 +433,7 @@ class StemMixer(
                                 // ★AudioTrack.write 会**自己推进** buffer.position；
                                 //   传 duplicate，让 SonicStage 统一推进原 buffer（否则 double-advance）。
                                 val w = runCatching {
-                                    writeBlock(t, buf.duplicate(), len)
+                                    s.write(buf.duplicate(), len)
                                 }.getOrDefault(-1)
                                 if (w < 0) {
                                     err = -1
@@ -494,16 +469,14 @@ class StemMixer(
 
                 if (!stage.isActive) {
                     // ---- 旁路：1.0×，与旧路径完全一致 ----
-                    val written = writeBlock(t, mix, framesRead * channels)
+                    val written = s.write(mix, framesRead * channels)
                     if (written < 0) {
                         Log.w(TAG, "AudioTrack.write 失败: $written → 重建 AudioTrack")
-                        runCatching {
-                            track?.release()
-                            track = null
-                        }
-                        ensureTrack()
-                        // 新建 AudioTrack 默认 STOPPED；不 play() 会在下一次阻塞写永久卡死。
-                        runCatching { track?.play() }
+                        sink?.release()
+                        sink = null
+                        ensureSink()
+                        // 新建输出默认 STOPPED；不 play() 会在下一次阻塞写永久卡死。
+                        sink?.play()
                         Thread.sleep(20)
                         continue
                     }
@@ -515,7 +488,7 @@ class StemMixer(
                     stage.process(mix, framesRead) { buf, len ->
                         // ★同上：AudioTrack 会推进传入 buffer 的 position，必须给它 duplicate。
                         val w = runCatching {
-                            writeBlock(t, buf.duplicate(), len)
+                            s.write(buf.duplicate(), len)
                         }.getOrDefault(-1)
                         if (w < 0) {
                             writeErr = -1
@@ -529,12 +502,10 @@ class StemMixer(
                     playFrame = stage.positionFrames()
                     if (writeErr < 0) {
                         Log.w(TAG, "Sonic 输出写入失败 → 重建 AudioTrack")
-                        runCatching {
-                            track?.release()
-                            track = null
-                        }
-                        ensureTrack()
-                        runCatching { track?.play() }
+                        sink?.release()
+                        sink = null
+                        ensureSink()
+                        sink?.play()
                         Thread.sleep(20)
                         continue
                     }
@@ -567,7 +538,7 @@ class StemMixer(
                 //   表现为“位置冻结、完全没声”，极难排查（真机事故）。
                 Log.e(TAG, "renderLoop 异常 @${framePos}frame，继续循环", ex)
                 runCatching {
-                    track?.pause(); track?.flush(); track?.play()
+                    sink?.pause(); sink?.flush(); sink?.play()
                 }
                 Thread.sleep(50)
             }
@@ -618,29 +589,12 @@ class StemMixer(
     companion object {
         private const val TAG = "StemMixer"
 
-        /** 仅 debug/TEST_HOOKS 构建：强制下一次 AudioTrack.write 失败，验证重建恢复。 */
-        @Volatile
-        var failNextWriteForTest: Boolean = false
-
-        @JvmStatic
-        fun writeBlock(track: AudioTrack, buf: FloatArray, len: Int): Int {
-            if (failNextWriteForTest) {
-                failNextWriteForTest = false
-                Log.w(TAG, "TEST: forced write failure")
-                return -1
+        /** 仅 debug/TEST_HOOKS：转发到 AudioSink，保持旧测试入口。 */
+        var failNextWriteForTest: Boolean
+            get() = AudioSink.failNextWriteForTest
+            set(value) {
+                AudioSink.failNextWriteForTest = value
             }
-            return track.write(buf, 0, len, AudioTrack.WRITE_BLOCKING)
-        }
-
-        @JvmStatic
-        fun writeBlock(track: AudioTrack, buf: ByteBuffer, len: Int): Int {
-            if (failNextWriteForTest) {
-                failNextWriteForTest = false
-                Log.w(TAG, "TEST: forced write failure")
-                return -1
-            }
-            return track.write(buf, len, AudioTrack.WRITE_BLOCKING)
-        }
 
         /** 每次混合的帧数。1024 @44.1k ≈ 23ms，兼顾延迟与调用开销。 */
         private const val CHUNK_FRAMES = 1024
