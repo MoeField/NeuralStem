@@ -76,7 +76,6 @@ class PlaybackService : MediaSessionService() {
     private var multiLoadPending = false
     private var multiLoadGen = 0L
     /** multi-track EQ 会话未就绪的延迟重试（退出/销毁时必须取消）。 */
-    private var eqRetry: Runnable? = null
 
     /**
      * ★2026-11-06：多轨变速变调参数缓存。
@@ -110,7 +109,12 @@ class PlaybackService : MediaSessionService() {
      * M3-P3：EQ 控制器（**从 VM 搬进 Service**）。
      * 单轨挂 singlePlayer 会话；多轨每轨各挂一份（参数由 EqController 同步）。
      */
-    private val eqController = EqController()
+    private val eqHost = EqHost(
+        handler = handler,
+        requestSnapshot = ::requestSnapshotPush,
+        isInMultiTrack = { inMultiTrack },
+        currentMultiTrack = { multiTrack },
+    )
 
     override fun onCreate() {
         super.onCreate()
@@ -270,78 +274,33 @@ class PlaybackService : MediaSessionService() {
         session.setSessionExtras(extras)
     }
 
-    // ---------------- M3-P3：EQ（在 Service 侧） ----------------
+    // ---------------- M3-P3：EQ（委托 EqHost） ----------------
 
     /** 单轨 EQ：挂到主播放器（singlePlayer）的会话。 */
-    private fun attachSingleEq(p: Player) {
-        val s = p.audioSessionId
-        Log.i(TAG, "attachSingleEq: audioSessionId=$s")
-        if (s != 0) {
-            eqController.attach("single", s)
-            requestSnapshotPush()
-        }
-    }
+    private fun attachSingleEq(p: Player) = eqHost.attachSingle(p.audioSessionId)
 
-    /**
-     * 多轨 EQ：**只挂一份**在混音输出上。
-     *
-     * ## 2026-11-01 重构后的语义变化
-     * 旧实现每条 stem 各挂一份 EQ（因为各有 AudioTrack）。
-     * 现在只有一个 AudioTrack，EQ 作用于**最终混音** —— 这才是正确语义
-     * （分别均衡再相加 ≠ 对混音结果均衡）。
-     */
-    private fun attachMultiTrackEq(c: MultiTrackController) {
-        val s = c.audioSessionId()
-        if (s != 0) {
-            eqController.detachAll()      // 清掉单轨那份，避免两个 session 同时生效
-            eqController.attach("mix", s)
-            Log.i(TAG, "multi-track EQ attached to mixer session=$s")
-            requestSnapshotPush()
-        } else {
-            Log.w(TAG, "multi-track EQ: mixer session 尚未就绪，稍后重试")
-            eqRetry?.let { handler.removeCallbacks(it) }
-            val retry = object : Runnable {
-                override fun run() {
-                    eqRetry = null
-                    if (inMultiTrack && multiTrack === c) attachMultiTrackEq(c)
-                }
-            }
-            eqRetry = retry
-            handler.postDelayed(retry, 200)
-        }
-    }
+    /** 多轨 EQ：只挂一份在混音输出上（详见 EqHost）。 */
+    private fun attachMultiTrackEq(c: MultiTrackController) = eqHost.attachMultiTrack(c)
 
-    private fun cancelEqRetry() {
-        eqRetry?.let { handler.removeCallbacks(it) }
-        eqRetry = null
-    }
+    private fun cancelEqRetry() = eqHost.cancelRetry()
 
     /** EQ 状态 JSON（供 UI 渲染面板）。 */
-    private fun eqSnapshotJson(): String = JSONObject().apply {
-        put("available", eqController.available)
-        put("enabled", eqController.isEnabled())
-        put("bands", JSONArray().apply { eqController.bandFreqsHz.forEach { put(it) } })
-        put("levels", JSONArray().apply { eqController.readBackLevels().forEach { put(it.toInt()) } })
-    }.toString()
+    private fun eqSnapshotJson(): String = eqHost.snapshotJson()
 
     private fun handleSetEqEnabled(args: Bundle): SessionResult {
-        eqController.setEnabled(args.getBoolean(MultiTrackSession.KEY_EQ_ENABLED, false))
-        requestSnapshotPush()
+        eqHost.setEnabled(args.getBoolean(MultiTrackSession.KEY_EQ_ENABLED, false))
         return ok()
     }
 
     private fun handleSetEqBand(args: Bundle): SessionResult {
         val band = args.getInt(MultiTrackSession.KEY_EQ_BAND, -1)
         val level = args.getShort(MultiTrackSession.KEY_EQ_LEVEL_MB, 0)
-        if (band < 0) return err("band 缺失")
-        eqController.setBandLevel(band, level)
-        requestSnapshotPush()
+        if (!eqHost.setBand(band, level)) return err("band 缺失")
         return ok()
     }
 
     private fun handleResetEq(): SessionResult {
-        eqController.reset()
-        requestSnapshotPush()
+        eqHost.reset()
         return ok()
     }
 
@@ -378,30 +337,13 @@ class PlaybackService : MediaSessionService() {
 
     /** 诊断/自动化：低+6 / 中-6 / 高+6 dB 测试曲线，并开启。 */
     private fun handleApplyEqTestCurve(): SessionResult {
-        val n = eqController.bandCount
-        if (n == 0) return err("EQ unavailable (bandCount=0)")
-        val levels = ShortArray(n)
-        for (b in 0 until n) {
-            val f = eqController.bandFreqsHz.getOrElse(b) { 1000 }
-            levels[b] = when {
-                f < 300 -> 600
-                f < 3000 -> -600
-                else -> 600
-            }
-        }
-        eqController.setBandLevels(levels)
-        eqController.setEnabled(true)
-        requestSnapshotPush()
-        Log.i(TAG, "EQ_TEST bands=$n set=${levels.toList()} readBack=${eqController.readBackLevels().toList()}")
+        if (!eqHost.applyTestCurve()) return err("EQ unavailable (bandCount=0)")
         return ok()
     }
 
     /** ★Step7：应用默认微笑曲线（低+3/高+3）。 */
     private fun handleApplyEqDefaultCurve(): SessionResult {
-        if (eqController.bandCount == 0) return err("EQ unavailable (bandCount=0)")
-        eqController.defaultCurve()
-        requestSnapshotPush()
-        Log.i(TAG, "EQ_DEFAULT_CURVE readBack=${eqController.readBackLevels().toList()}")
+        if (!eqHost.applyDefaultCurve()) return err("EQ unavailable (bandCount=0)")
         return ok()
     }
 
@@ -677,7 +619,7 @@ class PlaybackService : MediaSessionService() {
         // 注意：**不能**用 `playbackState == STATE_READY` 做门槛 ——
         // 主轨刚从多轨下停下，可能不是 READY，会导致 EQ **漏挂**（T2 实测踩到）。
         // `attachSingleEq` 自身会判 `audioSessionId != 0`，这里无条件调即可。
-        eqController.detachAll()
+        eqHost.detachAll()
         singlePlayer?.let { attachSingleEq(it) }
         pushTracksSnapshot()
         Log.i(
@@ -873,8 +815,8 @@ class PlaybackService : MediaSessionService() {
                 ?.onPlaybackServiceLost()
         }
         handler.removeCallbacksAndMessages(null)
-        eqRetry = null
-        eqController.detachAll()   // M3-P3：EQ 随 Service 释放
+        eqHost.cancelRetry()
+        eqHost.detachAll()   // M3-P3：EQ 随 Service 释放
         exitMultiTrackFocus()
         val closing = multiTrack
         multiTrack = null

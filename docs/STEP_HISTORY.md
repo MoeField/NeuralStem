@@ -2,6 +2,16 @@
 
 > 记录“改了什么、为什么、怎么验证”，方便后来人理解代码演进。这里不记录内部设备流水号或个人环境信息。
 
+## v0.3.1（进行中）：拆 PlaybackService 命令/会话层
+
+- **Step 1 · `EqHost`（已完成）**：EQ 的挂载/重试/快照/命令从 Service 抽到 `EqHost`；
+  Service 保留同名 thin delegate，调用点零改动。
+  - `PlaybackService` 896 → **838 行**；JVM 514/0、lint 通过。
+  - 真机验证：`attachSingle` → `enabled=true` → `setBandLevel` → 多轨 `attach(mix, session=761)` →
+    `exitsmt` 后恢复 `attach(single, session=753)`，无 FATAL/ANR。
+- 后续 Step 2–4（SnapshotPublisher / MultiTrackCoordinator / PlayerCommandHandler）见
+  [`docs/V0.3.1_PLAN.md`](V0.3.1_PLAN.md)。
+
 ## v0.3.0：AudioSink 抽象（结构重构第一刀 / P1-14 起步）
 
 - 新增 `AudioSink` 接口 + `AudioTrackSink`：把 `AudioTrack` 的创建/play/pause/flush/release/
