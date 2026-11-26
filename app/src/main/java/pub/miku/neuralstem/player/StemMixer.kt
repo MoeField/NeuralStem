@@ -41,6 +41,10 @@ class StemMixer(
     private val sinkFactory: (sampleRate: Int, channels: Int) -> AudioSink = { sr, ch ->
         AudioTrackSink(sr, ch, CHUNK_FRAMES)
     },
+    /** v0.4.0：变速/变调阶段；默认 Sonic（MIT），可选 Rubber Band（GPL 构建）。 */
+    private val stageFactory: (sampleRate: Int, channels: Int) -> RenderStage = { sr, ch ->
+        SonicStage(sr, ch, CHUNK_FRAMES)
+    },
 ) : Closeable {
 
     private class Voice(val id: String, val source: StemSource)
@@ -91,7 +95,7 @@ class StemMixer(
     private var appliedPitchRate: Float = 1f
 
     /** 输出端 Sonic（1.0× 时 `isActive == false`，走原路径零开销）。 */
-    private val stage = SonicStage(sampleRate, channels, CHUNK_FRAMES)
+    private val stage: RenderStage = stageFactory(sampleRate, channels)
 
     /** 本曲总帧数（取所有 voice 的最小值，短的先结束）。 */
     val totalFrames: Long

@@ -50,7 +50,7 @@ class SonicStage(
     private val channels: Int,
     /** 单次最大帧数（= StemMixer 的 CHUNK_FRAMES）。 */
     maxFramesPerCall: Int = 4096,
-) {
+) : RenderStage {
 
     private val bytesPerFrame = channels * CODEC_BYTES
 
@@ -77,16 +77,16 @@ class SonicStage(
     private var eosSent = false
 
     /** 当前是否真的需要经过 Sonic（1.0× 时为 false）。 */
-    val isActive: Boolean get() = active
+    override val isActive: Boolean get() = active
 
     /** 是否已经排空并结束（曲尾）。 */
-    val isEnded: Boolean get() = processor.isEnded
+    override val isEnded: Boolean get() = processor.isEnded
 
     /**
      * 更新目标参数。真正生效要等 [applyParams]（渲染线程上）。
      * 重复设同值不会标脏。
      */
-    fun setParams(speed: Float, pitchRate: Float) {
+    override fun setParams(speed: Float, pitchRate: Float) {
         val s = if (speed.isFinite() && speed > 0f) speed else 1f
         val p = if (pitchRate.isFinite() && pitchRate > 0f) pitchRate else 1f
         if (s == this.speed && p == this.pitchRate) return
@@ -101,7 +101,7 @@ class SonicStage(
      * @param srcFrame 当前源读头；返回**修正后**的源读头（回退了未处理的输入）。
      *   ⚠️ 返回后必须用返回值覆盖调用方的 srcFrame，并继续从该帧读。
      */
-    fun applyParams(srcFrame: Long): Long {
+    override fun applyParams(srcFrame: Long): Long {
         if (!dirty) return srcFrame
         dirty = false
 
@@ -131,7 +131,7 @@ class SonicStage(
      * @param sink `(buffer, bytesToWrite) -> 实际写入字节数`；返回 <=0 视为写入失败。
      * @return 本次实际写出的字节数（0 = 暂时没有输出，调用方继续下一块即可）。
      */
-    fun process(input: FloatArray, frames: Int, sink: (ByteBuffer, Int) -> Int): Long {
+    override fun process(input: FloatArray, frames: Int, sink: (ByteBuffer, Int) -> Int): Long {
         if (!active) return 0L
         if (frames <= 0) return 0L
 
@@ -149,7 +149,7 @@ class SonicStage(
     }
 
     /** 曲尾：通知 Sonic 结束并把延迟线里的尾巴排空。 */
-    fun finish(sink: (ByteBuffer, Int) -> Int) {
+    override fun finish(sink: (ByteBuffer, Int) -> Int) {
         if (!active) return
         if (!eosSent) {
             processor.queueEndOfStream()
@@ -159,7 +159,7 @@ class SonicStage(
     }
 
     /** seek 后重定位时钟（丢弃 Sonic 内部残留）。 */
-    fun flushAt(sourceFrame: Long) {
+    override fun flushAt(sourceFrame: Long) {
         processor.flush(StreamMetadata.DEFAULT)
         anchorSrcFrame = sourceFrame.coerceAtLeast(0L)
         queuedBytes = 0L
@@ -168,14 +168,14 @@ class SonicStage(
     }
 
     /** 当前应对外报告的媒体帧位置（= 实际听到的位置，不含 AudioTrack 缓冲）。 */
-    fun positionFrames(): Long {
+    override fun positionFrames(): Long {
         if (!active) return anchorSrcFrame
         if (outBytes <= 0L) return anchorSrcFrame
         return anchorSrcFrame + processor.getMediaDuration(outBytes) / bytesPerFrame
     }
 
     /** 本次 flush 以来写出的字节数（诊断用）。 */
-    val writtenBytes: Long get() = outBytes
+    override val writtenBytes: Long get() = outBytes
 
     private fun drain(sink: (ByteBuffer, Int) -> Int): Long {
         var written = 0L

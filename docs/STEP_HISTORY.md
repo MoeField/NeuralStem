@@ -9,7 +9,10 @@
   真机 instrumentation 测试通过（2s 立体声 +7 半音，0.35s 内完成）。
 - 许可：RB 为 GPL-2.0-or-later/商业双许可；本项目按 GPL-3.0-or-later 口径（与 Apache-2.0 依赖兼容）。
   默认构建不含 RB，MIT 构建保持不变。
-- 待办：`RubberBandStage`（与 `SonicStage` 同接口）、真机 CPU/延迟基准、AB 试听、切默认/回退。
+- 进展：`RenderStage` 接口 + `RubberBandStage`（与 `SonicStage` 同接口）；`StemMixer` 支持注入 stageFactory。
+- 基准（BF00A，2ch 10s，+7 半音）：Sonic **1472ms**（RTF 6.79×）vs RB **1379ms**（RTF 7.25×）——
+  RB 不慢反略快，移动端性能可接受。
+- 待办：AB 试听（真实歌曲）、切默认/回退、真机播放/多轨回归。
 
 ## v0.3.2：公开版不再把 `.ncm` 当音频格式
 
