@@ -41,9 +41,17 @@ class StemMixer(
     private val sinkFactory: (sampleRate: Int, channels: Int) -> AudioSink = { sr, ch ->
         AudioTrackSink(sr, ch, CHUNK_FRAMES)
     },
-    /** v0.4.0：变速/变调阶段；默认 Sonic（MIT），可选 Rubber Band（GPL 构建）。 */
+    /**
+     * v0.4.0：变速/变调阶段。
+     * `-Pwith_rubberband=true` 构建默认用 Rubber Band（GPL），否则用 Sonic（MIT）。
+     * 两者都实现 [RenderStage]，可注入替换。
+     */
     private val stageFactory: (sampleRate: Int, channels: Int) -> RenderStage = { sr, ch ->
-        SonicStage(sr, ch, CHUNK_FRAMES)
+        if (pub.miku.neuralstem.BuildConfig.WITH_RUBBERBAND) {
+            RubberBandStage(sr, ch, CHUNK_FRAMES)
+        } else {
+            SonicStage(sr, ch, CHUNK_FRAMES)
+        }
     },
 ) : Closeable {
 

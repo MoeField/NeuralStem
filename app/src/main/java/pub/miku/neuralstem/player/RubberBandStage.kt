@@ -1,5 +1,6 @@
 package pub.miku.neuralstem.player
 
+import android.util.Log
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
@@ -46,6 +47,10 @@ internal class RubberBandStage(
         ByteBuffer.allocateDirect(maxFramesPerCall * channels * 4)
             .order(ByteOrder.nativeOrder())
     private val retrieveBuf = FloatArray(maxFramesPerCall * channels)
+
+    init {
+        Log.i(TAG, "created: sr=$sampleRate ch=$channels latency=${RubberBandNative.latency(handle)}")
+    }
 
     override val isActive: Boolean
         get() = handle != 0L && (speed != 1f || pitchRate != 1f)
@@ -96,6 +101,10 @@ internal class RubberBandStage(
     override fun positionFrames(): Long {
         if (!isActive) return anchorSrcFrame
         return anchorSrcFrame + (outFrames / speed).toLong()
+    }
+
+    private companion object {
+        const val TAG = "RubberBandStage"
     }
 
     private fun drain(sink: (ByteBuffer, Int) -> Int): Long {
