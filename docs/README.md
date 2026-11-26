@@ -14,6 +14,7 @@
 - [REVIEW_CONVENTIONS.md](REVIEW_CONVENTIONS.md) — 代码/架构评审约定、漏检复盘与发版门禁。
 - [STABILITY_TEST_PLAN.md](STABILITY_TEST_PLAN.md) — 状态模型、操作序列、故障注入、错误分类与发布门禁。
 - [STABILITY_REPORT_v0.2.65.md](STABILITY_REPORT_v0.2.65.md) — 2h soak + 长分离 + PCM 租约验证（含 SeparationService 常驻 bug 修复）。
+- [STABILITY_REPORT_v0.3.1.md](STABILITY_REPORT_v0.3.1.md) — v0.3.1 拆分后 2h 多轨 soak（6652 ops，零异常）。
 - [STABILITY_REPORT_v0.2.55.md](STABILITY_REPORT_v0.2.55.md) — v0.2.55 稳定性测试实跑记录（历史版本报告）。
 
 ## 历史归档
