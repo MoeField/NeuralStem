@@ -9,7 +9,7 @@
 - **v0.2.60 REVIEW 的全部发现已闭环**：2 条 P1（P1-A 缓存命中导出、P1-B tracks 竞态）+ 20 条 P2，
   其中 P2-16 复核后**有意保留**（NCM 构建需要 READ），P2-12 为注释明示的固有限制。
 - **NEED-CONFIRM 5 项全部有结论**：1/2 关闭、3 发现并修复（SeparationService 常驻前台）、4 确认、5 真机验证。
-- 普通 JVM **514/0**；`lintVitalRelease`、`with_ncm` 编译、APK 无 AVS3 断言均在 CI。
+- 普通 JVM **519/0**（T1/T2 补充测试后）；`lintVitalRelease`、`with_ncm` 编译、APK 无 AVS3 断言均在 CI。
 - 当前稳定基线 **v0.3.0**；下一阶段（v0.3.1+）只做**结构拆分**，见 §6。
 
 ### 验证等级
