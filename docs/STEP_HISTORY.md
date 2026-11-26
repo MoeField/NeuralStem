@@ -2,6 +2,16 @@
 
 > 记录“改了什么、为什么、怎么验证”，方便后来人理解代码演进。这里不记录内部设备流水号或个人环境信息。
 
+## v0.2.66：清理 P2-4（MultiTrackController listener 死代码）
+
+- 删除 `MultiTrackController.listeners` / `addListener` / `removeListener`：只增不派发，
+  注册的回调永远不会触发。
+- 删除 `PlaybackService` 对 controller 的 listener 注册（controller 不是 ExoPlayer，
+  没有事件源）。
+- 多轨状态快照仍由 `progressRunnable` + `requestSnapshotPush` 推送，行为等价。
+- 验证：JVM **512/0**、`lintDebug` 通过；真机 smoke（load → inmt → mtvol ×2 → exitsmt → 切歌）
+  无 FATAL/ANR/播放失败/ConcurrentModification。
+
 ## v0.2.65：稳定性测试发现并修复 SeparationService 常驻前台
 
 - **测试发现**：`SeparationService`（`dataSync` 前台）在分离完成（Done/EdgeDone）后仍 `isForeground=true` 常驻，

@@ -194,10 +194,7 @@ class PlaybackService : MediaSessionService() {
                 }
             }
         }
-        c.addListener(object : Player.Listener {
-            override fun onIsPlayingChanged(isPlaying: Boolean) = requestSnapshotPush()
-            override fun onPlaybackStateChanged(playbackState: Int) = requestSnapshotPush()
-        })
+        // P2-4：不再向 controller 注册永不派发的 listener（控制器不是 ExoPlayer）。
         multiTrack = c
         return c
     }

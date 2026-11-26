@@ -295,17 +295,9 @@ class MultiTrackController(
         gainSnapshot = next
     }
 
-    // ==================== 监听（保持旧签名，Service 已注册）====================
-
-    private val listeners = mutableListOf<androidx.media3.common.Player.Listener>()
-
-    fun addListener(listener: androidx.media3.common.Player.Listener) {
-        listeners += listener
-    }
-
-    fun removeListener(listener: androidx.media3.common.Player.Listener) {
-        listeners -= listener
-    }
+    // P2-4：旧的 listeners/addListener/removeListener 已删除。
+    // 它们只增不派发（没有遍历回调），Service 注册的回调永远不会触发；
+    // 多轨状态快照由 PlaybackService.progressRunnable / requestSnapshotPush 推送。
 
     // ==================== 释放 ====================
 
