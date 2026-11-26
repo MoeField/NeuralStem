@@ -1027,4 +1027,60 @@ class SeparationReducerTest {
             (stale.job!!.operation as Operation.Cancelling).pendingStart,
         )
     }
+
+    // ---------------- attach 校验（v0.2.63 新增 coverage.complete 闸 + 相邻分支） ----------------
+
+    private fun finishedFull(complete: Boolean, track: TrackKey = trackA): SeparationSnapshot {
+        val s = runningFull(track = track)
+        val jobId = s.job!!.jobId
+        return reduce(
+            s,
+            SeparationEvent.Domain.JobFinished(
+                jobId,
+                vocalsAndAccomp,
+                Coverage(
+                    totalFrames = if (complete) 1_000L else 0L,
+                    complete = complete,
+                    watermarkFrame = if (complete) 1_000L else 0L,
+                ),
+                complete = complete,
+            ),
+        ).snapshot
+    }
+
+    @Test
+    fun attach_incomplete_full_result_is_rejected() {
+        val r = reduce(finishedFull(complete = false), SeparationEvent.User.Attach())
+        assertTrue(r.effects.any { it == SeparationEffect.Notify(SeparationMessages.INCOMPLETE) })
+        assertTrue(r.effects.none { it is SeparationEffect.LoadStems })
+        assertTrue(r.effects.any { it == SeparationEffect.Notify(SeparationMessages.INCOMPLETE) })
+    }
+
+    @Test
+    fun attach_other_track_result_is_rejected() {
+        val s = finishedFull(complete = true).copy(currentTrackKey = trackB)
+        val r = reduce(s, SeparationEvent.User.Attach())
+        assertTrue(r.effects.any { it == SeparationEffect.Notify(SeparationMessages.RESULT_OTHER_TRACK) })
+        assertTrue(r.effects.none { it is SeparationEffect.LoadStems })
+    }
+
+    @Test
+    fun attach_failed_job_is_rejected() {
+        val s = runningFull()
+        val failed = reduce(s, SeparationEvent.Domain.JobFailed(s.job!!.jobId, "boom")).snapshot
+        val r = reduce(failed, SeparationEvent.User.Attach())
+        assertTrue(r.effects.any { it == SeparationEffect.Notify(SeparationMessages.NO_RESULT) })
+        assertTrue(r.effects.none { it is SeparationEffect.LoadStems })
+    }
+
+    @Test
+    fun attach_already_loaded_same_job_is_idempotent() {
+        val s = finishedFull(complete = true)
+        val loaded = s.copy(
+            attachment = AttachmentState.Loaded(s.job!!.jobId, s.job.trackKey, vocalsAndAccomp),
+        )
+        val r = reduce(loaded, SeparationEvent.User.Attach())
+        assertEquals(loaded, r.snapshot)
+        assertTrue(r.effects.isEmpty())
+    }
 }
