@@ -17,7 +17,9 @@
 - 真机（BF00A，with_rubberband 构建）：`RubberBandStage created: sr=44100 ch=2 latency=2048`
   （≈46ms）；多轨 load、`speed=1.2/pitch=+7` 命令正常，无 FATAL/ANR。
 - AB 样本（真实歌曲 12s，+7 半音）：`stability-out/sonic-test/ab-sonic+7.wav` vs `ab-rb+7.wav`。
-- 待办：完整播放/seek/多轨/EQ 回归、v0.4.0 正式启用 GPL（LICENSE/README/F-Droid metadata）。
+- 完整回归（BF00A，with_rubberband）：单轨 play/pause/seek/speed/pitch + 3 轮
+  `inmt→mtvol→eqall→seek→exitsmt` 全通过；RB `latency=2048` 稳定；无 FATAL/ANR/播放失败。
+- 待办：v0.4.0 正式启用（确定默认构建是否切 RB → LICENSE/README/F-Droid metadata）。
 
 ## v0.3.2：公开版不再把 `.ncm` 当音频格式
 
