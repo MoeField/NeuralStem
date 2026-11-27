@@ -406,6 +406,40 @@ jobs:
       # 为何不每次 push main 都发：一次会话十几个 commit，Release 列表会被噪声填满。
       # 发布节奏由你控制：想发版就打 tag。
       # ============================================================
+      # ★Release notes 拼装（2026-11-27）：
+      #   版本化说明在 docs/release-notes/<tag>.md；许可段落由此处**唯一**生成，
+      #   避免模板与 LICENSE 再次漂移（v0.4.0 曾出现模板仍写 MIT 的问题）。
+      - name: Prepare release body
+        if: startsWith(github.ref, 'refs/tags/v')
+        id: body
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF#refs/tags/}"
+          NAME="${{ steps.ver.outputs.name }}"
+          OUT="$RUNNER_TEMP/release-body.md"
+          NOTES="docs/release-notes/${TAG}.md"
+          {
+            echo "NeuralStem $NAME"
+            echo
+            if [ -f "$NOTES" ]; then
+              cat "$NOTES"
+            else
+              echo "**本版变更**：见下方 Full Changelog 与 [STEP_HISTORY](https://github.com/MoeField/NeuralStem/blob/main/docs/STEP_HISTORY.md)。"
+            fi
+            echo ""
+            echo "**安装**：下载 \`app-arm64-v8a-release.apk\`（大多数手机）。"
+            echo "模拟器用 \`app-x86_64-release.apk\`；不确定架构用 \`app-universal-release.apk\`。"
+            echo ""
+            echo "**首次使用**：打开 App → 设置 → 模型管理 → 下载 Spleeter 2 轨（~39MB）。"
+            echo ""
+            echo "## 许可"
+            echo ""
+            echo "- 本项目自 **v0.4.0** 起为 **GPL-3.0-or-later**（默认集成 [Rubber Band](https://breakfastquay.com/rubberband/)，GPL-2.0-or-later / 商业双许可）。"
+            echo "- **v0.3.2 及更早**版本按 MIT 发布，仍可继续按 MIT 使用或 fork（见仓库 \`LICENSE-MIT\`）。"
+            echo "- 分离模型与第三方组件许可见 [NOTICE](https://github.com/MoeField/NeuralStem/blob/main/NOTICE)。"
+          } > "$OUT"
+          echo "path=$OUT" >> "$GITHUB_OUTPUT"
+
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
@@ -413,15 +447,7 @@ jobs:
           files: out/*.apk
           generate_release_notes: true
           name: NeuralStem ${{ steps.ver.outputs.name }}
-          body: |
-            NeuralStem ${{ steps.ver.outputs.name }}
-
-            **安装**：下载 `app-arm64-v8a-release.apk`（大多数手机）。
-            模拟器用 `app-x86_64-release.apk`；不确定架构用 `app-universal-release.apk`。
-
-            **首次使用**：打开 App → 设置 → 模型管理 → 下载 Spleeter 2 轨（~39MB）。
-
-            **许可**：本项目 MIT；分离模型许可详见 [NOTICE](https://github.com/MoeField/NeuralStem/blob/main/NOTICE)。
+          body_path: ${{ steps.body.outputs.path }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

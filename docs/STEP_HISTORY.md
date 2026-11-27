@@ -10,6 +10,8 @@
 - NCM 构建（`WITH_NCM=true`）保留原行为（按需 AVS3 解码链）。
 - 测试：`Avs3ProbeTest`（JVM 5 条）；真机 `Avs3DeviceProbeTest`（AVS3 m4a 识别 + mp3 不误判）。
 - 文件夹歌单**未改**：仍按扩展名收录 `.m4a`（AVS3 播放时会失败），待定方案。
+- **Release notes 流程修正**：版本化说明放 `docs/release-notes/<tag>.md`，CI 拼装 body 并由模板
+  **唯一**生成许可段落（避免 v0.4.0 模板仍写 MIT 的漂移）。
 
 ## v0.4.0：Rubber Band 成为默认变调/变速引擎（GPL-3.0）
 
