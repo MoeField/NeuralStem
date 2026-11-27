@@ -144,6 +144,18 @@ fun PlayerScreen(
             )
         }
 
+        // ★v0.4.1：AVS3/NCM 首次播放要解码整曲（~30s），期间必须给可见反馈，
+        //   否则用户点歌后「看起来没反应」。横竖屏都显示在顶部。
+        val decoding = state.avs3Decode
+        if (decoding is Avs3Decode.Running) {
+            Text(
+                stringResource(R.string.player_decoding, decoding.percent),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+                textAlign = TextAlign.Center,
+            )
+        }
+
         // ★⑪：删除了顶部行的「播放/暂停」（与下方控制行重复）与「Spike 分离」（与底栏 tab 重复）。
         //   保留的「导入音频」不再独占行：竖屏→入右侧转盘块顶；横屏→入右栏（控制区）顶。
         val onImport: () -> Unit = {

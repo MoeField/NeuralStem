@@ -12,6 +12,7 @@
 
     <!-- 播放器 -->
     <string name="player_no_media">尚未导入音频</string>
+    <string name="player_decoding">解码中 %1$d%%（空间音频首次播放需先解码）</string>
     <string name="player_import">导入音频</string>
     <string name="player_play">播放</string>
     <string name="player_pause">暂停</string>
