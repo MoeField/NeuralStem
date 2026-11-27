@@ -2,6 +2,18 @@
 
 > 记录“改了什么、为什么、怎么验证”，方便后来人理解代码演进。这里不记录内部设备流水号或个人环境信息。
 
+## v0.4.1（补记 3）：多轨快照 null 竞态 → 分离开关状态不同步
+
+- 现象：边播分离切多轨后，实际 `StemMixer` 在播（探针 `[Mixer] play`），但 UI 分离开关
+  仍显示「分离 · 原曲」（`state.isMultiTrack=false`）。
+- 根因：`onExtrasChanged` 在 `tracksJson` 为 **null**（Service 的 `snapshot()` 在
+  `coordinator.active` 尚未置位时返回 null → extras 里根本没有该键）时，也调用了
+  `applyTracksSnapshot(null)` → `inMt=false` → 把刚置位的 `isMultiTrack` 打回 false；
+  之后若没有新快照推送，开关就一直错。
+- 修复：`applyTracksSnapshot` 只有收到**显式空快照**（`[]`，Service 确认退出）才清状态；
+  `null`（快照缺失）保持现有多轨态并记日志。
+- 测试：JVM 526/0。
+
 ## v0.4.1（补记 2）：AVS3/NCM 解码进度 UI
 
 - 现象：点击歌单里的 `.ncm` / AVS3 `.m4a` 后「看起来没反应」——首次播放要整曲解码（~30s），

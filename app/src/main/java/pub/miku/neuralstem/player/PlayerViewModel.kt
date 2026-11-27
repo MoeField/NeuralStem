@@ -1768,7 +1768,12 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                     isMultiTrack = true,
                 ),
             )
-        } else {
+        } else if (json != null) {
+            // ★2026-11-27：只有**显式空快照**（`[]`，Service 确认已退出多轨）才清状态。
+            //   `null` 表示这次 extras 里根本没有 tracksJson（快照缺失）——典型场景：
+            //   边播分离刚调 CMD_LOAD_STREAM、`coordinator.active` 尚未置位，
+            //   Service 的 snapshot() 返回 null。若此时也清，会把刚置位的
+            //   isMultiTrack 打回 false，而之后没有新快照 → 开关一直显示“原曲”。
             isMultiTrackLoaded = false
             _state.value = withDerived(
                 _state.value.copy(
@@ -1776,6 +1781,8 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
                     isMultiTrack = false,
                 ),
             )
+        } else {
+            Log.i(TAG, "tracks snapshot: null（快照缺失，保持现有多轨态）")
         }
         Log.i(TAG, "tracks snapshot: ${tracks.size} 轨 (inMultiTrack=$inMt, lastStems=$lastStems)")
     }
