@@ -52,7 +52,7 @@ val hasReleaseSigning = listOf(
 // F-Droid/Obtainium 会把它当同一版本，自动更新静默失效。
 // 规则：major*10000 + minor*100 + patch（0.2.36 → 236，0.3.0 → 300）。
 // CI 的 tag 构建同时传 -PversionName 和 -PversionCode；本地不传则用这里的默认值。
-val defaultVersionName = "0.3.2"
+val defaultVersionName = "0.4.0"
 
 fun semverCode(name: String): Int {
     val parts = name.split(".")
@@ -192,8 +192,9 @@ android {
     // 合规声明：绕过 DRM 在多数法域可能构成规避技术措施；仅供学习/调研，
     // 且仅用于用户自己已购/已下载的音乐文件在本地播放。
     val withNcm = (project.findProperty("with_ncm") as String?)?.toBoolean() ?: false
-    // v0.4.0：Rubber Band（GPL-3.0-or-later）为可选组件，默认不打包以保持 MIT 构建。
-    val withRubberBand = (project.findProperty("with_rubberband") as String?)?.toBoolean() ?: false
+    // v0.4.0 起：Rubber Band（GPL-3.0-or-later）为**默认**变调/变速引擎。
+    // 需要 MIT 构建时可显式 -Pwith_rubberband=false（会用 Sonic）。
+    val withRubberBand = (project.findProperty("with_rubberband") as String?)?.toBoolean() ?: true
     if (withNcm) {
         sourceSets.getByName("main").java.srcDirs("src/ncm/java")
         sourceSets.getByName("main").kotlin.srcDirs("src/ncm/java")

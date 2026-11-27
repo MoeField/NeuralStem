@@ -69,3 +69,11 @@ AVS3-P3（`av3a`）的 UWA 参考实现受 **UWA Code Sharing Policy** 限制，
 - **含 RB 的构建产物整体为 GPL-3.0-or-later**，分发时须提供完整源码；
   若需闭源/商业分发，须另购 RB 商业授权。
 - 官方明确：未购商业授权时**不能通过 Apple App Store 分发**（Android 不受此限）。
+
+---
+
+## v0.4.0 许可变更
+
+- 自 **v0.4.0** 起，项目整体改为 **GPL-3.0-or-later**（因默认集成 Rubber Band）。
+- **v0.3.2 及之前**的 tag 仍为 MIT，`LICENSE-MIT` 保留原文；这些版本可继续按 MIT 使用/fork。
+- 需要 MIT 构建：`-Pwith_rubberband=false`（回退 Sonic）。

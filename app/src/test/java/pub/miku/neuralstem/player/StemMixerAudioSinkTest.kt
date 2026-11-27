@@ -49,6 +49,8 @@ class StemMixerAudioSinkTest {
                     sinks += it
                 }
             },
+            // 显式 Sonic：默认构建可能启用 Rubber Band（JVM 测试无 native 库）。
+            stageFactory = { sr, ch -> SonicStage(sr, ch, 1024) },
         )
         try {
             mixer.load(listOf("vocals" to FakeSource(441_000)))
@@ -70,6 +72,7 @@ class StemMixerAudioSinkTest {
             channels = 2,
             gainProvider = { 1f },
             sinkFactory = { _, _ -> FakeAudioSink() },
+            stageFactory = { sr, ch -> SonicStage(sr, ch, 1024) },
         )
         try {
             // 10s 素材：避免“重启后瞬间又播完”导致断言抖动。

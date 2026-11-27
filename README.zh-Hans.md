@@ -317,7 +317,10 @@ AVS3-P3 解码器的参考实现（[Dreamello/av3a](https://github.com/Dreamello
 
 ## 许可
 
-- 本项目代码：**MIT**（见 [LICENSE](LICENSE)）
+- 本项目代码：**GPL-3.0-or-later**（见 [LICENSE](LICENSE)）
+  - **v0.3.2 及之前**的版本按 MIT 发布（见 [LICENSE-MIT](LICENSE-MIT)），可继续按 MIT 使用或 fork。
+- 变调/变速使用 [Rubber Band Library](https://breakfastquay.com/rubberband/)（GPL-2.0-or-later / 商业双许可），
+  本项目按 **GPL-3.0-or-later** 使用。
 - **NCM 容器解析**（`app/src/ncm/`）：本项目自行实现的**格式互操作性**代码，同样 MIT。
   它依据社区对 `.ncm` 格式的公开分析编写，仅用于解码**你自己已购买/已下载**的文件，
   默认不参与编译（需 `-Pwith_ncm=true`）。

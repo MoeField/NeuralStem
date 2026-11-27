@@ -320,7 +320,10 @@ only AVS3 tracks cannot play (`nativeInit` returns an error and the UI explains 
 
 ## License
 
-- Project code: **MIT** (see [LICENSE](LICENSE))
+- Project code: **GPL-3.0-or-later** (see [LICENSE](LICENSE))
+  - Versions **up to v0.3.2** were released under MIT (see [LICENSE-MIT](LICENSE-MIT)) and remain available under MIT.
+- Time/pitch shifting uses [Rubber Band Library](https://breakfastquay.com/rubberband/)
+  (GPL-2.0-or-later / commercial dual license); this project uses it under **GPL-3.0-or-later**.
 - **NCM container parsing** (`app/src/ncm/`): our own format-interoperability code, also MIT.
   It is based on public community analysis of `.ncm`, intended only for files you already purchased/downloaded;
   it is not compiled by default (requires `-Pwith_ncm=true`).

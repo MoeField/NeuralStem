@@ -2,7 +2,17 @@
 
 > 记录“改了什么、为什么、怎么验证”，方便后来人理解代码演进。这里不记录内部设备流水号或个人环境信息。
 
-## v0.4.0（进行中）：Rubber Band 变调/变速 spike
+## v0.4.0：Rubber Band 成为默认变调/变速引擎（GPL-3.0）
+
+- 默认构建改用 Rubber Band（R3 相位声码器），解决 Sonic（PSOLA）的音符破碎感/音调抖动。
+- 构建开关：`with_rubberband` 默认 **true**；`-Pwith_rubberband=false` 回退 Sonic（MIT 构建）。
+- 许可：项目整体改为 **GPL-3.0-or-later**（RB 为 GPL-2.0-or-later/商业双许可）；
+  v0.3.2 及之前仍为 MIT（`LICENSE-MIT` 保留）。
+- 实测：2ch 10s +7 半音，Sonic 1472ms vs RB 1379ms；真机 `latency=2048`，
+  单轨/多轨/seek/EQ/快速往复回归通过。
+- 待办（v0.4.x）：RB 的 46ms 延迟对“立即出声”的体感优化、长跑 soak。
+
+## v0.4.0（spike 记录）：Rubber Band 变调/变速 spike
 
 - 背景：Sonic（PSOLA + 线性插值）在变调时有音符破碎感/音调抖动，RB 听感更好。
 - 现状：RB 源码 vendored（`-Pwith_rubberband=true` 才编）；JNI 封装 + CMake target 已通；
