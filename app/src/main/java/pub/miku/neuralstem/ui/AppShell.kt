@@ -281,9 +281,13 @@ fun AppShell(
     //   edgeState/gate 的终值与上一次会话完全相同 → 只以它们为 key 会漏掉这次切换。
     //   把 repoState 也纳入 key（fast path 的 EdgeDone 会变），确保新会话仍触发切轨。
     LaunchedEffect(edgeState, edgeGate, repoState) {
-        // ★M3b：自动切轨/回原曲已由 SeparationDomain 的 Effect 驱动；
-        //   旧 effect 保留为 fallback（autoSwitchEnabled=false 时才会执行）。
-        if (separationDomain.autoSwitchEnabled) return@LaunchedEffect
+        // ★M3b：**完整分离**的自动切轨/回原曲已由 SeparationDomain 的 Effect（LoadStems）驱动。
+        //
+        // ⚠️ 2026-11-27：这里**不能**整体 return —— Domain 的 Effect 只覆盖完整分离（Done → LoadStems），
+        //   不覆盖**边播流式切轨**（gate=Playable 时切到 stem 文件/ring buffer）。
+        //   此前加了 `if (autoSwitchEnabled) return`，导致 edge 分离后永不自动切多轨：
+        //   用户看到「分离波形有了但开关还是原曲」，手动开开关也因 lastStems/attach 状态混乱而异常。
+        //   旧 effect 内部有 switchedSessionKey 去重，不会与 Domain 的 LoadStems 重复切同一会话。
         val st = edgeState
         val gate = edgeGate
         val sessionKey = currentEdgeSessionKey()

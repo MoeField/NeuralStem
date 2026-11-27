@@ -1783,8 +1783,10 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             )
         } else {
             Log.i(TAG, "tracks snapshot: null（快照缺失，保持现有多轨态）")
+            dumpState("snapshot(null)")
         }
         Log.i(TAG, "tracks snapshot: ${tracks.size} 轨 (inMultiTrack=$inMt, lastStems=$lastStems)")
+        dumpState("snapshot(inMt=$inMt)")
     }
 
     /** 把 Service 回传的 EQ 状态快照镜像到 UI state（M3-P3）。 */
@@ -1929,6 +1931,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             hasMedia = true,
             fileName = _state.value.fileName.ifBlank { "分离结果" },
         )
+        dumpState("loadMT(${stems.size}) 发出")
     }
 
     /**
@@ -1962,6 +1965,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         // 位置 carry-over 由 Service 按 KEY_START_MS 对齐；门面只保留 UI 位置。
         pendingSeekMs = startPositionMs
         Log.i(TAG, "loadEdgeMultiTrack → Service: streaming stems, seek→${startPositionMs}ms")
+        dumpState("loadEdgeMT(seek=${startPositionMs})")
         // playWhenReady=true：多轨下 onPlayWhenReadyChanged 不更新 UI（由主轨驱动），
         // 故这里显式置位，避免按钮停在“播放”。
         _state.value = _state.value.copy(
@@ -2053,7 +2057,25 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
      *
      * @return true = 已处理；false = 宿主需先分离
      */
+    /**
+     * ★诊断探针（2026-11-27）：把多轨/分离相关状态写进 `files/edge_probe.txt`。
+     *
+     * vivo 会吞 App logcat，这是唯一可靠通道；由关键事件与 `dumpstate` 测试命令调用。
+     */
+    fun dumpState(tag: String) {
+        val s = _state.value
+        EdgeProbe.log(
+            "VM",
+            "$tag mt=${s.isMultiTrack} mtLoaded=$isMultiTrackLoaded tracks=${s.tracks.size} " +
+                "mode=${session.mode} hasMedia=${s.hasMedia} pwr=${s.playWhenReady} " +
+                "edgePct=${s.separationEdge.edgePercent} starved=${s.separationEdge.edgeStarved} " +
+                "edgeStart=${s.separationEdge.edgeStartMs} sepFrac=${s.separationEdge.edgeSeparatedFraction} " +
+                "file=${s.fileName}",
+        )
+    }
+
     fun toggleSeparation(on: Boolean): Boolean {
+        dumpState("toggleSep($on) 入口")
         if (on) {
             val stems = lastStems
             if (stems.isNullOrEmpty()) {

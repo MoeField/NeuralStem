@@ -296,6 +296,7 @@ class MainActivity : ComponentActivity() {
             // cyclerepeat: 同循环按钮点击（顺序→循环歌单→单曲循环→顺序）
             "cyclerepeat" -> playerVm.cycleRepeatMode()
             // toggleSep: a0 = true/false（分离开关；验证“关→再开恢复”）
+            "dumpstate" -> playerVm.dumpState("cmd")
             "togglesep" -> {
                 val on = a0?.toBooleanStrictOrNull() ?: true
                 val ok = playerVm.toggleSeparation(on)
