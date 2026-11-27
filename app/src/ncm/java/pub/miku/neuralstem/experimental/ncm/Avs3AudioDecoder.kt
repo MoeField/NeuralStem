@@ -233,14 +233,21 @@ class Avs3AudioDecoder : Closeable {
         private var libLoaded = false
 
         init {
-            // 先加载依赖的 libc++_shared（VMF 和 AudioDec 都要）
+            // 先加载依赖的 libc++_shared（预编译 VMF/AudioDec 需要）
             runCatching { System.loadLibrary("c++_shared") }
             runCatching {
-                System.loadLibrary("VMFPlatForm")
-                System.loadLibrary("AVS3AudioDec")
+                // ★预编译版（UWA .so）依赖 VMFPlatForm；自编译版（libavs3self.so）不需要。
+                //   两者都**允许缺失**，真正必需的是桥——桥内部用 dlopen 按
+                //   `libavs3self.so` → `libAVS3AudioDec.so` 顺序选解码器。
+                //   （2026-11-27 真机：fetch-avs3 自编译路径下这里硬加载预编译库失败，
+                //    导致桥也没加载 → nativeInit No implementation。）
+                runCatching { System.loadLibrary("VMFPlatForm") }
+                    .onFailure { Log.i(TAG, "VMFPlatForm 不可用（自编译路径正常）") }
+                runCatching { System.loadLibrary("AVS3AudioDec") }
+                    .onFailure { Log.i(TAG, "AVS3AudioDec 不可用（自编译路径正常）") }
                 System.loadLibrary("neuralstem_avs3")
                 libLoaded = true
-                Log.i(TAG, "native libs loaded")
+                Log.i(TAG, "native bridge loaded")
             }.onFailure { Log.e(TAG, "loadLibrary failed", it) }
         }
     }

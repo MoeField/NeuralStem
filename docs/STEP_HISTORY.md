@@ -2,6 +2,17 @@
 
 > 记录“改了什么、为什么、怎么验证”，方便后来人理解代码演进。这里不记录内部设备流水号或个人环境信息。
 
+## v0.4.1（补记）：非公开版（NCM）链路真机验证
+
+- 构建：`-Pwith_ncm=true` + `tools/fetch-avs3.sh`（自编译 AVS3 解码器 `libavs3self.so`）。
+- 真机（BF00A）全链路通过：启动无 Shizuku/FATAL 崩溃 → SAF 导入先「FromTF」30 首（含 12 个 `.ncm`）
+  → 播放 NCM：解密（m4a 22.5MB）→ 识别 `av3a` → AVS3 解码（12ch 下混 2ch）→ PCM 缓存 38.2MB → 播放。
+- **修复 1**：`Avs3AudioDecoder` init 原先**硬加载**预编译库 `VMFPlatForm/AVS3AudioDec`，自编译路径下
+  加载失败会连带桥也不加载（`nativeInit` No implementation）。改为预编译库可选、`neuralstem_avs3` 必载。
+- **修复 2**：`tools/fetch-avs3.sh` 的 Version.h 补丁把第二个 `#ifdef` 改成 `#elif`，而它前面没有未闭合
+  的 `#if`（两个独立块）→ 编译报 `#elif without #if`。改为 `#if 0` 独立块（clang 预处理验证通过）。
+- 注意：`avs3dec/` 已在 `.gitignore`，源码不入库；新增后需清 `.cxx` 缓存让 CMake 重新发现。
+
 ## v0.4.1：公开版导入拒绝不可解码的 AVS3 空间音频
 
 - 新增 `Avs3Probe`：读 MP4 头部 `stsd` 的 codec tag（`av3a`）识别 AVS3 空间音频。

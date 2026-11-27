@@ -164,7 +164,7 @@ s = open(p, encoding='utf-8', errors='replace').read()
 # 把第二个 "#ifdef ARCH_AARCH64" 改成 "#elif defined(ARCH_AARCH64)"，
 # 并让第一个块覆盖两种平台：原来是 #ifdef linux / #ifdef ARCH_AARCH64 两个并列块。
 s2 = s.replace('#ifdef linux', '#if defined(linux) || defined(ARCH_AARCH64)', 1)
-s2 = s2.replace('#ifdef ARCH_AARCH64', '#elif 0 /* 已合并到上面的分支 */', 1)
+s2 = s2.replace('#ifdef ARCH_AARCH64', '#if 0 /* 已合并到上面的分支（独立块，不能写成 #elif） */', 1)
 if s2 != s:
     open(p, 'w', encoding='utf-8').write(s2)
     print('patched')
