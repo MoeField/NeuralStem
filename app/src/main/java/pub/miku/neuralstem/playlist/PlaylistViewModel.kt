@@ -7,6 +7,7 @@ import android.net.Uri
 import android.util.Log
 import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.AndroidViewModel
+import pub.miku.neuralstem.BuildConfig
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -61,6 +62,14 @@ class PlaylistViewModel(app: Application) : AndroidViewModel(app) {
     /** 最近一次歌单落盘失败；null = 正常。 */
     private val _saveError = MutableStateFlow<String?>(null)
     val saveError: StateFlow<String?> = _saveError.asStateFlow()
+
+    /** 导入时被跳过的文件提示（如公开版无法解码的 AVS3 空间音频）。 */
+    private val _importNotice = MutableStateFlow<String?>(null)
+    val importNotice: StateFlow<String?> = _importNotice.asStateFlow()
+
+    fun clearImportNotice() {
+        _importNotice.value = null
+    }
 
     @Volatile private var loaded = false
 
@@ -450,6 +459,7 @@ class PlaylistViewModel(app: Application) : AndroidViewModel(app) {
         if (uris.isEmpty()) return
         val ctx = getApplication<Application>()
 
+        var skippedSpatial = 0
         val found = withContext(Dispatchers.IO) {
             uris.mapNotNull { u ->
                 val name = runCatching {
@@ -461,9 +471,18 @@ class PlaylistViewModel(app: Application) : AndroidViewModel(app) {
                     return@mapNotNull null
                 }
 
+                if (isUnplayableSpatialAudio(ctx, u, name)) {
+                    skippedSpatial++
+                    Log.i(TAG, "importFiles 跳过无法解码的空间音频（AVS3）：$name")
+                    return@mapNotNull null
+                }
+
                 // ★保留 content://（见上方注释）。file:// 传进来的（如播放器"导入音频"）也原样保留。
                 PlaylistStore.TrackRef(u.toString(), name)
             }
+        }
+        if (skippedSpatial > 0) {
+            _importNotice.value = "已跳过 $skippedSpatial 个 AVS3 空间音频文件（当前版本不含解码器）"
         }
         Log.i(TAG, "importFiles: ${found.size}/${uris.size} 首可导入")
         if (found.isEmpty()) return
@@ -556,6 +575,19 @@ class PlaylistViewModel(app: Application) : AndroidViewModel(app) {
      * 让 732 首网易云的歌全部进不了歌单。
      */
     private fun isAudio(name: String): Boolean = AudioFileTypes.isAudio(name)
+
+    /**
+     * 公开版能否解码这个文件。
+     *
+     * 只针对 `.m4a`：其中约 99% 是 AVS3（`av3a`）空间音频，公开版没有解码器；
+     * NCM 构建（`WITH_NCM=true`）保留原行为（按需 AVS3 解码链）。
+     */
+    private fun isUnplayableSpatialAudio(ctx: Context, uri: Uri, name: String): Boolean {
+        if (BuildConfig.WITH_NCM) return false
+        if (!name.lowercase().endsWith(".m4a")) return false
+        val head = MediaSourceReader.readHead(ctx, uri) ?: return false
+        return Avs3Probe.hasAvs3Codec(head)
+    }
 
     companion object {
         private const val TAG = "PlaylistVm"

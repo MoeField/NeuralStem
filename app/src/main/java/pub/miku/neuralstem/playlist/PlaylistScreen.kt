@@ -90,6 +90,7 @@ fun PlaylistScreen(
     val lists by vm.lists.collectAsState()
     val corrupt by vm.corrupt.collectAsState()
     val saveError by vm.saveError.collectAsState()
+    val importNotice by vm.importNotice.collectAsState()
     var showCorruptReset by rememberSaveable { mutableStateOf(false) }
     // ★R1：当前选中歌单（单一真源，来自 VM；恒存在）。
     val selectedListId by vm.selectedListId.collectAsState()
@@ -274,6 +275,13 @@ fun PlaylistScreen(
         }
 
         HorizontalDivider()
+
+        LaunchedEffect(importNotice) {
+            importNotice?.let {
+                Toast.makeText(context, it, Toast.LENGTH_LONG).show()
+                vm.clearImportNotice()
+            }
+        }
 
         if (saveError != null) {
             Card(

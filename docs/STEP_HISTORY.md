@@ -2,6 +2,15 @@
 
 > 记录“改了什么、为什么、怎么验证”，方便后来人理解代码演进。这里不记录内部设备流水号或个人环境信息。
 
+## v0.4.1：公开版导入拒绝不可解码的 AVS3 空间音频
+
+- 新增 `Avs3Probe`：读 MP4 头部 `stsd` 的 codec tag（`av3a`）识别 AVS3 空间音频。
+- 单曲导入（`importFiles`）：公开版（`WITH_NCM=false`）对 `.m4a` 做头部探测，命中 `av3a`
+  直接拒绝加入歌单，并通过 `importNotice` Toast 提示「已跳过 N 个 AVS3 空间音频（当前版本不含解码器）」。
+- NCM 构建（`WITH_NCM=true`）保留原行为（按需 AVS3 解码链）。
+- 测试：`Avs3ProbeTest`（JVM 5 条）；真机 `Avs3DeviceProbeTest`（AVS3 m4a 识别 + mp3 不误判）。
+- 文件夹歌单**未改**：仍按扩展名收录 `.m4a`（AVS3 播放时会失败），待定方案。
+
 ## v0.4.0：Rubber Band 成为默认变调/变速引擎（GPL-3.0）
 
 - 默认构建改用 Rubber Band（R3 相位声码器），解决 Sonic（PSOLA）的音符破碎感/音调抖动。
